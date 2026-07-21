@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import type { ModeConfig } from '@shared/types/mode'
-import { supabase, type ProfileRow } from './supabase'
+import { isSupabaseConfigured, supabase, type ProfileRow } from './supabase'
 import { clearProfileCache } from './judovac-client'
 
 interface AuthState {
@@ -26,6 +26,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setLoading(false)
+      return
+    }
+
     let cancelled = false
 
     void supabase.auth.getSession().then(async ({ data: { session: s } }) => {
@@ -36,6 +41,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!cancelled) setProfile(p)
       }
       setLoading(false)
+    }).catch(() => {
+      if (!cancelled) setLoading(false)
     })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, s) => {

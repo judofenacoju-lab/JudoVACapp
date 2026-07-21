@@ -2,9 +2,11 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import type { ModeConfig } from '@shared/types/mode'
 import { useAuth } from '@/lib/auth-context'
+import { isSupabaseConfigured } from '@/lib/supabase'
 import { LoginPage } from './pages/LoginPage'
 import { ServerDashboardPage } from './pages/ServerDashboardPage'
 import { ClientDashboardPage } from './pages/ClientDashboardPage'
+import { ConfigErrorPage } from './components/ConfigErrorPage'
 import { LoadingScreen, LOADING_DURATION_MS } from './components/LoadingScreen'
 
 type BootState = 'loading' | 'ready'
@@ -56,6 +58,7 @@ export default function App() {
     }
   }, [loading, session, profile, buildModeConfig])
 
+  if (!isSupabaseConfigured) return <ConfigErrorPage />
   if (loading || boot === 'loading') return <LoadingScreen />
 
   return (

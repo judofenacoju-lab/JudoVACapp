@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import brandLogo from '@/assets/brand-logo.png'
 
-const DURATION_MS = 5000
+const DURATION_MS = 1200
 const RING_SIZE = 120
 const RING_RADIUS = 52
 const CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS

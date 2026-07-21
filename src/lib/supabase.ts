@@ -1,20 +1,21 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim() ?? ''
+const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim() ?? ''
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn(
-    '[JudoVACapp] VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY requis — configurez .env.local'
-  )
-}
+export const isSupabaseConfigured = Boolean(
+  supabaseUrl.startsWith('https://') && supabaseAnonKey.length > 20
+)
 
-export const supabase = createClient(supabaseUrl ?? '', supabaseAnonKey ?? '', {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true
-  }
-})
+/** Client unique — null si les variables Vercel / .env sont absentes. */
+export const supabase: SupabaseClient = isSupabaseConfigured
+  ? createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true
+      }
+    })
+  : (null as unknown as SupabaseClient)
 
 export type ProfileRow = {
   id: string
