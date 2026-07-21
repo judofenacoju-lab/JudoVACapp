@@ -1,0 +1,28 @@
+# Dépendances
+node_modules/
+
+# Builds
+dist/
+out/
+release/
+build/
+*.exe
+*.blockmap
+
+# Secrets (ne jamais committer)
+.env
+.env.local
+.env.*.local
+
+# Mobile — SDK Android local (ne pas pousser)
+mobile/.tools/
+mobile/android/
+mobile/node_modules/
+mobile/.expo/
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+*.log
+.vercel/
+.vscode/

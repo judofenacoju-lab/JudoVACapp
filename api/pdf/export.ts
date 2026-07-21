@@ -1,0 +1,125 @@
+import type { VercelRequest, VercelResponse } from '@vercel/node'
+import { createClient } from '@supabase/supabase-js'
+import { exportBadgesPdfToBuffer } from '../../core/infrastructure/pdf/badge-pdf-node'
+
+function getSupabaseAdmin() {
+  const url = process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) throw new Error('Variables Supabase serveur manquantes')
+  return createClient(url, key)
+}
+
+async function verifyAuth(req: VercelRequest) {
+  const auth = req.headers.authorization
+  if (!auth?.startsWith('Bearer ')) return null
+  const token = auth.slice(7)
+  const supabase = getSupabaseAdmin()
+  const { data: { user }, error } = await supabase.auth.getUser(token)
+  if (error || !user) return null
+  const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+  if (!profile?.active) return null
+  return { user, profile }
+}
+
+function rowToJudoka(row: Record<string, unknown>) {
+  return {
+    id: row.id as string,
+    displayId: row.display_id as string,
+    lastName: row.last_name as string,
+    middleName: row.middle_name as string,
+    firstName: row.first_name as string,
+    sex: row.sex as 'M' | 'F',
+    birthDate: row.birth_date as string,
+    age: row.age as number,
+    province: row.province as string,
+    city: row.city as string,
+    commune: row.commune as string,
+    address: row.address as string,
+    phone: row.phone as string,
+    email: row.email as string,
+    club: row.club as string,
+    league: row.league as string,
+    sportProvince: row.sport_province as string,
+    grade: row.grade as string,
+    belt: row.belt as string,
+    category: row.category as string,
+    weightKg: row.weight_kg as number | null,
+    heightCm: row.height_cm as number | null,
+    licenseNumber: row.license_number as string,
+    affiliationYear: row.affiliation_year as number | null,
+    photoPath: row.photo_path as string | null,
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+    createdBy: row.created_by as string,
+    createdWorkstation: row.created_workstation as string,
+    syncStatus: row.sync_status as string,
+    version: row.version as number
+  }
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' })
+  }
+
+  try {
+    const auth = await verifyAuth(req)
+    if (!auth) return res.status(401).json({ error: 'Non autorisé' })
+
+    const supabase = getSupabaseAdmin()
+    const body = req.body as {
+      judokaIds?: string[]
+      all?: boolean
+      createdBy?: string
+      perPage?: 4 | 6 | 8 | 'custom'
+      customCols?: number
+      customRows?: number
+    }
+
+    let query = supabase.from('judokas').select('*').order('created_at', { ascending: false })
+    if (body.judokaIds?.length) {
+      query = query.in('id', body.judokaIds)
+    } else if (body.createdBy) {
+      const label = body.createdBy.toLowerCase() === 'serveur' ? 'serveur' : body.createdBy
+      query = query.eq('created_by', label)
+    }
+
+    const { data: judokaRows, error: jErr } = await query
+    if (jErr) return res.status(500).json({ error: jErr.message })
+
+    const { data: meta } = await supabase.from('badge_template_meta').select('active_template_id').eq('id', 'default').single()
+    const activeId = meta?.active_template_id ?? 'default'
+    const { data: tmplRow } = await supabase.from('badge_templates').select('*').eq('id', activeId).single()
+
+    if (!tmplRow) return res.status(400).json({ error: 'Modèle de badge introuvable' })
+
+    const template = {
+      ...(tmplRow.template as object),
+      id: tmplRow.id,
+      name: tmplRow.name,
+      isDefault: tmplRow.is_default,
+      updatedAt: tmplRow.updated_at
+    }
+
+    const judokas = (judokaRows ?? []).map(rowToJudoka)
+    const supabaseUrl = process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL ?? ''
+
+    const pdfBuffer = await exportBadgesPdfToBuffer({
+      template: template as never,
+      judokas,
+      perPage: body.perPage ?? 4,
+      customCols: body.customCols,
+      customRows: body.customRows,
+      supabaseUrl,
+      serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!
+    })
+
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', 'attachment; filename="badges.pdf"')
+    res.setHeader('X-Badge-Count', String(judokas.length))
+    return res.status(200).send(Buffer.from(pdfBuffer))
+  } catch (e) {
+    console.error('[api/pdf/export]', e)
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Erreur serveur' })
+  }
+}

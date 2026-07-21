@@ -1,0 +1,43 @@
+appId: com.judovacapp.desktop
+productName: JudoVACapp
+copyright: Copyright © JudoVACapp
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+extraResources:
+  - from: .env.example
+    to: .env.example
+  - from: build/icon.ico
+    to: icon.ico
+  - from: build/icon.png
+    to: brand-logo.png
+afterPack: ./scripts/after-pack.cjs
+win:
+  icon: build/icon.ico
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-Setup.${ext}
+  fileAssociations:
+    - ext: jvac
+      name: JudoVACapp Backup
+      description: Sauvegarde JudoVACapp
+      icon: build/icon.ico
+      role: Editor
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: JudoVACapp
+  uninstallDisplayName: JudoVACapp
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  runAfterFinish: true
+  menuCategory: true

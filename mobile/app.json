@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "JudoVACapp",
+    "slug": "judovacapp-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.judovacapp.scanner",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Scanner les QR codes des badges judokas.",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true,
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#0B1F3A"
+      },
+      "package": "com.judovacapp.scanner",
+      "permissions": ["android.permission.CAMERA"]
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Autoriser l'accès à la caméra pour scanner les badges."
+        }
+      ]
+    ]
+  }
+}

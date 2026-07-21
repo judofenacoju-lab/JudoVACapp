@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["shared/*"],
+      "@core/*": ["core/*"],
+      "@server/*": ["server/*"]
+    }
+  },
+  "include": [
+    "electron.vite.config.ts",
+    "electron/**/*",
+    "server/**/*",
+    "core/**/*",
+    "shared/**/*",
+    "scripts/**/*"
+  ]
+}
