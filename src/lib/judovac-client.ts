@@ -169,9 +169,16 @@ async function uploadDataUrl(bucket: string, dataUrl: string, prefix: string): P
   const token = await getAccessToken()
   if (!token) throw new Error('Session expirée — reconnectez-vous.')
 
-  const compressed = await compressImageDataUrl(dataUrl)
-  // Estimation taille base64
-  const approxBytes = Math.ceil(((compressed.split(',')[1]?.length ?? 0) * 3) / 4)
+  let payload = dataUrl
+  try {
+    // Ne pas recompresser si déjà JPEG compressé côté appelant
+    if (!dataUrl.includes('image/jpeg') || dataUrl.length > 900_000) {
+      payload = await compressImageDataUrl(dataUrl)
+    }
+  } catch {
+    payload = dataUrl
+  }
+  const approxBytes = Math.ceil(((payload.split(',')[1]?.length ?? 0) * 3) / 4)
   assertPhotoSize(approxBytes)
 
   const res = await fetch('/api/photos/upload', {
@@ -180,7 +187,7 @@ async function uploadDataUrl(bucket: string, dataUrl: string, prefix: string): P
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`
     },
-    body: JSON.stringify({ dataUrl: compressed, bucket, prefix })
+    body: JSON.stringify({ dataUrl: payload, bucket, prefix })
   })
   const text = await res.text()
   let json: { ok?: boolean; data?: { path: string }; error?: string } = {}
@@ -190,11 +197,11 @@ async function uploadDataUrl(bucket: string, dataUrl: string, prefix: string): P
     throw new Error(
       res.ok
         ? 'Réponse upload invalide'
-        : `Upload photo échoué (${res.status}). Vérifiez SUPABASE_SERVICE_ROLE_KEY sur Vercel.`
+        : `Upload échoué (${res.status}). Vérifiez SUPABASE_SERVICE_ROLE_KEY sur Vercel.`
     )
   }
   if (!res.ok || !json.ok || !json.data?.path) {
-    throw new Error(json.error ?? 'Upload photo échoué')
+    throw new Error(json.error ?? 'Upload image échoué')
   }
   return json.data.path
 }
@@ -888,7 +895,16 @@ export const judovacClient = {
         reader.onload = async () => {
           try {
             const rawDataUrl = reader.result as string
-            const dataUrl = await compressImageDataUrl(rawDataUrl, 1600, 0.88)
+            // Logo : garder PNG si possible (transparence) ; fond : compresser
+            let dataUrl = rawDataUrl
+            try {
+              dataUrl =
+                kind === 'logo'
+                  ? await compressImageDataUrl(rawDataUrl, 800, 0.92)
+                  : await compressImageDataUrl(rawDataUrl, 1600, 0.85)
+            } catch {
+              dataUrl = rawDataUrl
+            }
             const path = await uploadDataUrl(BADGE_ASSETS_BUCKET, dataUrl, kind)
             const tmplRes = await judovacClient.getBadgeTemplate()
             if (!tmplRes.ok) {
@@ -901,12 +917,18 @@ export const judovacClient = {
               logoPath: kind === 'logo' ? path : tmplRes.data.logoPath,
               updatedAt: new Date().toISOString()
             }
-            // Mise à jour locale immédiate pour l'aperçu ; l'enregistrement final se fait via « Enregistrer »
             resolve(ok({ path, template, dataUrl }))
           } catch (e) {
-            resolve(fail(e instanceof Error ? e.message : String(e)))
+            resolve(
+              fail(
+                e instanceof Error
+                  ? e.message
+                  : `Import ${kind === 'logo' ? 'logo' : 'fond'} impossible`
+              )
+            )
           }
         }
+        reader.onerror = () => resolve(fail('Lecture du fichier image impossible'))
         reader.readAsDataURL(file)
       }
       input.click()
