@@ -6,11 +6,6 @@ import {
   PDFDocument,
   rgb,
   StandardFonts,
-  pushGraphicsState,
-  popGraphicsState,
-  rectangle,
-  clip,
-  endPath,
   type PDFFont,
   type PDFImage,
   type PDFPage
@@ -60,33 +55,45 @@ function hexRgb(hex: string): ReturnType<typeof rgb> {
 }
 
 async function toBytes(src: string): Promise<Uint8Array> {
+  if (src.startsWith('data:')) {
+    const comma = src.indexOf(',')
+    if (comma < 0) throw new Error('data URL invalide')
+    const b64 = src.slice(comma + 1)
+    const bin = atob(b64)
+    const out = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+    return out
+  }
   const res = await fetch(src)
   if (!res.ok) throw new Error(`Image inaccessible (${res.status})`)
   return new Uint8Array(await res.arrayBuffer())
 }
 
-/** Convertit toute image affichable en JPEG (pdf-lib n’accepte que PNG/JPG). */
-async function toJpegDataUrl(src: string, maxSide = 1600, quality = 0.9): Promise<string> {
-  if (src.startsWith('data:image/jpeg') || src.startsWith('data:image/jpg')) return src
+/** Toujours ré-encoder en JPEG via canvas (fiable pour pdf-lib). */
+async function toJpegDataUrl(src: string, maxSide = 1200, quality = 0.88): Promise<string> {
   return await new Promise((resolve, reject) => {
     const img = new Image()
     img.crossOrigin = 'anonymous'
     img.onload = () => {
-      const scale = Math.min(1, maxSide / Math.max(img.width, img.height))
-      const w = Math.max(1, Math.round(img.width * scale))
-      const h = Math.max(1, Math.round(img.height * scale))
-      const canvas = document.createElement('canvas')
-      canvas.width = w
-      canvas.height = h
-      const ctx = canvas.getContext('2d')
-      if (!ctx) {
-        reject(new Error('Canvas indisponible'))
-        return
+      try {
+        const scale = Math.min(1, maxSide / Math.max(img.width, img.height, 1))
+        const w = Math.max(1, Math.round(img.width * scale))
+        const h = Math.max(1, Math.round(img.height * scale))
+        const canvas = document.createElement('canvas')
+        canvas.width = w
+        canvas.height = h
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          reject(new Error('Canvas indisponible'))
+          return
+        }
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(0, 0, w, h)
+        ctx.drawImage(img, 0, 0, w, h)
+        resolve(canvas.toDataURL('image/jpeg', quality))
+      } catch (e) {
+        reject(e instanceof Error ? e : new Error(String(e)))
       }
-      ctx.fillStyle = '#ffffff'
-      ctx.fillRect(0, 0, w, h)
-      ctx.drawImage(img, 0, 0, w, h)
-      resolve(canvas.toDataURL('image/jpeg', quality))
     }
     img.onerror = () => reject(new Error('Image illisible'))
     img.src = src
@@ -102,12 +109,8 @@ async function embedAny(pdf: PDFDocument, bytes: Uint8Array): Promise<PDFImage> 
 }
 
 async function embedFromSrc(pdf: PDFDocument, src: string): Promise<PDFImage> {
-  try {
-    const jpegUrl = await toJpegDataUrl(src)
-    return await embedAny(pdf, await toBytes(jpegUrl))
-  } catch {
-    return await embedAny(pdf, await toBytes(src))
-  }
+  const jpegUrl = await toJpegDataUrl(src)
+  return await embedAny(pdf, await toBytes(jpegUrl))
 }
 
 async function loadOptionalImage(
@@ -122,14 +125,26 @@ async function loadOptionalImage(
       const loaded = await readDataUrl(path)
       if (!loaded) return null
       src = loaded
+    } else if (path.startsWith('http') || path.startsWith('/')) {
+      // Charger via fetch → data URL pour éviter CORS canvas
+      const bytes = await toBytes(path)
+      const blob = new Blob([new Uint8Array(bytes)])
+      src = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader()
+        r.onload = () => resolve(r.result as string)
+        r.onerror = () => reject(new Error('Lecture image impossible'))
+        r.readAsDataURL(blob)
+      })
     }
     return await embedFromSrc(pdf, src)
-  } catch {
+  } catch (e) {
+    console.warn('[badge-pdf] image non embarquée:', path, e)
     return null
   }
 }
 
-function drawClippedImage(
+/** Remplit le cadre sans déborder (contain). */
+function drawCoverImage(
   page: PDFPage,
   image: PDFImage,
   x: number,
@@ -137,17 +152,15 @@ function drawClippedImage(
   w: number,
   h: number
 ): void {
-  const scale = Math.max(w / image.width, h / image.height)
+  const scale = Math.min(w / image.width, h / image.height)
   const dw = image.width * scale
   const dh = image.height * scale
-  page.pushOperators(pushGraphicsState(), rectangle(x, y, w, h), clip(), endPath())
   page.drawImage(image, {
     x: x + (w - dw) / 2,
     y: y + (h - dh) / 2,
     width: dw,
     height: dh
   })
-  page.pushOperators(popGraphicsState())
 }
 
 function drawText(
@@ -325,30 +338,31 @@ async function drawBadge(
   const photoH = photo.height * sy
   const photoY = oy + badgeH - photo.y * sy - photoH
 
-  // Cadre photo (reste vide si aucune photo enregistrée)
+  const photoImg = judoka.photoPath
+    ? await loadOptionalImage(pdf, judoka.photoPath, readDataUrl)
+    : null
+
+  // Cadre : gris si pas de photo, sinon fond blanc + image
   page.drawRectangle({
     x: photoX,
     y: photoY,
     width: photoW,
     height: photoH,
-    color: hexRgb('#e2e8f0'),
+    color: photoImg ? rgb(1, 1, 1) : hexRgb('#e2e8f0'),
     borderColor: hexRgb(template.colors.primary),
     borderWidth: 1.5
   })
 
-  if (judoka.photoPath) {
-    const photoImg = await loadOptionalImage(pdf, judoka.photoPath, readDataUrl)
-    if (photoImg) {
-      drawClippedImage(page, photoImg, photoX, photoY, photoW, photoH)
-      page.drawRectangle({
-        x: photoX,
-        y: photoY,
-        width: photoW,
-        height: photoH,
-        borderColor: hexRgb(template.colors.primary),
-        borderWidth: 1.5
-      })
-    }
+  if (photoImg) {
+    drawCoverImage(page, photoImg, photoX, photoY, photoW, photoH)
+    page.drawRectangle({
+      x: photoX,
+      y: photoY,
+      width: photoW,
+      height: photoH,
+      borderColor: hexRgb(template.colors.primary),
+      borderWidth: 1.5
+    })
   }
 
   if (logoImg) {
@@ -356,7 +370,7 @@ async function drawBadge(
     const side = Math.max(logo.width, logo.height) * Math.min(sx, sy)
     const cx = ox + logo.x * sx + (logo.width * sx) / 2
     const cy = oy + badgeH - logo.y * sy - (logo.height * sy) / 2
-    drawClippedImage(page, logoImg, cx - side / 2, cy - side / 2, side, side)
+    drawCoverImage(page, logoImg, cx - side / 2, cy - side / 2, side, side)
   }
 
   const band = template.layout.displayIdBand

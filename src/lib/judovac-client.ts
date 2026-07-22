@@ -248,6 +248,31 @@ async function readStorageDataUrl(bucket: string, objectPath: string): Promise<s
   throw new Error(error?.message ?? 'Photo introuvable')
 }
 
+/** Lecture via API Vercel (service role) — fiabilise Export/Impression PDF. */
+async function readStorageDataUrlViaApi(path: string, bucket?: string): Promise<string> {
+  const token = await getAccessToken()
+  if (!token) throw new Error('Session expirée — reconnectez-vous.')
+  const res = await fetch('/api/photos/read', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify({ path, bucket })
+  })
+  const text = await res.text()
+  let json: { ok?: boolean; data?: { dataUrl?: string }; error?: string } = {}
+  try {
+    json = text ? (JSON.parse(text) as typeof json) : {}
+  } catch {
+    throw new Error(`Lecture photo échouée (${res.status})`)
+  }
+  if (!res.ok || !json.ok || !json.data?.dataUrl) {
+    throw new Error(json.error ?? 'Photo introuvable')
+  }
+  return json.data.dataUrl
+}
+
 async function readAnyStorageDataUrl(path: string): Promise<string> {
   if (path.startsWith('data:')) return path
   if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('/')) {
@@ -272,7 +297,13 @@ async function readAnyStorageDataUrl(path: string): Promise<string> {
       lastError = e instanceof Error ? e : new Error(String(e))
     }
   }
-  throw lastError ?? new Error('Fichier introuvable')
+
+  // Dernier recours : API serveur (contourne RLS / CORS navigateur)
+  try {
+    return await readStorageDataUrlViaApi(objectPath, buckets[0])
+  } catch (e) {
+    throw lastError ?? (e instanceof Error ? e : new Error(String(e)))
+  }
 }
 
 /** Compresse / redimensionne une image data URL pour un upload rapide (max 1280px, JPEG ~0.82). */
@@ -1023,9 +1054,15 @@ export const judovacClient = {
         customRows: opts.customRows,
         readDataUrl: async (path) => {
           try {
-            return await readAnyStorageDataUrl(path)
+            // API serveur d'abord (fiable pour les photos Storage)
+            return await readStorageDataUrlViaApi(path)
           } catch {
-            return null
+            try {
+              return await readAnyStorageDataUrl(path)
+            } catch (e) {
+              console.warn('[exportBadgesPdf] photo illisible:', path, e)
+              return null
+            }
           }
         }
       })
