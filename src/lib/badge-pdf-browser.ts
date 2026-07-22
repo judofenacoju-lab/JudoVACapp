@@ -71,14 +71,12 @@ function loadHtmlImage(src: string): Promise<HTMLImageElement> {
   })
 }
 
-/** Photo : cover dans un rectangle aux coins arrondis + bordure (PNG). */
+/** Photo : cover dans un rectangle aux coins arrondis (PNG, sans contour). */
 async function toRoundedCoverPng(
   src: string,
   outW: number,
   outH: number,
-  radius: number,
-  borderColor?: string,
-  borderWidth = 3
+  radius: number
 ): Promise<string> {
   const img = await loadHtmlImage(src)
   const w = Math.max(1, Math.round(outW))
@@ -90,34 +88,20 @@ async function toRoundedCoverPng(
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('Canvas indisponible')
 
-  const roundPath = () => {
-    ctx.beginPath()
-    ctx.moveTo(r, 0)
-    ctx.arcTo(w, 0, w, h, r)
-    ctx.arcTo(w, h, 0, h, r)
-    ctx.arcTo(0, h, 0, 0, r)
-    ctx.arcTo(0, 0, w, 0, r)
-    ctx.closePath()
-  }
-
   ctx.clearRect(0, 0, w, h)
-  ctx.save()
-  roundPath()
+  ctx.beginPath()
+  ctx.moveTo(r, 0)
+  ctx.arcTo(w, 0, w, h, r)
+  ctx.arcTo(w, h, 0, h, r)
+  ctx.arcTo(0, h, 0, 0, r)
+  ctx.arcTo(0, 0, w, 0, r)
+  ctx.closePath()
   ctx.clip()
 
   const scale = Math.max(w / img.width, h / img.height)
   const dw = img.width * scale
   const dh = img.height * scale
   ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh)
-  ctx.restore()
-
-  if (borderColor) {
-    roundPath()
-    ctx.strokeStyle = borderColor
-    ctx.lineWidth = Math.max(1, borderWidth)
-    ctx.stroke()
-  }
-
   return canvas.toDataURL('image/png')
 }
 
@@ -175,21 +159,13 @@ async function loadRoundedPhoto(
   readDataUrl: (path: string) => Promise<string | null>,
   outW: number,
   outH: number,
-  radius: number,
-  borderColor?: string
+  radius: number
 ): Promise<PDFImage | null> {
   if (!path) return null
   try {
     const src = await resolveSourceDataUrl(path, readDataUrl)
     if (!src) return null
-    const png = await toRoundedCoverPng(
-      src,
-      outW * 2,
-      outH * 2,
-      radius * 2,
-      borderColor,
-      3
-    )
+    const png = await toRoundedCoverPng(src, outW * 2, outH * 2, radius * 2)
     return await embedPngFromDataUrl(pdf, png)
   } catch (e) {
     console.warn('[badge-pdf] photo non embarquée:', path, e)
@@ -429,20 +405,17 @@ async function drawBadge(
     readDataUrl,
     photoW,
     photoH,
-    radius,
-    template.colors.primary
+    radius
   )
 
-  // Fond du cadre (si pas de photo)
+  // Fond du cadre (si pas de photo) — sans contour noir
   if (!photoImg) {
     page.drawRectangle({
       x: photoX,
       y: photoY,
       width: photoW,
       height: photoH,
-      color: hexRgb('#e2e8f0'),
-      borderColor: hexRgb(template.colors.primary),
-      borderWidth: 1.5
+      color: hexRgb('#e2e8f0')
     })
   } else {
     page.drawImage(photoImg, {

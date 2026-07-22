@@ -12,11 +12,11 @@ export function computeAge(birthDate: string, at: Date = new Date()): number {
   return Math.max(0, age)
 }
 
-/** Affichage badge : Prénom, Nom uniquement. */
+/** Affichage badge : Prénom Nom uniquement. */
 export function formatBadgeJudokaName(parts: { firstName: string; lastName: string }): string {
   const first = parts.firstName.trim()
   const last = parts.lastName.trim()
-  if (first && last) return `${first}, ${last}`
+  if (first && last) return `${first} ${last}`
   return first || last
 }
 
