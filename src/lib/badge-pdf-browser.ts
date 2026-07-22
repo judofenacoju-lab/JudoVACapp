@@ -2,7 +2,19 @@
  * Génération PDF badges côté navigateur (pdf-lib) —
  * contourne les crashes PDFKit sur Vercel serverless.
  */
-import { PDFDocument, rgb, StandardFonts, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib'
+import {
+  PDFDocument,
+  rgb,
+  StandardFonts,
+  pushGraphicsState,
+  popGraphicsState,
+  rectangle,
+  clip,
+  endPath,
+  type PDFFont,
+  type PDFImage,
+  type PDFPage
+} from 'pdf-lib'
 import QRCode from 'qrcode'
 import type { BadgeTemplate } from '@shared/types/badge'
 import type { Judoka } from '@shared/types/judoka'
@@ -53,11 +65,48 @@ async function toBytes(src: string): Promise<Uint8Array> {
   return new Uint8Array(await res.arrayBuffer())
 }
 
+/** Convertit toute image affichable en JPEG (pdf-lib n’accepte que PNG/JPG). */
+async function toJpegDataUrl(src: string, maxSide = 1600, quality = 0.9): Promise<string> {
+  if (src.startsWith('data:image/jpeg') || src.startsWith('data:image/jpg')) return src
+  return await new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height))
+      const w = Math.max(1, Math.round(img.width * scale))
+      const h = Math.max(1, Math.round(img.height * scale))
+      const canvas = document.createElement('canvas')
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        reject(new Error('Canvas indisponible'))
+        return
+      }
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, w, h)
+      ctx.drawImage(img, 0, 0, w, h)
+      resolve(canvas.toDataURL('image/jpeg', quality))
+    }
+    img.onerror = () => reject(new Error('Image illisible'))
+    img.src = src
+  })
+}
+
 async function embedAny(pdf: PDFDocument, bytes: Uint8Array): Promise<PDFImage> {
   try {
-    return await pdf.embedPng(bytes)
-  } catch {
     return await pdf.embedJpg(bytes)
+  } catch {
+    return await pdf.embedPng(bytes)
+  }
+}
+
+async function embedFromSrc(pdf: PDFDocument, src: string): Promise<PDFImage> {
+  try {
+    const jpegUrl = await toJpegDataUrl(src)
+    return await embedAny(pdf, await toBytes(jpegUrl))
+  } catch {
+    return await embedAny(pdf, await toBytes(src))
   }
 }
 
@@ -74,10 +123,31 @@ async function loadOptionalImage(
       if (!loaded) return null
       src = loaded
     }
-    return await embedAny(pdf, await toBytes(src))
+    return await embedFromSrc(pdf, src)
   } catch {
     return null
   }
+}
+
+function drawClippedImage(
+  page: PDFPage,
+  image: PDFImage,
+  x: number,
+  y: number,
+  w: number,
+  h: number
+): void {
+  const scale = Math.max(w / image.width, h / image.height)
+  const dw = image.width * scale
+  const dh = image.height * scale
+  page.pushOperators(pushGraphicsState(), rectangle(x, y, w, h), clip(), endPath())
+  page.drawImage(image, {
+    x: x + (w - dw) / 2,
+    y: y + (h - dh) / 2,
+    width: dw,
+    height: dh
+  })
+  page.pushOperators(popGraphicsState())
 }
 
 function drawText(
@@ -143,7 +213,7 @@ export async function exportBadgesPdfBytes(options: BrowserPdfExportOptions): Pr
 
   let defaultLogo: PDFImage | null = null
   try {
-    defaultLogo = await embedAny(pdf, await toBytes(brandLogoUrl))
+    defaultLogo = await embedFromSrc(pdf, brandLogoUrl)
   } catch {
     defaultLogo = null
   }
@@ -255,6 +325,7 @@ async function drawBadge(
   const photoH = photo.height * sy
   const photoY = oy + badgeH - photo.y * sy - photoH
 
+  // Cadre photo (reste vide si aucune photo enregistrée)
   page.drawRectangle({
     x: photoX,
     y: photoY,
@@ -265,26 +336,19 @@ async function drawBadge(
     borderWidth: 1.5
   })
 
-  const photoImg = await loadOptionalImage(pdf, judoka.photoPath, readDataUrl)
-  if (photoImg) {
-    const scale = Math.max(photoW / photoImg.width, photoH / photoImg.height)
-    const dw = photoImg.width * scale
-    const dh = photoImg.height * scale
-    page.drawImage(photoImg, {
-      x: photoX + (photoW - dw) / 2,
-      y: photoY + (photoH - dh) / 2,
-      width: dw,
-      height: dh
-    })
-    // Rebord après clip approximatif
-    page.drawRectangle({
-      x: photoX,
-      y: photoY,
-      width: photoW,
-      height: photoH,
-      borderColor: hexRgb(template.colors.primary),
-      borderWidth: 1.5
-    })
+  if (judoka.photoPath) {
+    const photoImg = await loadOptionalImage(pdf, judoka.photoPath, readDataUrl)
+    if (photoImg) {
+      drawClippedImage(page, photoImg, photoX, photoY, photoW, photoH)
+      page.drawRectangle({
+        x: photoX,
+        y: photoY,
+        width: photoW,
+        height: photoH,
+        borderColor: hexRgb(template.colors.primary),
+        borderWidth: 1.5
+      })
+    }
   }
 
   if (logoImg) {
@@ -292,12 +356,7 @@ async function drawBadge(
     const side = Math.max(logo.width, logo.height) * Math.min(sx, sy)
     const cx = ox + logo.x * sx + (logo.width * sx) / 2
     const cy = oy + badgeH - logo.y * sy - (logo.height * sy) / 2
-    page.drawImage(logoImg, {
-      x: cx - side / 2,
-      y: cy - side / 2,
-      width: side,
-      height: side
-    })
+    drawClippedImage(page, logoImg, cx - side / 2, cy - side / 2, side, side)
   }
 
   const band = template.layout.displayIdBand

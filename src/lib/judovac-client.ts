@@ -206,36 +206,68 @@ async function uploadDataUrl(bucket: string, dataUrl: string, prefix: string): P
   return json.data.path
 }
 
-async function readStorageDataUrl(bucket: string, path: string): Promise<string> {
-  if (path.startsWith('data:')) return path
-  const { data, error } = await supabase.storage.from(bucket).download(path)
-  if (error || !data) throw new Error(error?.message ?? 'Photo introuvable')
-  const buf = await data.arrayBuffer()
-  const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)))
-  const ext = path.endsWith('.png') ? 'image/png' : path.endsWith('.webp') ? 'image/webp' : 'image/jpeg'
-  return `data:${ext};base64,${b64}`
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(new Error('Lecture image impossible'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+/** Normalise un chemin Storage (retire un éventuel préfixe bucket). */
+function normalizeStoragePath(path: string): { bucketHint: string | null; objectPath: string } {
+  const cleaned = path.replace(/^\/+/, '')
+  if (cleaned.startsWith(`${PHOTOS_BUCKET}/`)) {
+    return { bucketHint: PHOTOS_BUCKET, objectPath: cleaned.slice(PHOTOS_BUCKET.length + 1) }
+  }
+  if (cleaned.startsWith(`${BADGE_ASSETS_BUCKET}/`)) {
+    return {
+      bucketHint: BADGE_ASSETS_BUCKET,
+      objectPath: cleaned.slice(BADGE_ASSETS_BUCKET.length + 1)
+    }
+  }
+  return { bucketHint: null, objectPath: cleaned }
+}
+
+async function readStorageDataUrl(bucket: string, objectPath: string): Promise<string> {
+  if (objectPath.startsWith('data:')) return objectPath
+
+  const { data, error } = await supabase.storage.from(bucket).download(objectPath)
+  if (data && !error) {
+    return blobToDataUrl(data)
+  }
+
+  // Fallback URL publique (buckets publics)
+  const { data: pub } = supabase.storage.from(bucket).getPublicUrl(objectPath)
+  if (pub?.publicUrl) {
+    const res = await fetch(pub.publicUrl)
+    if (res.ok) return blobToDataUrl(await res.blob())
+  }
+
+  throw new Error(error?.message ?? 'Photo introuvable')
 }
 
 async function readAnyStorageDataUrl(path: string): Promise<string> {
-  if (path.startsWith('data:') || path.startsWith('http')) {
-    if (path.startsWith('data:')) return path
+  if (path.startsWith('data:')) return path
+  if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('/')) {
     const res = await fetch(path)
-    const blob = await res.blob()
-    return await new Promise<string>((resolve, reject) => {
-      const r = new FileReader()
-      r.onload = () => resolve(r.result as string)
-      r.onerror = reject
-      r.readAsDataURL(blob)
-    })
+    if (!res.ok) throw new Error(`Image inaccessible (${res.status})`)
+    return blobToDataUrl(await res.blob())
   }
+
+  const { bucketHint, objectPath } = normalizeStoragePath(path)
   const buckets =
-    path.startsWith('background/') || path.startsWith('logo/')
-      ? [BADGE_ASSETS_BUCKET, PHOTOS_BUCKET]
-      : [PHOTOS_BUCKET, BADGE_ASSETS_BUCKET]
+    bucketHint != null
+      ? [bucketHint]
+      : objectPath.startsWith('background/') || objectPath.startsWith('logo/')
+        ? [BADGE_ASSETS_BUCKET, PHOTOS_BUCKET]
+        : [PHOTOS_BUCKET, BADGE_ASSETS_BUCKET]
+
   let lastError: Error | null = null
   for (const bucket of buckets) {
     try {
-      return await readStorageDataUrl(bucket, path)
+      return await readStorageDataUrl(bucket, objectPath)
     } catch (e) {
       lastError = e instanceof Error ? e : new Error(String(e))
     }
@@ -921,7 +953,15 @@ export const judovacClient = {
               logoPath: kind === 'logo' ? path : tmplRes.data.logoPath,
               updatedAt: new Date().toISOString()
             }
-            resolve(ok({ path, template, dataUrl }))
+            // Persiste pour que Export / Impression utilisent le même logo/fond que l’aperçu
+            const saved = await judovacClient.setBadgeTemplate(template)
+            resolve(
+              ok({
+                path,
+                template: saved.ok ? saved.data : template,
+                dataUrl
+              })
+            )
           } catch (e) {
             resolve(
               fail(
