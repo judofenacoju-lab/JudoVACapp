@@ -24,8 +24,37 @@ const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY ?? ''
 const email = env.ADMIN_EMAIL ?? 'judovac@mail.com'
 const password = env.ADMIN_PASSWORD ?? '@Fenacoju'
 
+const projectRef = url.match(/https:\/\/([^.]+)\.supabase\.co/)?.[1] ?? '?'
+
+function jwtProjectRef(jwt: string): string | null {
+  try {
+    const payload = jwt.split('.')[1]
+    if (!payload) return null
+    const json = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8')) as { ref?: string }
+    return json.ref ?? null
+  } catch {
+    return null
+  }
+}
+
 async function main(): Promise<void> {
-  console.log('URL Supabase :', url)
+  const anonRef = jwtProjectRef(anonKey)
+  const serviceRef = jwtProjectRef(serviceKey)
+  console.log('')
+  console.log('═══ Diagnostic JudoVACapp ═══')
+  console.log('Projet Supabase (ref) :', projectRef)
+  console.log('URL                   :', url)
+  if (anonRef && anonRef !== projectRef) {
+    console.log('⚠️  CLEF ANON : projet', anonRef, '≠ URL', projectRef)
+  }
+  if (serviceRef && serviceRef !== projectRef) {
+    console.log('⚠️  CLEF SERVICE : projet', serviceRef, '≠ URL', projectRef)
+  }
+  console.log('')
+  console.log('→ Vérifiez que cette ref correspond à Settings → General → Reference ID')
+  console.log('  dans le MÊME projet où vous exécutez le SQL.')
+  console.log('  (Le nom affiché "Caisse Judo" ou "JudoVACapp" n\'a pas d\'importance.)')
+  console.log('')
 
   const res = await fetch(`${url}/rest/v1/profiles?select=id&limit=1`, {
     headers: {
@@ -67,6 +96,13 @@ async function main(): Promise<void> {
       .eq('id', login.user.id)
       .maybeSingle()
     console.log('Profil (anon RLS) :', profile ?? (pErr ? `ERREUR ${pErr.message}` : 'ABSENT'))
+  }
+
+  if (res.status === 404) {
+    console.log('')
+    console.log('⚠️  La table profiles est ABSENTE dans CE projet Supabase.')
+    console.log('   → Exécutez supabase/migrations/002_fix_profiles_admin.sql')
+    console.log('     dans le projet dont la ref est :', projectRef)
   }
 }
 
