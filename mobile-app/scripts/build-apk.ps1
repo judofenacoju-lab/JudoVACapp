@@ -10,7 +10,7 @@ New-Item -ItemType Directory -Force -Path $Tools, $ApkOut | Out-Null
 
 function Ensure-Jdk {
   if (Test-Path (Join-Path $JdkDir 'bin\java.exe')) { return }
-  Write-Host '>> Téléchargement OpenJDK 17...'
+  Write-Host '>> Telechargement OpenJDK 17...'
   $zip = Join-Path $Tools 'jdk.zip'
   Invoke-WebRequest -Uri 'https://aka.ms/download-jdk/microsoft-jdk-17.0.15-windows-x64.zip' -OutFile $zip
   Expand-Archive -Path $zip -DestinationPath $Tools -Force
@@ -25,7 +25,7 @@ function Ensure-Jdk {
 function Ensure-AndroidSdk {
   $sdkmanager = Join-Path $SdkDir 'cmdline-tools\latest\bin\sdkmanager.bat'
   if (-not (Test-Path $sdkmanager)) {
-    Write-Host '>> Téléchargement Android command-line tools...'
+    Write-Host '>> Telechargement Android command-line tools...'
     $zip = Join-Path $Tools 'cmdline-tools.zip'
     Invoke-WebRequest -Uri 'https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip' -OutFile $zip
     $cliRoot = Join-Path $SdkDir 'cmdline-tools'
@@ -74,8 +74,8 @@ $apk = Get-ChildItem -Recurse -Filter '*debug*.apk' (Join-Path $Root 'android\ap
 if (-not $apk) {
   $apk = Get-ChildItem -Recurse -Filter '*.apk' (Join-Path $Root 'android\app\build\outputs\apk') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 }
-if (-not $apk) { throw 'APK introuvable après build' }
+if (-not $apk) { throw 'APK introuvable apres build' }
 
-$dest = Join-Path $ApkOut 'JudoVACapp-scanner-1.1.0.apk'
+$dest = Join-Path $ApkOut 'JudoVAC-mobile-1.0.0.apk'
 Copy-Item $apk.FullName $dest -Force
 Write-Host ">> APK pret : $dest"

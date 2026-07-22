@@ -1,17 +1,36 @@
-import { DEFAULT_SERVER_PORT } from './types'
-import type { BadgeVerifyPayload } from './types'
+import {
+  DEFAULT_CLOUD_BASE_URL,
+  DEFAULT_SERVER_PORT,
+  type BadgeVerifyPayload,
+  type ServerMode
+} from './types'
 
-export function buildServerBaseUrl(host: string, port = DEFAULT_SERVER_PORT): string {
-  const trimmed = host.trim().replace(/^https?:\/\//, '').replace(/\/$/, '')
+export function buildBaseUrl(opts: {
+  mode: ServerMode
+  cloudUrl?: string
+  host?: string
+  port?: number
+}): string {
+  if (opts.mode === 'cloud') {
+    const raw = (opts.cloudUrl || DEFAULT_CLOUD_BASE_URL).trim().replace(/\/$/, '')
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw
+    return `https://${raw}`
+  }
+  const trimmed = (opts.host ?? '').trim().replace(/^https?:\/\//, '').replace(/\/$/, '')
+  const port = opts.port ?? DEFAULT_SERVER_PORT
   return `http://${trimmed}:${port}`
 }
 
-export async function pingServer(host: string, port = DEFAULT_SERVER_PORT): Promise<boolean> {
+export async function pingServer(baseUrl: string): Promise<boolean> {
   try {
-    const res = await fetch(`${buildServerBaseUrl(host, port)}/health`, {
-      method: 'GET'
-    })
-    if (!res.ok) return false
+    const res = await fetch(`${baseUrl}/api/health`, { method: 'GET' })
+    if (!res.ok) {
+      // Fallback LAN Electron
+      const health = await fetch(`${baseUrl}/health`, { method: 'GET' })
+      if (!health.ok) return false
+      const data = (await health.json()) as { ok?: boolean }
+      return data.ok === true
+    }
     const data = (await res.json()) as { ok?: boolean }
     return data.ok === true
   } catch {
@@ -20,8 +39,7 @@ export async function pingServer(host: string, port = DEFAULT_SERVER_PORT): Prom
 }
 
 export async function verifyBadge(
-  host: string,
-  port: number,
+  baseUrl: string,
   qr: { id?: string; displayId?: string }
 ): Promise<{ ok: true; badge: BadgeVerifyPayload } | { ok: false; error: string }> {
   const params = new URLSearchParams()
@@ -33,25 +51,23 @@ export async function verifyBadge(
   }
 
   try {
-    const res = await fetch(
-      `${buildServerBaseUrl(host, port)}/api/badges/verify?${params.toString()}`
-    )
+    const res = await fetch(`${baseUrl}/api/badges/verify?${params.toString()}`)
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean
+      badge?: BadgeVerifyPayload
+      error?: string
+    }
     if (res.status === 404) {
-      return { ok: false, error: 'Badge non reconnu sur ce serveur' }
+      return { ok: false, error: data.error ?? 'Badge non reconnu' }
     }
-    if (!res.ok) {
-      const err = (await res.json().catch(() => ({}))) as { error?: string }
-      return { ok: false, error: err.error ?? 'Erreur serveur' }
-    }
-    const data = (await res.json()) as { ok: boolean; badge: BadgeVerifyPayload }
-    if (!data.ok || !data.badge) {
-      return { ok: false, error: 'Réponse serveur invalide' }
+    if (!res.ok || !data.ok || !data.badge) {
+      return { ok: false, error: data.error ?? 'Erreur serveur' }
     }
     return { ok: true, badge: data.badge }
   } catch {
     return {
       ok: false,
-      error: 'Impossible de joindre le serveur — vérifiez le réseau Wi‑Fi'
+      error: 'Impossible de joindre le serveur — vérifiez la connexion Internet'
     }
   }
 }

@@ -65,13 +65,25 @@ Le fichier `vercel.json` configure le routage SPA et les fonctions serverless.
 
 Les opérateurs sont créés par l'admin via **Configuration → Utilisateurs** (API `/api/admin/users`).
 
-## App mobile scanner
+## Applications Android
 
-Mettez à jour l'URL du serveur dans l'app mobile Expo pour pointer vers votre domaine Vercel :
+### JudoVACapp Scanner (`mobile/`)
 
-```
-GET https://votre-app.vercel.app/api/badges/verify?id=...&displayId=...
-```
+Authentifie les QR codes des badges contre le **cloud** (tous les judokas enregistrés en ligne).
+
+- Mode Cloud par défaut : `https://judo-va-capp.vercel.app`
+- API : `GET /api/health`, `GET /api/badges/verify?id=…&displayId=…`
+- Build : `cd mobile; .\scripts\build-apk.ps1` → `JudoVACapp-scanner-1.1.0.apk`
+- Mode « Serveur local » optionnel pour Electron LAN
+
+### JudoVAC-mobile (`mobile-app/`)
+
+Système **complet** (mêmes données Supabase / Vercel que le web) :
+
+- Login, dashboard, CRUD judokas + photos, designer badge, export PDF, sauvegarde, admin utilisateurs
+- Build : `cd mobile-app; .\scripts\build-apk.ps1` → `JudoVAC-mobile-1.0.0.apk`
+
+Voir `mobile/README.md` et `mobile-app/README.md`.
 
 ## Différences vs version Electron
 

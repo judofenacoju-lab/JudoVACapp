@@ -19,6 +19,12 @@ mobile/.tools/
 mobile/android/
 mobile/node_modules/
 mobile/.expo/
+mobile-app/.tools/
+mobile-app/android/
+mobile-app/node_modules/
+mobile-app/.expo/
+mobile-app/.env
+
 
 # IDE / OS
 .DS_Store

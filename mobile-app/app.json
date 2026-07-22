@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "JudoVAC-mobile",
+    "slug": "judovac-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#0B1F3A",
+      "image": "./assets/icon.png",
+      "resizeMode": "contain"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.judovacapp.mobile"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#0B1F3A"
+      },
+      "package": "com.judovacapp.mobile",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.INTERNET",
+        "android.permission.READ_MEDIA_IMAGES"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Importer des photos judokas et assets badge.",
+          "cameraPermission": "Capturer la photo du judoka."
+        }
+      ]
+    ]
+  }
+}

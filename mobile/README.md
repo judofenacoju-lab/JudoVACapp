@@ -1,14 +1,17 @@
-# JudoVACapp Mobile — Scanner QR
+# JudoVACapp Scanner — Authentification badges QR
 
-Application mobile pour **authentifier les badges judokas** en scannant le QR code imprimé sur le badge.
+APK : **JudoVACapp-scanner** (`com.judovacapp.scanner`)
 
-## Prérequis
+Scanne les QR codes des badges et authentifie les judokas enregistrés dans le **cloud** (mêmes données que https://judo-va-capp.vercel.app).
 
-- Node.js 18+
-- Téléphone Android ou iOS sur le **même réseau Wi‑Fi** que le PC serveur JudoVACapp
-- Le serveur JudoVACapp doit être **démarré** (mode Serveur)
+## Modes
 
-## Installation
+| Mode | Usage |
+|------|--------|
+| **Cloud** (défaut) | Vérifie tous les badges en ligne via `/api/badges/verify` |
+| **Serveur local** | Rétrocompatibilité Electron LAN (`IP:3847`) |
+
+## Développement
 
 ```bash
 cd mobile
@@ -16,23 +19,21 @@ npm install
 npx expo start
 ```
 
-Scannez le QR Expo avec l’application **Expo Go** (Android/iOS) ou lancez sur émulateur :
+## Build APK
 
-```bash
-npm run android
-npm run ios
+```powershell
+cd mobile
+.\scripts\build-apk.ps1
+# → mobile/release/JudoVACapp-scanner-1.1.0.apk
 ```
 
-## Utilisation
+Ou EAS :
 
-1. Au premier lancement, saisissez l’**adresse IP** du serveur (visible dans **Configuration → Réseau** sur le PC).
-2. Port par défaut : **3847**
-3. Scannez le QR code d’un badge.
-4. Si le judoka existe sur le serveur, les informations du badge s’affichent (nom, catégorie, poids, sexe, n° badge).
-5. Sinon : « Badge non reconnu sur ce serveur ».
+```bash
+npm run build:apk
+```
 
-## API utilisée
+## API
 
-`GET http://<IP>:3847/api/badges/verify?id=...&displayId=...`
-
-Le payload QR est celui généré à l’export/impression PDF des badges.
+- `GET /api/health` → `{ ok: true }`
+- `GET /api/badges/verify?id=...&displayId=...` → `{ ok: true, badge: { fullName, category, weight, sex, displayId } }`

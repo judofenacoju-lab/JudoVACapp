@@ -23,7 +23,9 @@
     "lint": "tsc --noEmit -p tsconfig.web.json",
     "admin:create": "tsx --tsconfig tsconfig.node.json scripts/create-admin.ts",
     "admin:diagnose": "tsx --tsconfig tsconfig.node.json scripts/diagnose-supabase.ts",
-    "icon:build": "tsx --tsconfig tsconfig.node.json scripts/build-icon.ts"
+    "icon:build": "tsx --tsconfig tsconfig.node.json scripts/build-icon.ts",
+    "build:apk:scanner": "powershell -ExecutionPolicy Bypass -File mobile/scripts/build-apk.ps1",
+    "build:apk:mobile": "powershell -ExecutionPolicy Bypass -File mobile-app/scripts/build-apk.ps1"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.6",
