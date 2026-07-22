@@ -83,6 +83,7 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
   useEffect(() => {
     let alive = true
     const tick = async () => {
+      void window.judovac.heartbeat?.()
       const [s, st, reg] = await Promise.all([
         window.judovac.getDashboardStats(),
         window.judovac.getClientStatus(),

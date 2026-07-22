@@ -179,7 +179,7 @@ export function ServerDashboardPage({ onResetMode }: Props) {
             <StatTile
               icon={<Database className="h-5 w-5" />}
               label="Stockage"
-              value={status?.dbReady ? 'Local' : 'Indisponible'}
+              value={status?.dbReady ? 'Cloud' : 'Indisponible'}
               tone={status?.dbReady ? 'ok' : 'muted'}
             />
           </div>
@@ -189,7 +189,11 @@ export function ServerDashboardPage({ onResetMode }: Props) {
               <h2 className="font-semibold text-judo-navy">État serveur</h2>
               <dl className="mt-4 space-y-2 text-sm">
                 <div className="flex justify-between gap-4">
-                  <dt className="text-muted-foreground">Adresse IP (clients)</dt>
+                  <dt className="text-muted-foreground">Hébergement</dt>
+                  <dd className="font-mono text-right">Cloud</dd>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <dt className="text-muted-foreground">Adresse</dt>
                   <dd className="font-mono text-right">
                     {status?.preferredAddress ?? '—'}
                   </dd>

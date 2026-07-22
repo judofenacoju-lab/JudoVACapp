@@ -8,7 +8,7 @@ interface Props {
 }
 
 /**
- * Capture webcam ou import JPG/PNG — stocke le chemin fichier local + aperçu immédiat.
+ * Capture webcam ou import JPG/PNG — upload Cloud (Supabase Storage).
  */
 export function PhotoCapture({ value, onChange }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -22,17 +22,15 @@ export function PhotoCapture({ value, onChange }: Props) {
     return () => stopCam()
   }, [])
 
-  // Attache le flux une fois que <video> est monté (évite l'écran noir)
   useEffect(() => {
     if (!camOn || !streamRef.current || !videoRef.current) return
     const video = videoRef.current
     video.srcObject = streamRef.current
     void video.play().catch(() => {
-      setError('Impossible de démarrer l’aperçu webcam.')
+      setError("Impossible de démarrer l'aperçu webcam.")
     })
   }, [camOn])
 
-  // Charge la miniature si une photo existe déjà (édition)
   useEffect(() => {
     if (!value || preview) return
     let cancelled = false
@@ -51,23 +49,24 @@ export function PhotoCapture({ value, onChange }: Props) {
     stopCam()
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
-        setError('API webcam non disponible dans cet environnement.')
+        setError('Webcam non disponible. Utilisez « Importer JPG/PNG » ou HTTPS.')
         return
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'user',
-          width: { ideal: 640 },
-          height: { ideal: 480 }
-        },
-        audio: false
-      })
+      let stream: MediaStream
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false
+        })
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+      }
       streamRef.current = stream
       setCamOn(true)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       setError(
-        `Webcam inaccessible (${msg}). Autorisez la caméra pour JudoVACapp dans Windows Réglages → Confidentialité.`
+        `Webcam inaccessible (${msg}). Autorisez la caméra dans le navigateur, ou importez une image JPG/PNG.`
       )
     }
   }

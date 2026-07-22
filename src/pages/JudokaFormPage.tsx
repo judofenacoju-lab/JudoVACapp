@@ -289,24 +289,6 @@ export function JudokaFormPage({
             <Field label="Catégorie" id="category">
               <Input id="category" value={form.category} onChange={(e) => set('category', e.target.value)} />
             </Field>
-            <Field label="Poids (kg)" id="weightKg">
-              <Input
-                id="weightKg"
-                type="number"
-                step="0.1"
-                value={form.weightKg}
-                onChange={(e) => set('weightKg', e.target.value)}
-              />
-            </Field>
-            <Field label="Taille (cm)" id="heightCm">
-              <Input
-                id="heightCm"
-                type="number"
-                step="0.1"
-                value={form.heightCm}
-                onChange={(e) => set('heightCm', e.target.value)}
-              />
-            </Field>
             <Field label="N° licence" id="licenseNumber">
               <Input
                 id="licenseNumber"

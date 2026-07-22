@@ -166,17 +166,32 @@ async function ensureDefaultTemplate(): Promise<BadgeTemplate> {
 }
 
 async function uploadDataUrl(bucket: string, dataUrl: string, prefix: string): Promise<string> {
-  const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl)
-  if (!match) throw new Error('Format data URL invalide')
-  const ext = match[1]?.includes('png') ? 'png' : 'jpg'
-  const bytes = Uint8Array.from(atob(match[2]!), (c) => c.charCodeAt(0))
-  const path = `${prefix}/${crypto.randomUUID()}.${ext}`
-  const { error } = await supabase.storage.from(bucket).upload(path, bytes, {
-    contentType: match[1]!,
-    upsert: false
+  const token = await getAccessToken()
+  if (!token) throw new Error('Session expirée — reconnectez-vous.')
+
+  const res = await fetch('/api/photos/upload', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify({ dataUrl, bucket, prefix })
   })
-  if (error) throw new Error(error.message)
-  return path
+  const text = await res.text()
+  let json: { ok?: boolean; data?: { path: string }; error?: string } = {}
+  try {
+    json = text ? (JSON.parse(text) as typeof json) : {}
+  } catch {
+    throw new Error(
+      res.ok
+        ? 'Réponse upload invalide'
+        : `Upload photo échoué (${res.status}). Vérifiez SUPABASE_SERVICE_ROLE_KEY sur Vercel.`
+    )
+  }
+  if (!res.ok || !json.ok || !json.data?.path) {
+    throw new Error(json.error ?? 'Upload photo échoué')
+  }
+  return json.data.path
 }
 
 async function readStorageDataUrl(bucket: string, path: string): Promise<string> {
@@ -191,6 +206,27 @@ async function readStorageDataUrl(bucket: string, path: string): Promise<string>
 
 async function getSessionToken(): Promise<string | null> {
   return getAccessToken()
+}
+
+async function fetchOnlineClients(): Promise<
+  import('@shared/types/dashboard').ConnectedClient[]
+> {
+  try {
+    const token = await getAccessToken()
+    if (!token) return []
+    const res = await fetch('/api/presence', {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    const json = (await res.json().catch(() => ({}))) as {
+      ok?: boolean
+      data?: { items?: import('@shared/types/dashboard').ConnectedClient[] }
+    }
+    if (!res.ok || !json.ok) return []
+    return json.data?.items ?? []
+  } catch {
+    return []
+  }
 }
 
 export const judovacClient = {
@@ -221,6 +257,8 @@ export const judovacClient = {
 
   getServerStatus: async (): Promise<IpcResult<ServerStatus>> => {
     const profile = await requireProfile()
+    const connectedClients = profile.role === 'admin' ? await fetchOnlineClients() : []
+
     if (profile.role !== 'admin') {
       return ok({
         running: false,
@@ -229,7 +267,7 @@ export const judovacClient = {
         startedAt: null,
         connectedClients: [],
         dbReady: true,
-        dbBackend: null,
+        dbBackend: 'cloud',
         localAddresses: [],
         preferredAddress: null
       })
@@ -239,12 +277,29 @@ export const judovacClient = {
       host: 'cloud',
       port: 443,
       startedAt: new Date().toISOString(),
-      connectedClients: [],
+      connectedClients,
       dbReady: true,
-      dbBackend: null,
+      dbBackend: 'cloud',
       localAddresses: [],
       preferredAddress: window.location.hostname
     })
+  },
+
+  /** Ping de présence (opérateur connecté). */
+  heartbeat: async (): Promise<IpcResult<boolean>> => {
+    try {
+      const token = await getAccessToken()
+      if (!token) return fail('Session expirée')
+      const res = await fetch('/api/presence', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string }
+      if (!res.ok || !json.ok) return fail(json.error ?? 'Présence échouée')
+      return ok(true)
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e))
+    }
   },
 
   getClientStatus: async (): Promise<IpcResult<ClientConnectionStatus>> => {
@@ -261,6 +316,10 @@ export const judovacClient = {
 
   getDashboardStats: async (): Promise<IpcResult<DashboardStats>> => {
     const profile = await requireProfile()
+    if (profile.role === 'operator') {
+      void judovacClient.heartbeat()
+    }
+
     const { data: judokas } = await supabase.from('judokas').select('created_by')
     const all = judokas ?? []
     const map = new Map<string, number>()
@@ -283,9 +342,11 @@ export const judovacClient = {
       .order('created_at', { ascending: false })
       .limit(20)
 
+    const online = profile.role === 'admin' ? await fetchOnlineClients() : []
+
     return ok({
       totalJudokas: all.length,
-      connectedClients: profile.role === 'admin' ? 1 : 0,
+      connectedClients: online.length,
       networkStatus: 'online',
       pendingSyncCount: 0,
       lastSyncAt: new Date().toISOString(),

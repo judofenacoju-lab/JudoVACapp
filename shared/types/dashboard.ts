@@ -53,8 +53,8 @@ export interface ServerStatus {
   startedAt: string | null
   connectedClients: ConnectedClient[]
   dbReady: boolean
-  /** Toujours `json` — stockage local. */
-  dbBackend?: 'json' | null
+  /** Toujours `json` en desktop ; `cloud` en mode web. */
+  dbBackend?: 'json' | 'cloud' | null
   /** Adresses IPv4 LAN détectées automatiquement (pour les clients). */
   localAddresses: LocalNetworkAddress[]
   preferredAddress: string | null
