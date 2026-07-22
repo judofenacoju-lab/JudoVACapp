@@ -89,20 +89,35 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     setBusy(true)
     setError(null)
     setMessage(null)
-    const res = await window.judovac.createUser(
-      newUsername,
-      undefined,
-      newPassword.trim() || undefined
-    )
-    setBusy(false)
-    if (!res.ok) {
-      setError(res.error)
-      return
+    try {
+      const username = newUsername.trim()
+      if (!username) {
+        setError("Indiquez un nom d'utilisateur (ex. orient).")
+        return
+      }
+      if (newPassword.trim() && newPassword.trim().length < 6) {
+        setError('Le mot de passe doit contenir au moins 6 caractères.')
+        return
+      }
+      const res = await window.judovac.createUser(
+        username,
+        undefined,
+        newPassword.trim() || undefined
+      )
+      if (!res.ok) {
+        setError(res.error)
+        return
+      }
+      setNewUsername('')
+      setNewPassword('')
+      setCreatedCredentials(res.data)
+      setMessage(`Compte « ${res.data.username} » créé.`)
+      await loadUsers()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Création impossible')
+    } finally {
+      setBusy(false)
     }
-    setNewUsername('')
-    setNewPassword('')
-    setCreatedCredentials(res.data)
-    await loadUsers()
   }
 
   function isProtectedAdmin(user: UserAccount): boolean {
@@ -285,14 +300,15 @@ export function AdminPage({ onBack, embedded = false }: Props) {
         {tab === 'users' && (
           <section className="space-y-4 rounded-xl border bg-white/75 p-5">
             <p className="text-sm text-muted-foreground">
-              Créez les comptes opérateurs ici. Chaque utilisateur reçoit un email{' '}
-              <span className="font-mono text-foreground">utilisateur@mail.com</span> et un mot de
-              passe pour se connecter.
+              Saisissez un nom (ex. <span className="font-mono text-foreground">orient</span>) — l’email
+              de connexion sera{' '}
+              <span className="font-mono text-foreground">orient@mail.com</span>. Vous pouvez aussi
+              coller directement l’email.
             </p>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Nom d'utilisateur">
                 <Input
-                  placeholder="Ex. Antoine"
+                  placeholder="Ex. orient"
                   value={newUsername}
                   onChange={(e) => setNewUsername(e.target.value)}
                   onKeyDown={(e) => {
@@ -303,7 +319,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                   }}
                 />
               </Field>
-              <Field label="Mot de passe (optionnel)">
+              <Field label="Mot de passe (min. 6 caractères)">
                 <Input
                   type="text"
                   placeholder="Laisser vide = généré automatiquement"
@@ -326,9 +342,11 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                 onClick={() => void createUser()}
               >
                 <Plus className="h-4 w-4" />
-                Créer le compte
+                {busy ? 'Création…' : 'Créer le compte'}
               </Button>
             </div>
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            {message && <p className="text-sm text-emerald-700">{message}</p>}
             <ul className="max-h-80 space-y-2 overflow-auto text-sm">
               {users.length === 0 && (
                 <li className="text-muted-foreground">Aucun compte pour l’instant.</li>

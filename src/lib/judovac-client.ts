@@ -535,25 +535,42 @@ export const judovacClient = {
     displayName?: string,
     password?: string
   ): Promise<IpcResult<import('@shared/types/user-account').CreatedUserAccount>> => {
-    const token = await getAccessToken()
-    if (!token) {
-      return fail('Session expirée — reconnectez-vous pour créer un utilisateur.')
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        return fail('Session expirée — reconnectez-vous pour créer un utilisateur.')
+      }
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ username, displayName, role: 'operator', password })
+      })
+      const text = await res.text()
+      let json: {
+        ok?: boolean
+        data?: import('@shared/types/user-account').CreatedUserAccount
+        error?: string
+      } = {}
+      try {
+        json = text ? (JSON.parse(text) as typeof json) : {}
+      } catch {
+        return fail(
+          res.ok
+            ? 'Réponse serveur invalide'
+            : `Erreur serveur (${res.status}). Vérifiez SUPABASE_SERVICE_ROLE_KEY sur Vercel.`
+        )
+      }
+      if (!res.ok || !json.ok) {
+        return fail(json.error ?? `Création utilisateur échouée (${res.status})`)
+      }
+      if (!json.data) return fail('Réponse serveur incomplète')
+      return ok(json.data)
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : 'Création utilisateur impossible')
     }
-    const res = await fetch('/api/admin/users', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token ?? ''}`
-      },
-      body: JSON.stringify({ username, displayName, role: 'operator', password })
-    })
-    const json = (await res.json()) as {
-      ok?: boolean
-      data?: import('@shared/types/user-account').CreatedUserAccount
-      error?: string
-    }
-    if (!res.ok || !json.ok) return fail(json.error ?? 'Création utilisateur échouée')
-    return ok(json.data!)
   },
 
   deleteUser: async (username: string): Promise<IpcResult<boolean>> => {
