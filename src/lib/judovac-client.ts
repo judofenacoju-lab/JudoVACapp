@@ -38,6 +38,7 @@ const BADGE_ASSETS_BUCKET = 'badge-assets'
 
 let cachedProfile: ProfileRow | null = null
 let cachedMode: ModeConfig | null = null
+let cachedAccessToken: string | null = null
 let pendingBackupJson: Record<string, unknown> | null = null
 
 async function getProfile(): Promise<ProfileRow | null> {
@@ -51,6 +52,29 @@ async function getProfile(): Promise<ProfileRow | null> {
 
 export function clearProfileCache(): void {
   cachedProfile = null
+  cachedAccessToken = null
+}
+
+export function syncAccessToken(token: string | null): void {
+  cachedAccessToken = token
+}
+
+async function getAccessToken(): Promise<string | null> {
+  if (cachedAccessToken) return cachedAccessToken
+
+  const { data: { session } } = await supabase.auth.getSession()
+  if (session?.access_token) {
+    cachedAccessToken = session.access_token
+    return cachedAccessToken
+  }
+
+  const { data: { session: refreshed } } = await supabase.auth.refreshSession()
+  if (refreshed?.access_token) {
+    cachedAccessToken = refreshed.access_token
+    return cachedAccessToken
+  }
+
+  return null
 }
 
 async function requireProfile(): Promise<ProfileRow> {
@@ -166,8 +190,7 @@ async function readStorageDataUrl(bucket: string, path: string): Promise<string>
 }
 
 async function getSessionToken(): Promise<string | null> {
-  const { data: { session } } = await supabase.auth.getSession()
-  return session?.access_token ?? null
+  return getAccessToken()
 }
 
 export const judovacClient = {
@@ -512,7 +535,10 @@ export const judovacClient = {
     displayName?: string,
     password?: string
   ): Promise<IpcResult<import('@shared/types/user-account').CreatedUserAccount>> => {
-    const token = await getSessionToken()
+    const token = await getAccessToken()
+    if (!token) {
+      return fail('Session expirée — reconnectez-vous pour créer un utilisateur.')
+    }
     const res = await fetch('/api/admin/users', {
       method: 'POST',
       headers: {
@@ -531,7 +557,10 @@ export const judovacClient = {
   },
 
   deleteUser: async (username: string): Promise<IpcResult<boolean>> => {
-    const token = await getSessionToken()
+    const token = await getAccessToken()
+    if (!token) {
+      return fail('Session expirée — reconnectez-vous.')
+    }
     const res = await fetch(`/api/admin/users?username=${encodeURIComponent(username)}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token ?? ''}` }
