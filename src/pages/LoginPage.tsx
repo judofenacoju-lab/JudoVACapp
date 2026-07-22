@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Loader2, LogIn } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -11,6 +12,7 @@ import brandLogo from '@/assets/brand-logo.png'
  */
 export function LoginPage() {
   const { signIn } = useAuth()
+  const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
@@ -22,7 +24,11 @@ export function LoginPage() {
     setError(null)
     const res = await signIn(email.trim(), password)
     setBusy(false)
-    if (res.error) setError(res.error)
+    if (res.error) {
+      setError(res.error)
+      return
+    }
+    navigate('/')
   }
 
   return (
@@ -49,7 +55,7 @@ export function LoginPage() {
               id="email"
               type="email"
               autoComplete="email"
-              placeholder="admin@example.com"
+              placeholder="judovac@mail.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -78,9 +84,6 @@ export function LoginPage() {
           </Button>
         </form>
 
-        <p className="mt-6 text-center text-xs text-white/50">
-          Déployé sur Vercel avec Supabase
-        </p>
       </div>
     </div>
   )

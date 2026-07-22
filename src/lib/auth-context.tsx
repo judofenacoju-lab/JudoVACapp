@@ -67,11 +67,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) return { error: error.message }
     clearProfileCache()
     const { data: { session: s } } = await supabase.auth.getSession()
-    if (s?.user) {
-      const p = await loadProfile(s.user.id)
-      setProfile(p)
-      setSession(s)
+    if (!s?.user) return { error: 'Session introuvable après connexion' }
+
+    const p = await loadProfile(s.user.id)
+    if (!p) {
+      return {
+        error:
+          'Compte authentifié mais profil absent. Exécutez supabase/migrations/002_fix_profiles_admin.sql dans Supabase.'
+      }
     }
+    if (!p.active) return { error: 'Compte désactivé — contactez un administrateur.' }
+
+    setProfile(p)
+    setSession(s)
     return {}
   }
 
