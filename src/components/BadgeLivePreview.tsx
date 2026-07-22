@@ -4,7 +4,7 @@ import { badgeDesignCanvas } from '@shared/utils/badge-canvas'
 import brandLogo from '@/assets/brand-logo.png'
 
 const SAMPLE = {
-  fullName: 'Orient, Kitete',
+  fullName: 'Kitete, Orient',
   category: 'Senior',
   weight: '73 kg',
   sex: 'M',

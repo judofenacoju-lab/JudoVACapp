@@ -2,17 +2,11 @@
  * Génération PDF badges côté navigateur (pdf-lib) —
  * contourne les crashes PDFKit sur Vercel serverless.
  */
-import {
-  PDFDocument,
-  rgb,
-  StandardFonts,
-  type PDFFont,
-  type PDFImage,
-  type PDFPage
-} from 'pdf-lib'
+import { PDFDocument, rgb, StandardFonts, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib'
 import QRCode from 'qrcode'
 import type { BadgeTemplate } from '@shared/types/badge'
 import type { Judoka } from '@shared/types/judoka'
+import { formatBadgeJudokaName } from '@shared/utils/judoka'
 import brandLogoUrl from '@/assets/brand-logo.png'
 
 const DESIGN_SCALE = 2.5
@@ -40,10 +34,8 @@ function resolveGrid(
   return { cols: 2, rows: 4 }
 }
 
-function formatName(j: Pick<Judoka, 'lastName' | 'middleName' | 'firstName'>): string {
-  const mid = j.middleName?.trim()
-  const left = mid ? `${j.lastName} ${mid}` : j.lastName
-  return `${left}, ${j.firstName}`.replace(/\s+/g, ' ').trim()
+function formatName(j: Pick<Judoka, 'lastName' | 'firstName'>): string {
+  return formatBadgeJudokaName(j)
 }
 
 function hexRgb(hex: string): ReturnType<typeof rgb> {
@@ -69,98 +61,169 @@ async function toBytes(src: string): Promise<Uint8Array> {
   return new Uint8Array(await res.arrayBuffer())
 }
 
-/** Toujours ré-encoder en JPEG via canvas (fiable pour pdf-lib). */
-async function toJpegDataUrl(src: string, maxSide = 1200, quality = 0.88): Promise<string> {
-  return await new Promise((resolve, reject) => {
+function loadHtmlImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
     const img = new Image()
     img.crossOrigin = 'anonymous'
-    img.onload = () => {
-      try {
-        const scale = Math.min(1, maxSide / Math.max(img.width, img.height, 1))
-        const w = Math.max(1, Math.round(img.width * scale))
-        const h = Math.max(1, Math.round(img.height * scale))
-        const canvas = document.createElement('canvas')
-        canvas.width = w
-        canvas.height = h
-        const ctx = canvas.getContext('2d')
-        if (!ctx) {
-          reject(new Error('Canvas indisponible'))
-          return
-        }
-        ctx.fillStyle = '#ffffff'
-        ctx.fillRect(0, 0, w, h)
-        ctx.drawImage(img, 0, 0, w, h)
-        resolve(canvas.toDataURL('image/jpeg', quality))
-      } catch (e) {
-        reject(e instanceof Error ? e : new Error(String(e)))
-      }
-    }
+    img.onload = () => resolve(img)
     img.onerror = () => reject(new Error('Image illisible'))
     img.src = src
   })
 }
 
-async function embedAny(pdf: PDFDocument, bytes: Uint8Array): Promise<PDFImage> {
-  try {
-    return await pdf.embedJpg(bytes)
-  } catch {
-    return await pdf.embedPng(bytes)
+/** Photo : cover dans un rectangle aux coins arrondis + bordure (PNG). */
+async function toRoundedCoverPng(
+  src: string,
+  outW: number,
+  outH: number,
+  radius: number,
+  borderColor?: string,
+  borderWidth = 3
+): Promise<string> {
+  const img = await loadHtmlImage(src)
+  const w = Math.max(1, Math.round(outW))
+  const h = Math.max(1, Math.round(outH))
+  const r = Math.max(0, Math.min(radius, Math.min(w, h) / 2))
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Canvas indisponible')
+
+  const roundPath = () => {
+    ctx.beginPath()
+    ctx.moveTo(r, 0)
+    ctx.arcTo(w, 0, w, h, r)
+    ctx.arcTo(w, h, 0, h, r)
+    ctx.arcTo(0, h, 0, 0, r)
+    ctx.arcTo(0, 0, w, 0, r)
+    ctx.closePath()
   }
+
+  ctx.clearRect(0, 0, w, h)
+  ctx.save()
+  roundPath()
+  ctx.clip()
+
+  const scale = Math.max(w / img.width, h / img.height)
+  const dw = img.width * scale
+  const dh = img.height * scale
+  ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh)
+  ctx.restore()
+
+  if (borderColor) {
+    roundPath()
+    ctx.strokeStyle = borderColor
+    ctx.lineWidth = Math.max(1, borderWidth)
+    ctx.stroke()
+  }
+
+  return canvas.toDataURL('image/png')
 }
 
-async function embedFromSrc(pdf: PDFDocument, src: string): Promise<PDFImage> {
-  const jpegUrl = await toJpegDataUrl(src)
-  return await embedAny(pdf, await toBytes(jpegUrl))
+/** Logo circulaire (comme l’aperçu), fond blanc. */
+async function toCircularLogoPng(src: string, size: number): Promise<string> {
+  const img = await loadHtmlImage(src)
+  const s = Math.max(1, Math.round(size))
+  const canvas = document.createElement('canvas')
+  canvas.width = s
+  canvas.height = s
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Canvas indisponible')
+
+  ctx.clearRect(0, 0, s, s)
+  ctx.beginPath()
+  ctx.arc(s / 2, s / 2, s / 2, 0, Math.PI * 2)
+  ctx.closePath()
+  ctx.clip()
+
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, s, s)
+
+  const scale = Math.max(s / img.width, s / img.height)
+  const dw = img.width * scale
+  const dh = img.height * scale
+  ctx.drawImage(img, (s - dw) / 2, (s - dh) / 2, dw, dh)
+  return canvas.toDataURL('image/png')
 }
 
-async function loadOptionalImage(
+async function embedPngFromDataUrl(pdf: PDFDocument, dataUrl: string): Promise<PDFImage> {
+  return pdf.embedPng(await toBytes(dataUrl))
+}
+
+async function resolveSourceDataUrl(
+  path: string,
+  readDataUrl: (path: string) => Promise<string | null>
+): Promise<string | null> {
+  if (path.startsWith('data:')) return path
+  if (path.startsWith('http') || path.startsWith('/')) {
+    const bytes = await toBytes(path)
+    const blob = new Blob([new Uint8Array(bytes)])
+    return await new Promise<string>((resolve, reject) => {
+      const r = new FileReader()
+      r.onload = () => resolve(r.result as string)
+      r.onerror = () => reject(new Error('Lecture image impossible'))
+      r.readAsDataURL(blob)
+    })
+  }
+  return readDataUrl(path)
+}
+
+async function loadRoundedPhoto(
   pdf: PDFDocument,
   path: string | null | undefined,
-  readDataUrl: (path: string) => Promise<string | null>
+  readDataUrl: (path: string) => Promise<string | null>,
+  outW: number,
+  outH: number,
+  radius: number,
+  borderColor?: string
 ): Promise<PDFImage | null> {
   if (!path) return null
   try {
-    let src = path
-    if (!path.startsWith('data:') && !path.startsWith('http') && !path.startsWith('/')) {
-      const loaded = await readDataUrl(path)
-      if (!loaded) return null
-      src = loaded
-    } else if (path.startsWith('http') || path.startsWith('/')) {
-      // Charger via fetch → data URL pour éviter CORS canvas
-      const bytes = await toBytes(path)
-      const blob = new Blob([new Uint8Array(bytes)])
-      src = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader()
-        r.onload = () => resolve(r.result as string)
-        r.onerror = () => reject(new Error('Lecture image impossible'))
-        r.readAsDataURL(blob)
-      })
-    }
-    return await embedFromSrc(pdf, src)
+    const src = await resolveSourceDataUrl(path, readDataUrl)
+    if (!src) return null
+    const png = await toRoundedCoverPng(
+      src,
+      outW * 2,
+      outH * 2,
+      radius * 2,
+      borderColor,
+      3
+    )
+    return await embedPngFromDataUrl(pdf, png)
   } catch (e) {
-    console.warn('[badge-pdf] image non embarquée:', path, e)
+    console.warn('[badge-pdf] photo non embarquée:', path, e)
     return null
   }
 }
 
-/** Remplit le cadre sans déborder (contain). */
-function drawCoverImage(
-  page: PDFPage,
-  image: PDFImage,
-  x: number,
-  y: number,
-  w: number,
-  h: number
-): void {
-  const scale = Math.min(w / image.width, h / image.height)
-  const dw = image.width * scale
-  const dh = image.height * scale
-  page.drawImage(image, {
-    x: x + (w - dw) / 2,
-    y: y + (h - dh) / 2,
-    width: dw,
-    height: dh
-  })
+async function loadCircularLogo(
+  pdf: PDFDocument,
+  path: string | null | undefined,
+  readDataUrl: (path: string) => Promise<string | null>,
+  size: number,
+  fallbackSrc?: string
+): Promise<PDFImage | null> {
+  const trySrc = async (src: string) => {
+    const png = await toCircularLogoPng(src, Math.max(64, Math.round(size * 2)))
+    return embedPngFromDataUrl(pdf, png)
+  }
+  try {
+    if (path) {
+      const src = await resolveSourceDataUrl(path, readDataUrl)
+      if (src) return await trySrc(src)
+    }
+  } catch (e) {
+    console.warn('[badge-pdf] logo custom non embarqué:', path, e)
+  }
+  if (fallbackSrc) {
+    try {
+      return await trySrc(fallbackSrc)
+    } catch (e) {
+      console.warn('[badge-pdf] logo défaut non embarqué', e)
+    }
+  }
+  return null
 }
 
 function drawText(
@@ -224,16 +287,35 @@ export async function exportBadgesPdfBytes(options: BrowserPdfExportOptions): Pr
   const sx = badgeW / designW
   const sy = badgeH / designH
 
-  let defaultLogo: PDFImage | null = null
-  try {
-    defaultLogo = await embedFromSrc(pdf, brandLogoUrl)
-  } catch {
-    defaultLogo = null
-  }
+  const logoLayout = template.layout.logo
+  const logoSide = Math.max(logoLayout.width, logoLayout.height) * Math.min(sx, sy)
+  const logoImg = await loadCircularLogo(
+    pdf,
+    template.logoPath,
+    readDataUrl,
+    logoSide,
+    brandLogoUrl
+  )
 
-  const bgImg = await loadOptionalImage(pdf, template.backgroundPath, readDataUrl)
-  let logoImg = await loadOptionalImage(pdf, template.logoPath, readDataUrl)
-  if (!logoImg) logoImg = defaultLogo
+  let bgImg: PDFImage | null = null
+  if (template.backgroundPath) {
+    try {
+      const src = await resolveSourceDataUrl(template.backgroundPath, readDataUrl)
+      if (src) {
+        const img = await loadHtmlImage(src)
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.round(badgeW * 2)
+        canvas.height = Math.round(badgeH * 2)
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+          bgImg = await embedPngFromDataUrl(pdf, canvas.toDataURL('image/png'))
+        }
+      }
+    } catch {
+      bgImg = null
+    }
+  }
 
   const perPageCount = cols * rows
   let page: PDFPage | null = null
@@ -258,7 +340,6 @@ export async function exportBadgesPdfBytes(options: BrowserPdfExportOptions): Pr
     const row = Math.floor(slot / cols)
     const ox = margin + col * (badgeW + gap)
     const oyTop = margin + row * (badgeH + gap)
-    // pdf-lib : y=0 en bas
     const oy = pageH - oyTop - badgeH
 
     await drawBadge(page!, {
@@ -274,6 +355,7 @@ export async function exportBadgesPdfBytes(options: BrowserPdfExportOptions): Pr
       fontBold,
       bgImg,
       logoImg,
+      logoSide,
       readDataUrl,
       pdf
     })
@@ -297,6 +379,7 @@ async function drawBadge(
     fontBold: PDFFont
     bgImg: PDFImage | null
     logoImg: PDFImage | null
+    logoSide: number
     readDataUrl: (path: string) => Promise<string | null>
     pdf: PDFDocument
   }
@@ -314,6 +397,7 @@ async function drawBadge(
     fontBold,
     bgImg,
     logoImg,
+    logoSide,
     readDataUrl,
     pdf
   } = ctx
@@ -337,40 +421,48 @@ async function drawBadge(
   const photoW = photo.width * sx
   const photoH = photo.height * sy
   const photoY = oy + badgeH - photo.y * sy - photoH
+  const radius = Math.min(photoW, photoH) * 0.12
 
-  const photoImg = judoka.photoPath
-    ? await loadOptionalImage(pdf, judoka.photoPath, readDataUrl)
-    : null
+  const photoImg = await loadRoundedPhoto(
+    pdf,
+    judoka.photoPath,
+    readDataUrl,
+    photoW,
+    photoH,
+    radius,
+    template.colors.primary
+  )
 
-  // Cadre : gris si pas de photo, sinon fond blanc + image
-  page.drawRectangle({
-    x: photoX,
-    y: photoY,
-    width: photoW,
-    height: photoH,
-    color: photoImg ? rgb(1, 1, 1) : hexRgb('#e2e8f0'),
-    borderColor: hexRgb(template.colors.primary),
-    borderWidth: 1.5
-  })
-
-  if (photoImg) {
-    drawCoverImage(page, photoImg, photoX, photoY, photoW, photoH)
+  // Fond du cadre (si pas de photo)
+  if (!photoImg) {
     page.drawRectangle({
       x: photoX,
       y: photoY,
       width: photoW,
       height: photoH,
+      color: hexRgb('#e2e8f0'),
       borderColor: hexRgb(template.colors.primary),
       borderWidth: 1.5
+    })
+  } else {
+    page.drawImage(photoImg, {
+      x: photoX,
+      y: photoY,
+      width: photoW,
+      height: photoH
     })
   }
 
   if (logoImg) {
     const logo = template.layout.logo
-    const side = Math.max(logo.width, logo.height) * Math.min(sx, sy)
     const cx = ox + logo.x * sx + (logo.width * sx) / 2
     const cy = oy + badgeH - logo.y * sy - (logo.height * sy) / 2
-    drawCoverImage(page, logoImg, cx - side / 2, cy - side / 2, side, side)
+    page.drawImage(logoImg, {
+      x: cx - logoSide / 2,
+      y: cy - logoSide / 2,
+      width: logoSide,
+      height: logoSide
+    })
   }
 
   const band = template.layout.displayIdBand
@@ -453,7 +545,7 @@ async function drawBadge(
     errorCorrectionLevel: 'M'
   })
   try {
-    const qrImg = await embedAny(pdf, await toBytes(qrDataUrl))
+    const qrImg = await pdf.embedPng(await toBytes(qrDataUrl))
     const qrH = qr.height * sy
     page.drawImage(qrImg, {
       x: ox + qr.x * sx,
