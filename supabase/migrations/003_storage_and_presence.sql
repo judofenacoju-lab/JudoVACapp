@@ -55,4 +55,13 @@ CREATE POLICY profiles_update_own ON public.profiles
   USING (id = auth.uid())
   WITH CHECK (id = auth.uid());
 
+-- Temps réel sur judokas (liste auto Admin / opérateurs)
+DO $$
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.judokas;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+  WHEN undefined_object THEN NULL;
+END $$;
+
 NOTIFY pgrst, 'reload schema';

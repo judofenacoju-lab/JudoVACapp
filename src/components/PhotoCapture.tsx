@@ -92,7 +92,7 @@ export function PhotoCapture({ value, onChange }: Props) {
       return
     }
     ctx.drawImage(video, 0, 0)
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.82)
     const res = await window.judovac.savePhotoDataUrl(dataUrl)
     setBusy(false)
     if (!res.ok) {
@@ -162,6 +162,7 @@ export function PhotoCapture({ value, onChange }: Props) {
             <ImagePlus className="h-4 w-4" />
             Importer JPG/PNG
           </Button>
+          <p className="text-[11px] text-muted-foreground">Max. 10 Mo — compressé automatiquement</p>
           {(value || preview) && (
             <Button
               type="button"

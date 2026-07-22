@@ -20,9 +20,9 @@ async function ensureBucket(
 ): Promise<void> {
   const { data: buckets } = await supabase.storage.listBuckets()
   if (buckets?.some((b) => b.id === id || b.name === id)) return
-  const { error } = await supabase.storage.createBucket(id, {
+    const { error } = await supabase.storage.createBucket(id, {
     public: true,
-    fileSizeLimit: 5 * 1024 * 1024,
+    fileSizeLimit: 10 * 1024 * 1024,
     allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/jpg']
   })
   // Ignore "already exists" races

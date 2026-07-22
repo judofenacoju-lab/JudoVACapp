@@ -13,9 +13,22 @@ const SAMPLE = {
 
 const PREVIEW_MAX_HEIGHT = 420
 
-export function BadgeLivePreview({ template }: { template: BadgeTemplate }) {
-  const { width: designW, height: designH } = badgeDesignCanvas(template.size)
-  const scale = Math.min(1.15, PREVIEW_MAX_HEIGHT / designH)
+export function BadgeLivePreview({
+  template,
+  previewBackgroundUrl,
+  previewLogoUrl
+}: {
+  template: BadgeTemplate
+  /** Data URL immédiate après import (avant lecture Storage). */
+  previewBackgroundUrl?: string | null
+  previewLogoUrl?: string | null
+}) {
+  const { width: designW, height: designH } = badgeDesignCanvas(
+    template.size.widthMm > 0 && template.size.heightMm > 0
+      ? template.size
+      : { widthMm: 105, heightMm: 148 }
+  )
+  const scale = Math.min(1.15, PREVIEW_MAX_HEIGHT / Math.max(designH, 1))
   const w = designW * scale
   const h = designH * scale
 
@@ -34,7 +47,9 @@ export function BadgeLivePreview({ template }: { template: BadgeTemplate }) {
 
   useEffect(() => {
     let cancelled = false
-    if (!template.logoPath) {
+    if (previewLogoUrl) {
+      setLogoSrc(previewLogoUrl)
+    } else if (!template.logoPath) {
       setLogoSrc(brandLogo)
     } else {
       void window.judovac.readPhotoDataUrl(template.logoPath).then((res) => {
@@ -42,7 +57,9 @@ export function BadgeLivePreview({ template }: { template: BadgeTemplate }) {
         setLogoSrc(res.ok && res.data.dataUrl ? res.data.dataUrl : brandLogo)
       })
     }
-    if (!template.backgroundPath) {
+    if (previewBackgroundUrl) {
+      setBgSrc(previewBackgroundUrl)
+    } else if (!template.backgroundPath) {
       setBgSrc(null)
     } else {
       void window.judovac.readPhotoDataUrl(template.backgroundPath).then((res) => {
@@ -53,7 +70,7 @@ export function BadgeLivePreview({ template }: { template: BadgeTemplate }) {
     return () => {
       cancelled = true
     }
-  }, [template.logoPath, template.backgroundPath])
+  }, [template.logoPath, template.backgroundPath, previewLogoUrl, previewBackgroundUrl])
 
   const logoSide = Math.max(logo.width, logo.height) * scale
 

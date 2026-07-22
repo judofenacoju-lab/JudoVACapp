@@ -1,9 +1,9 @@
 import PDFDocument from 'pdfkit'
 import QRCode from 'qrcode'
-import type { Judoka } from '../../shared/types/judoka.js'
-import type { BadgeTemplate, BadgeTextStyle } from '../../shared/types/badge.js'
-import { formatBadgeCategory, formatBadgeJudokaName } from '../../shared/utils/judoka.js'
-import { badgeDesignCanvas } from '../../shared/utils/badge-canvas.js'
+import type { Judoka } from '../../shared/types/judoka'
+import type { BadgeTemplate, BadgeTextStyle } from '../../shared/types/badge'
+import { formatBadgeCategory, formatBadgeJudokaName } from '../../shared/utils/judoka'
+import { badgeDesignCanvas } from '../../shared/utils/badge-canvas'
 
 export type BadgeLayoutMode = 4 | 6 | 8 | 'custom'
 
@@ -15,6 +15,8 @@ export interface PdfExportBufferOptions {
   customRows?: number
   supabaseUrl: string
   serviceRoleKey: string
+  /** Origine du site (ex. https://judo-va-capp.vercel.app) pour le logo par défaut. */
+  siteOrigin?: string
 }
 
 function mmToPt(mm: number): number {
@@ -43,7 +45,7 @@ async function resolveImageBuffer(
   path: string | null | undefined,
   supabaseUrl: string,
   serviceRoleKey: string,
-  bucket = 'photos'
+  preferredBucket?: 'photos' | 'badge-assets'
 ): Promise<Buffer | null> {
   if (!path) return null
   try {
@@ -51,14 +53,26 @@ async function resolveImageBuffer(
       const b64 = path.split(',')[1]
       return b64 ? Buffer.from(b64, 'base64') : null
     }
-    const buckets = bucket === 'photos' ? ['photos', 'badge-assets'] : [bucket]
+    const base = supabaseUrl.replace(/\/rest\/v1\/?$/i, '').replace(/\/+$/, '')
+    const buckets =
+      preferredBucket === 'badge-assets'
+        ? ['badge-assets', 'photos']
+        : preferredBucket === 'photos'
+          ? ['photos', 'badge-assets']
+          : path.startsWith('background/') || path.startsWith('logo/')
+            ? ['badge-assets', 'photos']
+            : ['photos', 'badge-assets']
+
     for (const b of buckets) {
-      const storageUrl = `${supabaseUrl}/storage/v1/object/public/${b}/${path}`
+      const storageUrl = `${base}/storage/v1/object/public/${b}/${path}`
       const pub = await fetch(storageUrl)
       if (pub.ok) return Buffer.from(await pub.arrayBuffer())
-      const authUrl = `${supabaseUrl}/storage/v1/object/authenticated/${b}/${path}`
+      const authUrl = `${base}/storage/v1/object/authenticated/${b}/${path}`
       const res = await fetch(authUrl, {
-        headers: { Authorization: `Bearer ${serviceRoleKey}` }
+        headers: {
+          Authorization: `Bearer ${serviceRoleKey}`,
+          apikey: serviceRoleKey
+        }
       })
       if (res.ok) return Buffer.from(await res.arrayBuffer())
     }
@@ -66,6 +80,22 @@ async function resolveImageBuffer(
   } catch {
     return null
   }
+}
+
+async function resolveDefaultLogoBuffer(siteOrigin?: string): Promise<Buffer | null> {
+  const candidates = [
+    siteOrigin ? `${siteOrigin.replace(/\/+$/, '')}/brand-logo.png` : null,
+    'https://judo-va-capp.vercel.app/brand-logo.png'
+  ].filter(Boolean) as string[]
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url)
+      if (res.ok) return Buffer.from(await res.arrayBuffer())
+    } catch {
+      /* continue */
+    }
+  }
+  return null
 }
 
 function drawBadgeField(
@@ -155,10 +185,16 @@ async function drawBadge(
   badgeW: number,
   badgeH: number,
   supabaseUrl: string,
-  serviceRoleKey: string
+  serviceRoleKey: string,
+  defaultLogoBuf: Buffer | null
 ): Promise<void> {
   const bgBuf = template.backgroundPath
-    ? await resolveImageBuffer(template.backgroundPath, supabaseUrl, serviceRoleKey)
+    ? await resolveImageBuffer(
+        template.backgroundPath,
+        supabaseUrl,
+        serviceRoleKey,
+        'badge-assets'
+      )
     : null
 
   if (bgBuf) {
@@ -174,13 +210,20 @@ async function drawBadge(
   const photoW = photo.width * sx
   const photoH = photo.height * sy
 
-  const photoBuf = await resolveImageBuffer(judoka.photoPath, supabaseUrl, serviceRoleKey)
+  const photoBuf = await resolveImageBuffer(judoka.photoPath, supabaseUrl, serviceRoleKey, 'photos')
   drawRoundedJudokaPhoto(doc, photoBuf, photoX, photoY, photoW, photoH, template.colors.primary)
 
+  let logoBuf: Buffer | null = null
   if (template.logoPath) {
-    const logoBuf = await resolveImageBuffer(template.logoPath, supabaseUrl, serviceRoleKey)
-    if (logoBuf) drawCircularLogo(doc, logoBuf, ox, oy, sx, sy, template.layout.logo)
+    logoBuf = await resolveImageBuffer(
+      template.logoPath,
+      supabaseUrl,
+      serviceRoleKey,
+      'badge-assets'
+    )
   }
+  if (!logoBuf) logoBuf = defaultLogoBuf
+  if (logoBuf) drawCircularLogo(doc, logoBuf, ox, oy, sx, sy, template.layout.logo)
 
   const band = template.layout.displayIdBand
   doc
@@ -239,7 +282,7 @@ async function drawBadge(
   })
   const qrDataUrl = await QRCode.toDataURL(payload, {
     margin: 0,
-    width: Math.round(qr.width * sx * 2),
+    width: Math.round(Math.max(32, qr.width * sx * 2)),
     errorCorrectionLevel: 'M'
   })
   const b64 = qrDataUrl.split(',')[1]
@@ -253,16 +296,27 @@ async function drawBadge(
 }
 
 export async function exportBadgesPdfToBuffer(options: PdfExportBufferOptions): Promise<Uint8Array> {
-  const { template, judokas, perPage, supabaseUrl, serviceRoleKey } = options
+  const { template, judokas, perPage, supabaseUrl, serviceRoleKey, siteOrigin } = options
   const { cols, rows } = resolveGrid(perPage, options.customCols, options.customRows)
 
-  const badgeW = mmToPt(template.size.widthMm)
-  const badgeH = mmToPt(template.size.heightMm)
+  const widthMm = template.size?.widthMm > 0 ? template.size.widthMm : 105
+  const heightMm = template.size?.heightMm > 0 ? template.size.heightMm : 148
+  const safeTemplate: BadgeTemplate = {
+    ...template,
+    size: { widthMm, heightMm }
+  }
+
+  const badgeW = mmToPt(widthMm)
+  const badgeH = mmToPt(heightMm)
   const margin = 20
   const gap = 10
 
   const pageW = margin * 2 + cols * badgeW + (cols - 1) * gap
   const pageH = margin * 2 + rows * badgeH + (rows - 1) * gap
+
+  if (!Number.isFinite(pageW) || !Number.isFinite(pageH) || pageW <= 0 || pageH <= 0) {
+    throw new Error('Format de badge invalide — définissez le format dans le Designer.')
+  }
 
   const doc = new PDFDocument({
     size: [pageW, pageH],
@@ -279,9 +333,10 @@ export async function exportBadgesPdfToBuffer(options: PdfExportBufferOptions): 
     doc.on('error', reject)
   })
 
-  const { width: designW, height: designH } = badgeDesignCanvas(template.size)
+  const { width: designW, height: designH } = badgeDesignCanvas(safeTemplate.size)
   const scaleX = badgeW / designW
   const scaleY = badgeH / designH
+  const defaultLogoBuf = await resolveDefaultLogoBuffer(siteOrigin)
 
   let index = 0
   for (const judoka of judokas) {
@@ -298,7 +353,7 @@ export async function exportBadgesPdfToBuffer(options: PdfExportBufferOptions): 
     await drawBadge(
       doc,
       judoka,
-      template,
+      safeTemplate,
       originX,
       originY,
       scaleX,
@@ -306,7 +361,8 @@ export async function exportBadgesPdfToBuffer(options: PdfExportBufferOptions): 
       badgeW,
       badgeH,
       supabaseUrl,
-      serviceRoleKey
+      serviceRoleKey,
+      defaultLogoBuf
     )
     index++
   }
@@ -317,6 +373,5 @@ export async function exportBadgesPdfToBuffer(options: PdfExportBufferOptions): 
 
   doc.end()
   await done
-
   return new Uint8Array(Buffer.concat(chunks))
 }

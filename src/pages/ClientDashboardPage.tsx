@@ -256,6 +256,7 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
           embedded
           clientMode
           clientUsername={mode.username ?? 'client'}
+          autoRefreshMs={2000}
           onBack={() => setView('home')}
           onEdit={(j) => {
             setEditing(j)

@@ -37,6 +37,8 @@ export function BadgeDesignerPage({ onBack, embedded = false }: Props) {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [previewBg, setPreviewBg] = useState<string | null>(null)
+  const [previewLogo, setPreviewLogo] = useState<string | null>(null)
 
   function applyTemplate(next: BadgeTemplate | null): void {
     setTemplate(next)
@@ -97,37 +99,29 @@ export function BadgeDesignerPage({ onBack, embedded = false }: Props) {
     }
     applyTemplate(res.data)
     await reload()
-    setMessage('Badge enregistré — diffusé aux clients connectés.')
+    setMessage('Badge enregistré — utilisé pour PDF et impression.')
   }
 
   async function clearLogo(): Promise<void> {
-    if (!template?.logoPath) return
+    if (!template) return
     setBusy(true)
     setError(null)
-    const res = await window.judovac.setBadgeTemplate({ ...template, logoPath: null })
+    const next = { ...template, logoPath: null }
+    applyTemplate(next)
+    setPreviewLogo(null)
     setBusy(false)
-    if (!res.ok) {
-      setError(res.error)
-      return
-    }
-    applyTemplate(res.data)
-    await reload()
-    setMessage('Logo effacé — logo JudoVACapp par défaut.')
+    setMessage('Logo effacé — logo JudoVACapp par défaut dans l’aperçu. Enregistrez pour confirmer.')
   }
 
   async function clearBackground(): Promise<void> {
-    if (!template?.backgroundPath) return
+    if (!template) return
     setBusy(true)
     setError(null)
-    const res = await window.judovac.setBadgeTemplate({ ...template, backgroundPath: null })
+    const next = { ...template, backgroundPath: null }
+    applyTemplate(next)
+    setPreviewBg(null)
     setBusy(false)
-    if (!res.ok) {
-      setError(res.error)
-      return
-    }
-    applyTemplate(res.data)
-    await reload()
-    setMessage('Fond effacé.')
+    setMessage('Fond effacé dans l’aperçu. Enregistrez pour confirmer.')
   }
 
   async function importAsset(kind: 'background' | 'logo'): Promise<void> {
@@ -141,8 +135,15 @@ export function BadgeDesignerPage({ onBack, embedded = false }: Props) {
     }
     if (res.data.template) {
       applyTemplate(res.data.template)
-      setMessage(kind === 'background' ? 'Fond importé.' : 'Logo importé.')
-      await reload()
+      if (res.data.dataUrl) {
+        if (kind === 'background') setPreviewBg(res.data.dataUrl)
+        else setPreviewLogo(res.data.dataUrl)
+      }
+      setMessage(
+        kind === 'background'
+          ? 'Fond chargé dans l’aperçu — cliquez sur Enregistrer le badge pour le conserver.'
+          : 'Logo chargé dans l’aperçu — cliquez sur Enregistrer le badge pour le conserver.'
+      )
     }
   }
 
@@ -298,7 +299,11 @@ export function BadgeDesignerPage({ onBack, embedded = false }: Props) {
 
         {formatDefined ? (
           <section className="rounded-xl border bg-white/75 p-5 lg:col-span-2">
-            <BadgeLivePreview template={template} />
+            <BadgeLivePreview
+              template={template}
+              previewBackgroundUrl={previewBg}
+              previewLogoUrl={previewLogo}
+            />
           </section>
         ) : (
           <section className="rounded-xl border border-dashed bg-white/40 p-5 lg:col-span-2">

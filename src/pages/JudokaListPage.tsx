@@ -65,6 +65,14 @@ export function JudokaListPage({
     return () => clearInterval(id)
   }, [autoRefreshMs])
 
+  // Temps réel : nouveau judoka (admin ou opérateur) → rafraîchir sans recharger la page
+  useEffect(() => {
+    if (!window.judovac.subscribeJudokas) return
+    return window.judovac.subscribeJudokas(() => {
+      setPollTick((t) => t + 1)
+    })
+  }, [])
+
   useEffect(() => {
     if (clientMode) {
       setCreators([])
@@ -86,19 +94,20 @@ export function JudokaListPage({
 
   useEffect(() => {
     let cancelled = false
+    const silent = pollTick > 0
     const timer = setTimeout(async () => {
-      setLoading(true)
+      if (!silent) setLoading(true)
       setError(null)
 
       const [res, queueRes] = await Promise.all([
         query.trim() || Object.keys(filters).length
           ? window.judovac.searchJudokas(query, filters)
-          : window.judovac.listJudokas({ limit: clientMode ? 100 : 50_000 }),
+          : window.judovac.listJudokas({ limit: clientMode ? 500 : 50_000 }),
         clientMode ? window.judovac.getSyncQueue() : Promise.resolve(null)
       ])
 
       if (cancelled) return
-      setLoading(false)
+      if (!silent) setLoading(false)
 
       const pendingRaw: Judoka[] =
         queueRes && queueRes.ok
@@ -125,7 +134,13 @@ export function JudokaListPage({
         return
       }
 
-      setItems([...pending, ...res.data.items])
+      let list = res.data.items
+      if (clientMode && clientUsername) {
+        list = list.filter(
+          (j) => j.createdBy.trim().toLowerCase() === clientUsername.trim().toLowerCase()
+        )
+      }
+      setItems([...pending, ...list])
     }, pollTick > 0 && autoRefreshMs ? 0 : 200)
 
     return () => {

@@ -169,13 +169,18 @@ async function uploadDataUrl(bucket: string, dataUrl: string, prefix: string): P
   const token = await getAccessToken()
   if (!token) throw new Error('Session expirée — reconnectez-vous.')
 
+  const compressed = await compressImageDataUrl(dataUrl)
+  // Estimation taille base64
+  const approxBytes = Math.ceil(((compressed.split(',')[1]?.length ?? 0) * 3) / 4)
+  assertPhotoSize(approxBytes)
+
   const res = await fetch('/api/photos/upload', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`
     },
-    body: JSON.stringify({ dataUrl, bucket, prefix })
+    body: JSON.stringify({ dataUrl: compressed, bucket, prefix })
   })
   const text = await res.text()
   let json: { ok?: boolean; data?: { path: string }; error?: string } = {}
@@ -200,8 +205,68 @@ async function readStorageDataUrl(bucket: string, path: string): Promise<string>
   if (error || !data) throw new Error(error?.message ?? 'Photo introuvable')
   const buf = await data.arrayBuffer()
   const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)))
-  const ext = path.endsWith('.png') ? 'image/png' : 'image/jpeg'
+  const ext = path.endsWith('.png') ? 'image/png' : path.endsWith('.webp') ? 'image/webp' : 'image/jpeg'
   return `data:${ext};base64,${b64}`
+}
+
+async function readAnyStorageDataUrl(path: string): Promise<string> {
+  if (path.startsWith('data:') || path.startsWith('http')) {
+    if (path.startsWith('data:')) return path
+    const res = await fetch(path)
+    const blob = await res.blob()
+    return await new Promise<string>((resolve, reject) => {
+      const r = new FileReader()
+      r.onload = () => resolve(r.result as string)
+      r.onerror = reject
+      r.readAsDataURL(blob)
+    })
+  }
+  const buckets =
+    path.startsWith('background/') || path.startsWith('logo/')
+      ? [BADGE_ASSETS_BUCKET, PHOTOS_BUCKET]
+      : [PHOTOS_BUCKET, BADGE_ASSETS_BUCKET]
+  let lastError: Error | null = null
+  for (const bucket of buckets) {
+    try {
+      return await readStorageDataUrl(bucket, path)
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e))
+    }
+  }
+  throw lastError ?? new Error('Fichier introuvable')
+}
+
+/** Compresse / redimensionne une image data URL pour un upload rapide (max 1280px, JPEG ~0.82). */
+async function compressImageDataUrl(dataUrl: string, maxSide = 1280, quality = 0.82): Promise<string> {
+  if (!dataUrl.startsWith('data:image/')) return dataUrl
+  return await new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height))
+      const w = Math.max(1, Math.round(img.width * scale))
+      const h = Math.max(1, Math.round(img.height * scale))
+      const canvas = document.createElement('canvas')
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        resolve(dataUrl)
+        return
+      }
+      ctx.drawImage(img, 0, 0, w, h)
+      resolve(canvas.toDataURL('image/jpeg', quality))
+    }
+    img.onerror = () => reject(new Error('Image illisible'))
+    img.src = dataUrl
+  })
+}
+
+const MAX_PHOTO_BYTES = 10 * 1024 * 1024
+
+function assertPhotoSize(fileOrBytes: number): void {
+  if (fileOrBytes > MAX_PHOTO_BYTES) {
+    throw new Error('La photo ne doit pas dépasser 10 Mo.')
+  }
 }
 
 async function getSessionToken(): Promise<string | null> {
@@ -460,13 +525,18 @@ export const judovacClient = {
   listJudokas: async (opts?: { limit?: number; offset?: number }): Promise<
     IpcResult<{ items: Judoka[]; total: number }>
   > => {
+    const profile = await requireProfile()
     const limit = opts?.limit ?? 100
     const offset = opts?.offset ?? 0
-    const { data, count, error } = await supabase
+    let q = supabase
       .from('judokas')
       .select('*', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1)
+    if (profile.role !== 'admin') {
+      q = q.eq('created_by', profile.username)
+    }
+    const { data, count, error } = await q
     if (error) return fail(error.message)
     return ok({ items: (data ?? []).map((r) => rowToJudoka(r as never)), total: count ?? 0 })
   },
@@ -475,7 +545,11 @@ export const judovacClient = {
     query: string,
     filters?: Record<string, string>
   ): Promise<IpcResult<{ items: Judoka[] }>> => {
-    let q = supabase.from('judokas').select('*').order('created_at', { ascending: false }).limit(200)
+    const profile = await requireProfile()
+    let q = supabase.from('judokas').select('*').order('created_at', { ascending: false }).limit(5000)
+    if (profile.role !== 'admin') {
+      q = q.eq('created_by', profile.username)
+    }
     const { data, error } = await q
     if (error) return fail(error.message)
 
@@ -497,6 +571,21 @@ export const judovacClient = {
         return hay.includes(ql)
       })
     return ok({ items })
+  },
+
+  /** Abonnement temps réel aux changements de judokas (liste auto). */
+  subscribeJudokas: (onChange: () => void): (() => void) => {
+    const channel = supabase
+      .channel(`judokas-${crypto.randomUUID()}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'judokas' },
+        () => onChange()
+      )
+      .subscribe()
+    return () => {
+      void supabase.removeChannel(channel)
+    }
   },
 
   listJudokaCreators: async (): Promise<IpcResult<{ items: string[] }>> => {
@@ -668,12 +757,22 @@ export const judovacClient = {
           resolve(ok({ path: null, dataUrl: null }))
           return
         }
+        try {
+          assertPhotoSize(file.size)
+        } catch (e) {
+          resolve(fail(e instanceof Error ? e.message : String(e)))
+          return
+        }
         const reader = new FileReader()
         reader.onload = async () => {
-          const dataUrl = reader.result as string
-          const res = await judovacClient.savePhotoDataUrl(dataUrl)
-          if (!res.ok) resolve(res)
-          else resolve(ok({ path: res.data.path, dataUrl: res.data.dataUrl ?? dataUrl }))
+          try {
+            const dataUrl = reader.result as string
+            const res = await judovacClient.savePhotoDataUrl(dataUrl)
+            if (!res.ok) resolve(res)
+            else resolve(ok({ path: res.data.path, dataUrl: res.data.dataUrl ?? dataUrl }))
+          } catch (e) {
+            resolve(fail(e instanceof Error ? e.message : String(e)))
+          }
         }
         reader.onerror = () => resolve(fail('Lecture fichier impossible'))
         reader.readAsDataURL(file)
@@ -684,19 +783,7 @@ export const judovacClient = {
 
   readPhotoDataUrl: async (filePath: string): Promise<IpcResult<{ dataUrl: string }>> => {
     try {
-      if (filePath.startsWith('data:')) return ok({ dataUrl: filePath })
-      if (filePath.startsWith('http')) {
-        const res = await fetch(filePath)
-        const blob = await res.blob()
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const r = new FileReader()
-          r.onload = () => resolve(r.result as string)
-          r.onerror = reject
-          r.readAsDataURL(blob)
-        })
-        return ok({ dataUrl })
-      }
-      const dataUrl = await readStorageDataUrl(PHOTOS_BUCKET, filePath)
+      const dataUrl = await readAnyStorageDataUrl(filePath)
       return ok({ dataUrl })
     } catch (e) {
       return fail(e instanceof Error ? e.message : String(e))
@@ -780,7 +867,7 @@ export const judovacClient = {
 
   importBadgeAsset: async (
     kind: 'background' | 'logo'
-  ): Promise<IpcResult<{ path: string | null; template?: BadgeTemplate }>> => {
+  ): Promise<IpcResult<{ path: string | null; template?: BadgeTemplate; dataUrl?: string }>> => {
     return new Promise((resolve) => {
       const input = document.createElement('input')
       input.type = 'file'
@@ -791,10 +878,17 @@ export const judovacClient = {
           resolve(ok({ path: null }))
           return
         }
+        try {
+          assertPhotoSize(file.size)
+        } catch (e) {
+          resolve(fail(e instanceof Error ? e.message : String(e)))
+          return
+        }
         const reader = new FileReader()
         reader.onload = async () => {
           try {
-            const dataUrl = reader.result as string
+            const rawDataUrl = reader.result as string
+            const dataUrl = await compressImageDataUrl(rawDataUrl, 1600, 0.88)
             const path = await uploadDataUrl(BADGE_ASSETS_BUCKET, dataUrl, kind)
             const tmplRes = await judovacClient.getBadgeTemplate()
             if (!tmplRes.ok) {
@@ -807,8 +901,8 @@ export const judovacClient = {
               logoPath: kind === 'logo' ? path : tmplRes.data.logoPath,
               updatedAt: new Date().toISOString()
             }
-            const saved = await judovacClient.setBadgeTemplate(template)
-            resolve(saved.ok ? ok({ path, template: saved.data }) : saved)
+            // Mise à jour locale immédiate pour l'aperçu ; l'enregistrement final se fait via « Enregistrer »
+            resolve(ok({ path, template, dataUrl }))
           } catch (e) {
             resolve(fail(e instanceof Error ? e.message : String(e)))
           }
@@ -827,29 +921,41 @@ export const judovacClient = {
     customCols?: number
     customRows?: number
   }): Promise<IpcResult<{ path: string; count: number }>> => {
-    const token = await getSessionToken()
-    const res = await fetch('/api/pdf/export', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token ?? ''}`
-      },
-      body: JSON.stringify(opts)
-    })
-    if (!res.ok) {
-      const err = (await res.json().catch(() => ({}))) as { error?: string }
-      return fail(err.error ?? 'Export PDF échoué')
+    try {
+      const token = await getSessionToken()
+      if (!token) return fail('Session expirée — reconnectez-vous.')
+      const res = await fetch('/api/pdf/export', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(opts)
+      })
+      if (!res.ok) {
+        const text = await res.text()
+        let errMsg = `Export PDF échoué (${res.status})`
+        try {
+          const err = JSON.parse(text) as { error?: string }
+          if (err.error) errMsg = err.error
+        } catch {
+          if (text && text.length < 200) errMsg = text
+        }
+        return fail(errMsg)
+      }
+      const blob = await res.blob()
+      const count = Number(res.headers.get('X-Badge-Count') ?? '0')
+      const filename = `badges-${new Date().toISOString().slice(0, 10)}.pdf`
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+      return ok({ path: filename, count })
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : 'Export PDF impossible')
     }
-    const blob = await res.blob()
-    const count = Number(res.headers.get('X-Badge-Count') ?? '0')
-    const filename = `badges-${new Date().toISOString().slice(0, 10)}.pdf`
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    a.click()
-    URL.revokeObjectURL(url)
-    return ok({ path: filename, count })
   },
 
   exportBackup: async (): Promise<
