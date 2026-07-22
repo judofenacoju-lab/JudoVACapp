@@ -276,10 +276,6 @@ function assertPhotoSize(fileOrBytes: number): void {
   }
 }
 
-async function getSessionToken(): Promise<string | null> {
-  return getAccessToken()
-}
-
 async function fetchOnlineClients(): Promise<
   import('@shared/types/dashboard').ConnectedClient[]
 > {
@@ -882,7 +878,7 @@ export const judovacClient = {
       input.onchange = async () => {
         const file = input.files?.[0]
         if (!file) {
-          resolve(ok({ path: null }))
+          resolve(fail('Aucun fichier sélectionné'))
           return
         }
         try {
@@ -895,7 +891,6 @@ export const judovacClient = {
         reader.onload = async () => {
           try {
             const rawDataUrl = reader.result as string
-            // Logo : garder PNG si possible (transparence) ; fond : compresser
             let dataUrl = rawDataUrl
             try {
               dataUrl =
@@ -905,12 +900,21 @@ export const judovacClient = {
             } catch {
               dataUrl = rawDataUrl
             }
-            const path = await uploadDataUrl(BADGE_ASSETS_BUCKET, dataUrl, kind)
+
             const tmplRes = await judovacClient.getBadgeTemplate()
             if (!tmplRes.ok) {
               resolve(fail(tmplRes.error))
               return
             }
+
+            let path: string = dataUrl
+            try {
+              path = await uploadDataUrl(BADGE_ASSETS_BUCKET, dataUrl, kind)
+            } catch {
+              // Aperçu local même si Storage échoue
+              path = dataUrl
+            }
+
             const template = {
               ...tmplRes.data,
               backgroundPath: kind === 'background' ? path : tmplRes.data.backgroundPath,
@@ -944,37 +948,58 @@ export const judovacClient = {
     customRows?: number
   }): Promise<IpcResult<{ path: string; count: number }>> => {
     try {
-      const token = await getSessionToken()
-      if (!token) return fail('Session expirée — reconnectez-vous.')
-      const res = await fetch('/api/pdf/export', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify(opts)
-      })
-      if (!res.ok) {
-        const text = await res.text()
-        let errMsg = `Export PDF échoué (${res.status})`
-        try {
-          const err = JSON.parse(text) as { error?: string }
-          if (err.error) errMsg = err.error
-        } catch {
-          if (text && text.length < 200) errMsg = text
-        }
-        return fail(errMsg)
+      await requireProfile()
+      const tmplRes = await judovacClient.getBadgeTemplate()
+      if (!tmplRes.ok) return fail(tmplRes.error)
+
+      let items: Judoka[] = []
+      if (opts.judokaIds?.length) {
+        const listed = await judovacClient.listJudokas({ limit: 5000, offset: 0 })
+        if (!listed.ok) return fail(listed.error)
+        const idSet = new Set(opts.judokaIds)
+        items = listed.data.items.filter((j) => idSet.has(j.id))
+      } else if (opts.createdBy) {
+        const listed = await judovacClient.listJudokas({ limit: 5000, offset: 0 })
+        if (!listed.ok) return fail(listed.error)
+        const label =
+          opts.createdBy.toLowerCase() === 'serveur' || opts.createdBy === 'Serveur'
+            ? 'serveur'
+            : opts.createdBy
+        items = listed.data.items.filter(
+          (j) => j.createdBy.toLowerCase() === label.toLowerCase()
+        )
+      } else {
+        const listed = await judovacClient.listJudokas({ limit: 5000, offset: 0 })
+        if (!listed.ok) return fail(listed.error)
+        items = listed.data.items
       }
-      const blob = await res.blob()
-      const count = Number(res.headers.get('X-Badge-Count') ?? '0')
+
+      const { exportBadgesPdfBytes } = await import('./badge-pdf-browser')
+      const bytes = await exportBadgesPdfBytes({
+        template: tmplRes.data,
+        judokas: items,
+        perPage: opts.perPage ?? 4,
+        customCols: opts.customCols,
+        customRows: opts.customRows,
+        readDataUrl: async (path) => {
+          try {
+            return await readAnyStorageDataUrl(path)
+          } catch {
+            return null
+          }
+        }
+      })
+
       const filename = `badges-${new Date().toISOString().slice(0, 10)}.pdf`
+      const blob = new Blob([new Uint8Array(bytes)], { type: 'application/pdf' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
       a.download = filename
       a.click()
-      URL.revokeObjectURL(url)
-      return ok({ path: filename, count })
+      window.open(url, '_blank', 'noopener,noreferrer')
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+      return ok({ path: filename, count: items.length })
     } catch (e) {
       return fail(e instanceof Error ? e.message : 'Export PDF impossible')
     }

@@ -127,24 +127,25 @@ export function BadgeDesignerPage({ onBack, embedded = false }: Props) {
   async function importAsset(kind: 'background' | 'logo'): Promise<void> {
     setBusy(true)
     setError(null)
+    setMessage(null)
     const res = await window.judovac.importBadgeAsset(kind)
     setBusy(false)
     if (!res.ok) {
       setError(res.error)
       return
     }
+    if (res.data.dataUrl) {
+      if (kind === 'background') setPreviewBg(res.data.dataUrl)
+      else setPreviewLogo(res.data.dataUrl)
+    }
     if (res.data.template) {
       applyTemplate(res.data.template)
-      if (res.data.dataUrl) {
-        if (kind === 'background') setPreviewBg(res.data.dataUrl)
-        else setPreviewLogo(res.data.dataUrl)
-      }
-      setMessage(
-        kind === 'background'
-          ? 'Fond chargé dans l’aperçu — cliquez sur Enregistrer le badge pour le conserver.'
-          : 'Logo chargé dans l’aperçu — cliquez sur Enregistrer le badge pour le conserver.'
-      )
     }
+    setMessage(
+      kind === 'background'
+        ? 'Fond chargé dans l’aperçu — cliquez sur Enregistrer le badge pour le conserver.'
+        : 'Logo chargé dans l’aperçu — cliquez sur Enregistrer le badge pour le conserver.'
+    )
   }
 
   if (!template) {
@@ -258,7 +259,7 @@ export function BadgeDesignerPage({ onBack, embedded = false }: Props) {
                   type="button"
                   variant="outline"
                   size="sm"
-                  disabled={busy || !template.backgroundPath}
+                  disabled={busy || (!template.backgroundPath && !previewBg)}
                   onClick={() => void clearBackground()}
                 >
                   <Trash2 className="h-4 w-4" />
@@ -286,7 +287,7 @@ export function BadgeDesignerPage({ onBack, embedded = false }: Props) {
                   type="button"
                   variant="outline"
                   size="sm"
-                  disabled={busy || !template.logoPath}
+                  disabled={busy || (!template.logoPath && !previewLogo)}
                   onClick={() => void clearLogo()}
                 >
                   <Trash2 className="h-4 w-4" />
