@@ -165,15 +165,9 @@ async function readStorageDataUrl(bucket: string, path: string): Promise<string>
   return `data:${ext};base64,${b64}`
 }
 
-function getSessionToken(): string | null {
-  const key = Object.keys(localStorage).find((k) => k.startsWith('sb-') && k.endsWith('-auth-token'))
-  if (!key) return null
-  try {
-    const parsed = JSON.parse(localStorage.getItem(key) ?? '{}') as { access_token?: string }
-    return parsed.access_token ?? null
-  } catch {
-    return null
-  }
+async function getSessionToken(): Promise<string | null> {
+  const { data: { session } } = await supabase.auth.getSession()
+  return session?.access_token ?? null
 }
 
 export const judovacClient = {
@@ -518,7 +512,7 @@ export const judovacClient = {
     displayName?: string,
     password?: string
   ): Promise<IpcResult<import('@shared/types/user-account').CreatedUserAccount>> => {
-    const token = getSessionToken()
+    const token = await getSessionToken()
     const res = await fetch('/api/admin/users', {
       method: 'POST',
       headers: {
@@ -537,7 +531,7 @@ export const judovacClient = {
   },
 
   deleteUser: async (username: string): Promise<IpcResult<boolean>> => {
-    const token = getSessionToken()
+    const token = await getSessionToken()
     const res = await fetch(`/api/admin/users?username=${encodeURIComponent(username)}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token ?? ''}` }
@@ -726,7 +720,7 @@ export const judovacClient = {
     customCols?: number
     customRows?: number
   }): Promise<IpcResult<{ path: string; count: number }>> => {
-    const token = getSessionToken()
+    const token = await getSessionToken()
     const res = await fetch('/api/pdf/export', {
       method: 'POST',
       headers: {

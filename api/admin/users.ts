@@ -21,8 +21,29 @@ async function requireAdmin(req: VercelRequest) {
   const supabase = getSupabaseAdmin()
   const { data: { user } } = await supabase.auth.getUser(token)
   if (!user) return null
+
+  const isBootstrapAdmin = user.email?.toLowerCase() === 'judovac@mail.com'
   const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
-  if (!profile || profile.role !== 'admin' || !profile.active) return null
+
+  if (isBootstrapAdmin && (!profile || profile.role !== 'admin' || !profile.active)) {
+    const { data: fixed } = await supabase
+      .from('profiles')
+      .upsert({
+        id: user.id,
+        username: 'admin',
+        display_name: 'Administrateur',
+        role: 'admin',
+        active: true
+      })
+      .select('*')
+      .single()
+    if (fixed?.active && fixed.role === 'admin') {
+      return { supabase, profile: fixed }
+    }
+  }
+
+  if (!profile || !profile.active) return null
+  if (profile.role !== 'admin' && !isBootstrapAdmin) return null
   return { supabase, profile }
 }
 

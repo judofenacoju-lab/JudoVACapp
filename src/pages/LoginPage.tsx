@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, Loader2, LogIn } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -19,6 +19,13 @@ export function LoginPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  useEffect(() => {
+    setEmail('')
+    setPassword('')
+    setShowPassword(false)
+    setError(null)
+  }, [])
+
   async function handleSubmit(e: FormEvent): Promise<void> {
     e.preventDefault()
     setBusy(true)
@@ -29,7 +36,9 @@ export function LoginPage() {
       setError(res.error)
       return
     }
-    navigate('/')
+    setEmail('')
+    setPassword('')
+    navigate(res.role === 'admin' ? '/dashboard' : '/app', { replace: true })
   }
 
   return (
@@ -50,14 +59,16 @@ export function LoginPage() {
 
         <form
           onSubmit={(e) => void handleSubmit(e)}
+          autoComplete="off"
           className="space-y-5 rounded-2xl border border-white/10 bg-white/95 p-8 shadow-2xl backdrop-blur"
         >
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
             <Input
               id="email"
+              name="judovac-email"
               type="email"
-              autoComplete="email"
+              autoComplete="off"
               placeholder="xxxx@mail.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -71,8 +82,10 @@ export function LoginPage() {
             <div className="relative">
               <Input
                 id="password"
+                name="judovac-password"
                 type={showPassword ? 'text' : 'password'}
-                autoComplete="current-password"
+                autoComplete="new-password"
+                placeholder=""
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required

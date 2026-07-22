@@ -1,8 +1,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createClient } from '@supabase/supabase-js'
 
+function normalizeSupabaseUrl(raw: string): string {
+  return raw.trim().replace(/\/rest\/v1\/?$/i, '').replace(/\/+$/, '')
+}
+
 function getSupabaseAdmin() {
-  const url = process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL
+  const url = normalizeSupabaseUrl(process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL ?? '')
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !key) throw new Error('Configuration Supabase manquante')
   return createClient(url, key, {

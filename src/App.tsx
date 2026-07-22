@@ -36,23 +36,24 @@ export default function App() {
   useEffect(() => {
     if (loading) return
     let cancelled = false
-    ;(async () => {
-      const minDelay = new Promise<void>((resolve) => setTimeout(resolve, LOADING_DURATION_MS))
-      await minDelay
-      if (cancelled) return
 
+    void (async () => {
       if (session && profile?.active) {
         const cfg = buildModeConfig()
         if (cfg) {
           await window.judovac.setMode(cfg)
-          setMode(cfg)
+          if (!cancelled) setMode(cfg)
         }
       } else {
         await window.judovac.clearMode()
-        setMode(null)
+        if (!cancelled) setMode(null)
       }
-      setBoot('ready')
+
+      const minDelay = new Promise<void>((resolve) => setTimeout(resolve, LOADING_DURATION_MS))
+      await minDelay
+      if (!cancelled) setBoot('ready')
     })()
+
     return () => {
       cancelled = true
     }
@@ -79,6 +80,8 @@ export default function App() {
                   setMode(null)
                 }}
               />
+            ) : profile?.role === 'admin' ? (
+              <LoadingScreen />
             ) : (
               <Navigate to="/login" replace />
             )}
