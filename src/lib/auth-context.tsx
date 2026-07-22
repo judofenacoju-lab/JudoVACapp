@@ -71,9 +71,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const p = await loadProfile(s.user.id)
     if (!p) {
+      const token = s.access_token
+      const bootstrap = await fetch('/api/auth/ensure-profile', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      const json = (await bootstrap.json().catch(() => ({}))) as {
+        ok?: boolean
+        data?: ProfileRow
+        error?: string
+      }
+      if (bootstrap.ok && json.ok && json.data) {
+        setProfile(json.data)
+        setSession(s)
+        return {}
+      }
       return {
         error:
-          'Compte authentifié mais profil absent. Exécutez supabase/migrations/002_fix_profiles_admin.sql dans Supabase.'
+          json.error ??
+          'Profil absent. Exécutez supabase/migrations/002_fix_profiles_admin.sql dans Supabase → SQL Editor.'
       }
     }
     if (!p.active) return { error: 'Compte désactivé — contactez un administrateur.' }
