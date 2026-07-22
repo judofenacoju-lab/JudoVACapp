@@ -21,18 +21,26 @@ npx expo start
 
 ## Build APK
 
+### Local (Windows)
+
 ```powershell
 cd mobile
 .\scripts\build-apk.ps1
 # → mobile/release/JudoVACapp-scanner-1.1.0.apk
 ```
 
-Ou EAS :
+Prérequis : JDK 17 + Android SDK (téléchargés automatiquement dans `mobile/.tools/`).  
+Si le NDK échoue (chemin avec espaces / réseau), utilisez EAS.
+
+### EAS (recommandé)
 
 ```bash
+cd mobile
+npx eas login
 npm run build:apk
 ```
 
+Ou depuis la racine : `npm run build:apk:scanner`
 ## API
 
 - `GET /api/health` → `{ ok: true }`

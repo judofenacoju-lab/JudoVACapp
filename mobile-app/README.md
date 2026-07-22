@@ -32,10 +32,21 @@ npx expo start
 
 ## Build APK
 
+### Local (Windows)
+
 ```powershell
 cd mobile-app
+# Copier .env.example → .env puis renseigner les clés
 .\scripts\build-apk.ps1
 # → mobile-app/release/JudoVAC-mobile-1.0.0.apk
 ```
 
-Ou EAS : `npm run build:apk`
+### EAS (recommandé)
+
+```bash
+cd mobile-app
+npx eas login
+npm run build:apk
+```
+
+Ou depuis la racine : `npm run build:apk:mobile`
