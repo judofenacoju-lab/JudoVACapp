@@ -21,6 +21,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
     "test:sync": "tsx --tsconfig tsconfig.node.json scripts/test-sync.ts",
     "lint": "tsc --noEmit -p tsconfig.web.json",
+    "admin:create": "tsx --tsconfig tsconfig.node.json scripts/create-admin.ts",
+    "admin:diagnose": "tsx --tsconfig tsconfig.node.json scripts/diagnose-supabase.ts",
     "icon:build": "tsx --tsconfig tsconfig.node.json scripts/build-icon.ts"
   },
   "dependencies": {

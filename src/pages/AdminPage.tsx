@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { ArrowLeft, Copy, Check, RefreshCw, Save, Trash2, Plus, Eraser } from 'lucide-react'
 import type { AppSettings } from '@shared/types/settings'
 import type { SystemLogEntry } from '@shared/types/dashboard'
-import type { UserAccount } from '@shared/types/user-account'
+import type { CreatedUserAccount, UserAccount } from '@shared/types/user-account'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -30,13 +30,14 @@ export function AdminPage({ onBack, embedded = false }: Props) {
   const [logs, setLogs] = useState<SystemLogEntry[]>([])
   const [users, setUsers] = useState<UserAccount[]>([])
   const [newUsername, setNewUsername] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [createdCredentials, setCreatedCredentials] = useState<CreatedUserAccount | null>(null)
   const [network, setNetwork] = useState<LocalNetworkInfo | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
-  const [deleteMode, setDeleteMode] = useState<'keep' | 'delete'>('keep')
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
@@ -88,20 +89,28 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     setBusy(true)
     setError(null)
     setMessage(null)
-    const res = await window.judovac.createUser(newUsername)
+    const res = await window.judovac.createUser(
+      newUsername,
+      undefined,
+      newPassword.trim() || undefined
+    )
     setBusy(false)
     if (!res.ok) {
       setError(res.error)
       return
     }
     setNewUsername('')
-    setMessage(`Compte « ${res.data.username} » créé.`)
+    setNewPassword('')
+    setCreatedCredentials(res.data)
     await loadUsers()
+  }
+
+  function isProtectedAdmin(user: UserAccount): boolean {
+    return user.role === 'admin' || user.username.toLowerCase() === 'admin'
   }
 
   async function removeUser(username: string): Promise<void> {
     setDeleteError(null)
-    setDeleteMode('keep')
     setDeleteTarget(username)
   }
 
@@ -110,17 +119,13 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     setDeleteBusy(true)
     setDeleteError(null)
     setMessage(null)
-    const res = await window.judovac.deleteJudokaCreator(deleteTarget, deleteMode === 'keep')
+    const res = await window.judovac.deleteUser(deleteTarget)
     setDeleteBusy(false)
     if (!res.ok) {
       setDeleteError(res.error)
       return
     }
-    const detail =
-      deleteMode === 'keep'
-        ? `${res.data.reassigned} judoka(s) réattribué(s) au Serveur`
-        : `${res.data.deleted} judoka(s) supprimé(s)`
-    setMessage(`Compte « ${deleteTarget} » supprimé — ${detail}.`)
+    setMessage(`Compte « ${deleteTarget} » supprimé.`)
     setDeleteTarget(null)
     await loadUsers()
   }
@@ -280,22 +285,40 @@ export function AdminPage({ onBack, embedded = false }: Props) {
         {tab === 'users' && (
           <section className="space-y-4 rounded-xl border bg-white/75 p-5">
             <p className="text-sm text-muted-foreground">
-              Créez les identifiants Client ici. Chaque Client se connecte avec cet identifiant pour
-              se déconnecter / reconnecter et retrouver ses judokas.
+              Créez les comptes opérateurs ici. Chaque utilisateur reçoit un email{' '}
+              <span className="font-mono text-foreground">utilisateur@mail.com</span> et un mot de
+              passe pour se connecter.
             </p>
-            <div className="flex flex-wrap gap-2">
-              <Input
-                className="max-w-xs"
-                placeholder="Nouvel identifiant (ex. Antoine)"
-                value={newUsername}
-                onChange={(e) => setNewUsername(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    void createUser()
-                  }
-                }}
-              />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Nom d'utilisateur">
+                <Input
+                  placeholder="Ex. Antoine"
+                  value={newUsername}
+                  onChange={(e) => setNewUsername(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      void createUser()
+                    }
+                  }}
+                />
+              </Field>
+              <Field label="Mot de passe (optionnel)">
+                <Input
+                  type="text"
+                  placeholder="Laisser vide = généré automatiquement"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      void createUser()
+                    }
+                  }}
+                />
+              </Field>
+            </div>
+            <div>
               <Button
                 type="button"
                 variant="accent"
@@ -308,7 +331,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
             </div>
             <ul className="max-h-80 space-y-2 overflow-auto text-sm">
               {users.length === 0 && (
-                <li className="text-muted-foreground">Aucun compte Client pour l’instant.</li>
+                <li className="text-muted-foreground">Aucun compte pour l’instant.</li>
               )}
               {users.map((user) => (
                 <li
@@ -316,23 +339,36 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                   className="flex items-center justify-between gap-3 border-b border-border/60 pb-2 last:border-0"
                 >
                   <div>
-                    <p className="font-medium text-judo-navy">{user.username}</p>
+                    <p className="font-medium text-judo-navy">
+                      {user.username}
+                      {isProtectedAdmin(user) && (
+                        <span className="ml-2 rounded bg-judo-navy/10 px-1.5 py-0.5 text-xs font-normal text-judo-navy">
+                          Admin
+                        </span>
+                      )}
+                    </p>
                     <p className="text-xs text-muted-foreground">
+                      {user.email ?? `${user.username.toLowerCase()}@mail.com`}
+                      {' · '}
                       Créé le {new Date(user.createdAt).toLocaleString('fr-FR')}
                       {user.active ? '' : ' · inactif'}
                     </p>
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    disabled={busy}
-                    onClick={() => void removeUser(user.username)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    Supprimer
-                  </Button>
+                  {!isProtectedAdmin(user) ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      disabled={busy}
+                      onClick={() => void removeUser(user.username)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Supprimer
+                    </Button>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">Non supprimable</span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -618,6 +654,68 @@ export function AdminPage({ onBack, embedded = false }: Props) {
         {message && <p className="text-sm text-emerald-700">{message}</p>}
       </div>
 
+      {createdCredentials && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="credentials-title"
+            className="w-full max-w-md rounded-xl border bg-white p-6 shadow-xl"
+          >
+            <h3 id="credentials-title" className="text-lg font-semibold text-judo-navy">
+              Compte créé — identifiants de connexion
+            </h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Communiquez ces informations à{' '}
+              <strong>{createdCredentials.username}</strong> pour qu’il puisse se connecter.
+            </p>
+            <div className="mt-4 space-y-3 rounded-lg border bg-muted/30 p-4 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs text-muted-foreground">Email</p>
+                  <p className="font-mono font-medium">{createdCredentials.email}</p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void copyText(createdCredentials.email)}
+                >
+                  {copied === createdCredentials.email ? (
+                    <Check className="h-4 w-4" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs text-muted-foreground">Mot de passe</p>
+                  <p className="font-mono font-medium">{createdCredentials.password}</p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void copyText(createdCredentials.password)}
+                >
+                  {copied === createdCredentials.password ? (
+                    <Check className="h-4 w-4" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end">
+              <Button type="button" variant="accent" onClick={() => setCreatedCredentials(null)}>
+                Fermer
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
           <div
@@ -630,43 +728,9 @@ export function AdminPage({ onBack, embedded = false }: Props) {
               Supprimer « {deleteTarget} » ?
             </h3>
             <p className="mt-2 text-sm text-muted-foreground">
-              Choisissez le sort des judokas enregistrés par cet utilisateur client.
+              Ce compte ne pourra plus se connecter. Les judokas enregistrés par cet utilisateur
+              restent dans la base.
             </p>
-
-            <div className="mt-4 space-y-3">
-              <label className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 hover:bg-muted/40">
-                <input
-                  type="radio"
-                  name="delete-mode"
-                  className="mt-1"
-                  checked={deleteMode === 'keep'}
-                  onChange={() => setDeleteMode('keep')}
-                />
-                <span className="text-sm">
-                  <span className="font-medium text-judo-navy">Garder les judokas</span>
-                  <span className="mt-0.5 block text-muted-foreground">
-                    Les judokas restent et seront attribués au Serveur.
-                  </span>
-                </span>
-              </label>
-              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-destructive/30 p-3 hover:bg-destructive/5">
-                <input
-                  type="radio"
-                  name="delete-mode"
-                  className="mt-1"
-                  checked={deleteMode === 'delete'}
-                  onChange={() => setDeleteMode('delete')}
-                />
-                <span className="text-sm">
-                  <span className="font-medium text-destructive">
-                    Supprimer l’utilisateur et ses judokas
-                  </span>
-                  <span className="mt-0.5 block text-muted-foreground">
-                    Tous les judokas de {deleteTarget} seront définitivement effacés.
-                  </span>
-                </span>
-              </label>
-            </div>
 
             {deleteError && <p className="mt-3 text-sm text-destructive">{deleteError}</p>}
 
@@ -685,7 +749,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                 disabled={deleteBusy}
                 onClick={() => void confirmDeleteUser()}
               >
-                {deleteBusy ? 'Suppression…' : 'Valider'}
+                {deleteBusy ? 'Suppression…' : 'Supprimer'}
               </Button>
             </div>
           </div>

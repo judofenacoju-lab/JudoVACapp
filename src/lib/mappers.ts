@@ -79,12 +79,15 @@ export function judokaToRow(
 }
 
 export function profileToUserAccount(row: ProfileRow): UserAccount {
+  const username = row.username
   return {
     id: row.id,
-    username: row.username,
+    username,
     displayName: row.display_name ?? undefined,
     active: row.active,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    role: row.role,
+    email: username === 'admin' ? 'judovac@mail.com' : `${username.toLowerCase()}@mail.com`
   }
 }
 

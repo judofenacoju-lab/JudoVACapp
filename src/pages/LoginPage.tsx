@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Loader2, LogIn } from 'lucide-react'
+import { Eye, EyeOff, Loader2, LogIn } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -15,6 +15,7 @@ export function LoginPage() {
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -42,7 +43,9 @@ export function LoginPage() {
         <div className="mb-8 flex flex-col items-center text-center">
           <img src={brandLogo} alt="JudoVACapp" className="mb-4 h-20 w-20 rounded-2xl shadow-lg" />
           <h1 className="font-display text-3xl font-bold text-white">JudoVACapp</h1>
-          <p className="mt-2 text-sm text-white/70">Gestion des enregistrements judokas — version Web</p>
+          <p className="mt-2 text-sm text-white/70">
+            Gestion des enregistrements judokas - version Web
+          </p>
         </div>
 
         <form
@@ -55,7 +58,7 @@ export function LoginPage() {
               id="email"
               type="email"
               autoComplete="email"
-              placeholder="judovac@mail.com"
+              placeholder="xxxx@mail.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -65,15 +68,27 @@ export function LoginPage() {
 
           <div className="space-y-2">
             <Label htmlFor="password">Mot de passe</Label>
-            <Input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              disabled={busy}
-            />
+            <div className="relative">
+              <Input
+                id="password"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                disabled={busy}
+                className="pr-10"
+              />
+              <button
+                type="button"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                tabIndex={-1}
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
@@ -83,7 +98,6 @@ export function LoginPage() {
             {busy ? 'Connexion…' : 'Se connecter'}
           </Button>
         </form>
-
       </div>
     </div>
   )

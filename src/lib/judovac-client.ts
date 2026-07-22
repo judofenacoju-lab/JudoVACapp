@@ -513,7 +513,11 @@ export const judovacClient = {
     return ok({ items: (data ?? []).map((p) => profileToUserAccount(p as ProfileRow)) })
   },
 
-  createUser: async (username: string, displayName?: string): Promise<IpcResult<UserAccount>> => {
+  createUser: async (
+    username: string,
+    displayName?: string,
+    password?: string
+  ): Promise<IpcResult<import('@shared/types/user-account').CreatedUserAccount>> => {
     const token = getSessionToken()
     const res = await fetch('/api/admin/users', {
       method: 'POST',
@@ -521,9 +525,13 @@ export const judovacClient = {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token ?? ''}`
       },
-      body: JSON.stringify({ username, displayName, role: 'operator' })
+      body: JSON.stringify({ username, displayName, role: 'operator', password })
     })
-    const json = (await res.json()) as { ok?: boolean; data?: UserAccount; error?: string }
+    const json = (await res.json()) as {
+      ok?: boolean
+      data?: import('@shared/types/user-account').CreatedUserAccount
+      error?: string
+    }
     if (!res.ok || !json.ok) return fail(json.error ?? 'Création utilisateur échouée')
     return ok(json.data!)
   },

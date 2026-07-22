@@ -1,11 +1,17 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createClient } from '@supabase/supabase-js'
 
+function normalizeSupabaseUrl(raw: string): string {
+  return raw.trim().replace(/\/rest\/v1\/?$/i, '').replace(/\/+$/, '')
+}
+
 function getSupabaseAdmin() {
-  const url = process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL
+  const url = normalizeSupabaseUrl(process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL ?? '')
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !key) throw new Error('Variables Supabase serveur manquantes')
-  return createClient(url, key)
+  return createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false }
+  })
 }
 
 async function requireAdmin(req: VercelRequest) {
@@ -18,6 +24,16 @@ async function requireAdmin(req: VercelRequest) {
   const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
   if (!profile || profile.role !== 'admin' || !profile.active) return null
   return { supabase, profile }
+}
+
+function toLoginEmail(username: string): string {
+  const slug = username.trim().toLowerCase().replace(/\s+/g, '')
+  return `${slug}@mail.com`
+}
+
+function generatePassword(): string {
+  const base = Math.random().toString(36).slice(2, 8)
+  return `Jv@${base}1`
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -38,21 +54,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ ok: false, error: 'Nom d\'utilisateur requis' })
     }
 
-    const email = `${username.trim().toLowerCase()}@judovac.local`
-    const tempPassword = password ?? `Jv${Math.random().toString(36).slice(2, 10)}!`
+    const cleanUsername = username.trim()
+    if (cleanUsername.toLowerCase() === 'admin') {
+      return res.status(400).json({ ok: false, error: 'Le nom « admin » est réservé' })
+    }
+
+    const email = toLoginEmail(cleanUsername)
+    const userPassword = password?.trim() || generatePassword()
 
     const { data: created, error } = await supabase.auth.admin.createUser({
       email,
-      password: tempPassword,
+      password: userPassword,
       email_confirm: true,
-      user_metadata: { username: username.trim(), display_name: displayName ?? '', role }
+      user_metadata: {
+        username: cleanUsername,
+        display_name: displayName ?? '',
+        role: role === 'admin' ? 'admin' : 'operator'
+      }
     })
 
     if (error) return res.status(400).json({ ok: false, error: error.message })
 
     await supabase.from('profiles').upsert({
       id: created.user.id,
-      username: username.trim(),
+      username: cleanUsername,
       display_name: displayName ?? '',
       role: role === 'admin' ? 'admin' : 'operator',
       active: true
@@ -62,11 +87,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ok: true,
       data: {
         id: created.user.id,
-        username: username.trim(),
+        username: cleanUsername,
         displayName: displayName ?? undefined,
         active: true,
         createdAt: new Date().toISOString(),
-        temporaryPassword: tempPassword
+        role: role === 'admin' ? 'admin' : 'operator',
+        email,
+        password: userPassword
       }
     })
   }
@@ -75,8 +102,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const username = req.query.username as string
     if (!username) return res.status(400).json({ ok: false, error: 'username requis' })
 
-    const { data: profile } = await supabase.from('profiles').select('id').eq('username', username).single()
+    if (username.toLowerCase() === 'admin') {
+      return res.status(400).json({ ok: false, error: 'Le compte administrateur ne peut pas être supprimé' })
+    }
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id, role')
+      .eq('username', username)
+      .single()
+
     if (!profile) return res.status(404).json({ ok: false, error: 'Utilisateur introuvable' })
+
+    if (profile.role === 'admin') {
+      return res.status(400).json({ ok: false, error: 'Le compte administrateur ne peut pas être supprimé' })
+    }
 
     await supabase.from('profiles').delete().eq('id', profile.id)
     await supabase.auth.admin.deleteUser(profile.id)
