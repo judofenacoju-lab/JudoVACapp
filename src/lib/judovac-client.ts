@@ -11,6 +11,7 @@ import { createDefaultSettings } from '@shared/types/settings'
 import { computeAge, resolveJudokaCategory, setActiveCategoryAgeRanges } from '@shared/utils/judoka'
 import { formatCreatorLabel } from '@shared/utils/creator'
 import { judokaFormSchema } from '@shared/validation/judoka'
+import { createId } from './create-id'
 import { supabase, type JudokaRow, type ProfileRow } from './supabase'
 import {
   rowToJudoka,
@@ -514,7 +515,7 @@ export const judovacClient = {
       const now = new Date().toISOString()
       const age = computeAge(parsed.data.birthDate)
       const row = judokaToRow({
-        id: crypto.randomUUID(),
+        id: createId(),
         displayId,
         ...parsed.data,
         age,
@@ -649,7 +650,7 @@ export const judovacClient = {
   /** Abonnement temps réel aux changements de judokas (liste auto). */
   subscribeJudokas: (onChange: () => void): (() => void) => {
     const channel = supabase
-      .channel(`judokas-${crypto.randomUUID()}`)
+      .channel(`judokas-${createId()}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'judokas' },
@@ -908,7 +909,7 @@ export const judovacClient = {
   },
 
   createBadgeTemplate: async (name?: string): Promise<IpcResult<BadgeTemplate>> => {
-    const template = { ...createDefaultBadgeTemplate(), id: crypto.randomUUID(), name: name ?? 'Nouveau modèle', isDefault: false }
+    const template = { ...createDefaultBadgeTemplate(), id: createId(), name: name ?? 'Nouveau modèle', isDefault: false }
     await supabase.from('badge_templates').insert({
       id: template.id,
       name: template.name,

@@ -1,10 +1,13 @@
 import React, { Component, type ErrorInfo, type ReactNode } from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
+import { installRandomUuidPolyfill } from '@/lib/create-id'
 import { installJudovacClient } from '@/lib/judovac-client'
 import { AuthProvider } from '@/lib/auth-context'
 import App from './App'
 import './index.css'
+
+installRandomUuidPolyfill()
 
 class RootErrorBoundary extends Component<
   { children: ReactNode },
