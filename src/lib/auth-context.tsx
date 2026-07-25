@@ -91,11 +91,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } = supabase.auth.onAuthStateChange(async (_event, s) => {
       clearProfileCache()
       syncAccessToken(s?.access_token ?? null)
-      setSession(s)
+      // Évite les re-renders inutiles qui relançaient le splash
+      setSession((prev) => {
+        if (prev?.access_token === s?.access_token && prev?.user?.id === s?.user?.id) {
+          return prev
+        }
+        return s
+      })
       if (s?.user) {
         try {
           const p = await loadProfile(s.user.id)
-          setProfile(p)
+          setProfile((prev) => {
+            if (
+              prev?.id === p?.id &&
+              prev?.role === p?.role &&
+              prev?.active === p?.active &&
+              prev?.username === p?.username
+            ) {
+              return prev
+            }
+            return p
+          })
         } catch {
           setProfile(null)
         }

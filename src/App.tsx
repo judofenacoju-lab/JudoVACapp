@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import type { ModeConfig } from '@shared/types/mode'
 import { useAuth } from '@/lib/auth-context'
@@ -7,9 +7,7 @@ import { LoginPage } from './pages/LoginPage'
 import { ServerDashboardPage } from './pages/ServerDashboardPage'
 import { ClientDashboardPage } from './pages/ClientDashboardPage'
 import { ConfigErrorPage } from './components/ConfigErrorPage'
-import { LoadingScreen, LOADING_DURATION_MS } from './components/LoadingScreen'
-
-type BootState = 'loading' | 'ready'
+import { LoadingScreen } from './components/LoadingScreen'
 
 function ProtectedRoute({
   children,
@@ -30,52 +28,51 @@ function ProtectedRoute({
 
 export default function App() {
   const { session, profile, loading, buildModeConfig, signOut } = useAuth()
-  const [boot, setBoot] = useState<BootState>('loading')
+  const [bootReady, setBootReady] = useState(false)
   const [mode, setMode] = useState<ModeConfig | null>(null)
+  const modeKeyRef = useRef<string>('')
 
+  // Gate unique : dès que l'auth a répondu, sortir du splash (pas de dépendance session/profile)
   useEffect(() => {
     if (loading) return
-    let cancelled = false
+    setBootReady(true)
+  }, [loading])
+
+  // Filet de sécurité tablette : jamais bloqué plus de 2,5 s
+  useEffect(() => {
+    const t = window.setTimeout(() => setBootReady(true), 2500)
+    return () => window.clearTimeout(t)
+  }, [])
+
+  // Sync mode — effet séparé, ne bloque pas l'UI
+  useEffect(() => {
+    if (loading) return
+
+    const cfg = session && profile?.active ? buildModeConfig() : null
+    const key = cfg
+      ? `${cfg.mode}:${cfg.mode === 'client' ? cfg.username : 'server'}`
+      : 'none'
+    if (key === modeKeyRef.current) return
+    modeKeyRef.current = key
+    setMode(cfg)
 
     void (async () => {
       try {
-        // Mode synchrone d'abord — évite page blanche (surtout tablettes)
-        const cfg = session && profile?.active ? buildModeConfig() : null
-        if (!cancelled) setMode(cfg)
-
-        if (cfg) {
-          try {
-            await window.judovac.setMode(cfg)
-          } catch (e) {
-            console.warn('[App] setMode:', e)
-          }
-        } else {
-          try {
-            await window.judovac.clearMode()
-          } catch (e) {
-            console.warn('[App] clearMode:', e)
-          }
-        }
-
-        await new Promise<void>((resolve) => setTimeout(resolve, LOADING_DURATION_MS))
-      } finally {
-        if (!cancelled) setBoot('ready')
+        if (cfg) await window.judovac.setMode(cfg)
+        else await window.judovac.clearMode()
+      } catch (e) {
+        console.warn('[App] mode sync:', e)
       }
     })()
-
-    return () => {
-      cancelled = true
-    }
   }, [loading, session, profile, buildModeConfig])
 
   if (!isSupabaseConfigured) return <ConfigErrorPage />
-  if (loading || boot === 'loading') return <LoadingScreen />
+  if (loading || !bootReady) return <LoadingScreen />
 
-  // Toujours dériver un mode si session active (évite LoadingScreen infini tablette)
   const effectiveMode = mode ?? (session && profile?.active ? buildModeConfig() : null)
 
   return (
-    <div className="min-h-screen min-h-dvh w-full">
+    <div className="min-h-screen w-full">
       <Routes>
         <Route
           path="/login"
@@ -96,6 +93,7 @@ export default function App() {
                   mode={effectiveMode}
                   onResetMode={async () => {
                     await signOut()
+                    modeKeyRef.current = ''
                     setMode(null)
                   }}
                 />
@@ -114,6 +112,7 @@ export default function App() {
                   mode={effectiveMode}
                   onResetMode={async () => {
                     await signOut()
+                    modeKeyRef.current = ''
                     setMode(null)
                   }}
                 />
