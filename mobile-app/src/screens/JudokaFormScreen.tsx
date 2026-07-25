@@ -78,13 +78,18 @@ export function JudokaFormScreen({ route, navigation }: Props) {
     setPreview(dataUrl)
   }
 
-  async function capturePhoto(): Promise<void> {
+  async function capturePhoto(facing: 'front' | 'back'): Promise<void> {
     const perm = await ImagePicker.requestCameraPermissionsAsync()
     if (!perm.granted) {
       setError('Autorisez la caméra')
       return
     }
-    const res = await ImagePicker.launchCameraAsync({ quality: 0.8, base64: true })
+    const res = await ImagePicker.launchCameraAsync({
+      quality: 0.8,
+      base64: true,
+      cameraType:
+        facing === 'front' ? ImagePicker.CameraType.front : ImagePicker.CameraType.back
+    })
     if (res.canceled || !res.assets[0]?.base64) return
     const asset = res.assets[0]
     const mime = asset.mimeType ?? 'image/jpeg'
@@ -148,7 +153,16 @@ export function JudokaFormScreen({ route, navigation }: Props) {
             </View>
           )}
           <View style={{ flex: 1, gap: 8 }}>
-            <PrimaryButton label="Caméra" onPress={() => void capturePhoto()} disabled={busy} />
+            <PrimaryButton
+              label="Caméra arrière"
+              onPress={() => void capturePhoto('back')}
+              disabled={busy}
+            />
+            <PrimaryButton
+              label="Caméra avant"
+              onPress={() => void capturePhoto('front')}
+              disabled={busy}
+            />
             <PrimaryButton label="Importer" onPress={() => void pickPhoto()} disabled={busy} />
           </View>
         </View>

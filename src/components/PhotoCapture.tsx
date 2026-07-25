@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Camera, ImagePlus, Trash2 } from 'lucide-react'
+import { Camera, ImagePlus, SwitchCamera, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 interface Props {
@@ -7,13 +7,16 @@ interface Props {
   onChange: (path: string | null) => void
 }
 
+type FacingMode = 'user' | 'environment'
+
 /**
- * Capture webcam ou import JPG/PNG — upload Cloud (Supabase Storage).
+ * Capture webcam (avant/arrière) ou import JPG/PNG — upload Cloud.
  */
 export function PhotoCapture({ value, onChange }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const [camOn, setCamOn] = useState(false)
+  const [facing, setFacing] = useState<FacingMode>('environment')
   const [preview, setPreview] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -44,7 +47,7 @@ export function PhotoCapture({ value, onChange }: Props) {
     }
   }, [value, preview])
 
-  async function startCam(): Promise<void> {
+  async function openCamera(nextFacing: FacingMode): Promise<void> {
     setError(null)
     stopCam()
     try {
@@ -55,13 +58,25 @@ export function PhotoCapture({ value, onChange }: Props) {
       let stream: MediaStream
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+          video: {
+            facingMode: { ideal: nextFacing },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
           audio: false
         })
       } catch {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: nextFacing },
+            audio: false
+          })
+        } catch {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+        }
       }
       streamRef.current = stream
+      setFacing(nextFacing)
       setCamOn(true)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -69,6 +84,11 @@ export function PhotoCapture({ value, onChange }: Props) {
         `Webcam inaccessible (${msg}). Autorisez la caméra dans le navigateur, ou importez une image JPG/PNG.`
       )
     }
+  }
+
+  async function switchFacing(): Promise<void> {
+    const next: FacingMode = facing === 'user' ? 'environment' : 'user'
+    await openCamera(next)
   }
 
   function stopCam(): void {
@@ -144,14 +164,45 @@ export function PhotoCapture({ value, onChange }: Props) {
 
         <div className="flex flex-col gap-2">
           {!camOn ? (
-            <Button type="button" variant="secondary" size="sm" onClick={() => void startCam()} disabled={busy}>
-              <Camera className="h-4 w-4" />
-              Webcam
-            </Button>
+            <>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => void openCamera('environment')}
+                disabled={busy}
+              >
+                <Camera className="h-4 w-4" />
+                Caméra arrière
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void openCamera('user')}
+                disabled={busy}
+              >
+                <Camera className="h-4 w-4" />
+                Caméra avant
+              </Button>
+            </>
           ) : (
             <>
+              <p className="text-[11px] text-muted-foreground">
+                {facing === 'user' ? 'Caméra avant' : 'Caméra arrière'}
+              </p>
               <Button type="button" variant="accent" size="sm" onClick={() => void snap()} disabled={busy}>
                 Capturer
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void switchFacing()}
+                disabled={busy}
+              >
+                <SwitchCamera className="h-4 w-4" />
+                Basculer avant/arrière
               </Button>
               <Button type="button" variant="outline" size="sm" onClick={stopCam}>
                 Arrêter

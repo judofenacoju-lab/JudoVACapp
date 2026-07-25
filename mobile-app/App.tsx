@@ -1,5 +1,7 @@
 import 'react-native-gesture-handler'
 import { ActivityIndicator, View } from 'react-native'
+import { GestureHandlerRootView } from 'react-native-gesture-handler'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { NavigationContainer } from '@react-navigation/native'
 import { StatusBar } from 'expo-status-bar'
 import { AuthProvider, useAuth } from './src/lib/auth-context'
@@ -26,9 +28,13 @@ function Root() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <StatusBar style="auto" />
-      <Root />
-    </AuthProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <AuthProvider>
+          <StatusBar style="auto" />
+          <Root />
+        </AuthProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   )
 }

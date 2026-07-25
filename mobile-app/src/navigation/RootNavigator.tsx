@@ -22,7 +22,11 @@ function MainDrawer() {
       screenOptions={{
         headerStyle: { backgroundColor: colors.navy },
         headerTintColor: '#fff',
-        drawerActiveTintColor: colors.red
+        drawerActiveTintColor: colors.red,
+        // Tablettes : éviter drawer permanent qui laisse l'écran vide
+        drawerType: 'front',
+        overlayColor: 'rgba(0,0,0,0.45)',
+        swipeEnabled: true
       }}
       drawerContent={(props) => (
         <DrawerContentScrollView {...props}>

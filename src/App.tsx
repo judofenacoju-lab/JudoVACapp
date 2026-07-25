@@ -38,20 +38,29 @@ export default function App() {
     let cancelled = false
 
     void (async () => {
-      if (session && profile?.active) {
-        const cfg = buildModeConfig()
-        if (cfg) {
-          await window.judovac.setMode(cfg)
-          if (!cancelled) setMode(cfg)
-        }
-      } else {
-        await window.judovac.clearMode()
-        if (!cancelled) setMode(null)
-      }
+      try {
+        // Mode synchrone d'abord — évite page blanche (surtout tablettes)
+        const cfg = session && profile?.active ? buildModeConfig() : null
+        if (!cancelled) setMode(cfg)
 
-      const minDelay = new Promise<void>((resolve) => setTimeout(resolve, LOADING_DURATION_MS))
-      await minDelay
-      if (!cancelled) setBoot('ready')
+        if (cfg) {
+          try {
+            await window.judovac.setMode(cfg)
+          } catch (e) {
+            console.warn('[App] setMode:', e)
+          }
+        } else {
+          try {
+            await window.judovac.clearMode()
+          } catch (e) {
+            console.warn('[App] clearMode:', e)
+          }
+        }
+
+        await new Promise<void>((resolve) => setTimeout(resolve, LOADING_DURATION_MS))
+      } finally {
+        if (!cancelled) setBoot('ready')
+      }
     })()
 
     return () => {
@@ -62,68 +71,77 @@ export default function App() {
   if (!isSupabaseConfigured) return <ConfigErrorPage />
   if (loading || boot === 'loading') return <LoadingScreen />
 
+  // Toujours dériver un mode si session active (évite LoadingScreen infini tablette)
+  const effectiveMode = mode ?? (session && profile?.active ? buildModeConfig() : null)
+
   return (
-    <Routes>
-      <Route
-        path="/login"
-        element={session && profile?.active ? <Navigate to={profile.role === 'admin' ? '/dashboard' : '/app'} replace /> : <LoginPage />}
-      />
-      <Route
-        path="/dashboard"
-        element={
-          <ProtectedRoute requiredRole="admin">
-            {mode?.mode === 'server' ? (
-              <ServerDashboardPage
-                mode={mode}
-                onResetMode={async () => {
-                  await signOut()
-                  setMode(null)
-                }}
-              />
-            ) : profile?.role === 'admin' ? (
-              <LoadingScreen />
+    <div className="min-h-dvh w-full">
+      <Routes>
+        <Route
+          path="/login"
+          element={
+            session && profile?.active ? (
+              <Navigate to={profile.role === 'admin' ? '/dashboard' : '/app'} replace />
             ) : (
-              <Navigate to="/login" replace />
-            )}
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/app"
-        element={
-          <ProtectedRoute>
-            {mode?.mode === 'client' ? (
-              <ClientDashboardPage
-                mode={mode}
-                onResetMode={async () => {
-                  await signOut()
-                  setMode(null)
-                }}
-              />
-            ) : profile?.role === 'admin' ? (
-              <Navigate to="/dashboard" replace />
-            ) : (
-              <Navigate to="/login" replace />
-            )}
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/"
-        element={
-          <Navigate
-            to={
-              !session
-                ? '/login'
-                : profile?.role === 'admin'
-                  ? '/dashboard'
-                  : '/app'
-            }
-            replace
-          />
-        }
-      />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+              <LoginPage />
+            )
+          }
+        />
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute requiredRole="admin">
+              {effectiveMode?.mode === 'server' ? (
+                <ServerDashboardPage
+                  mode={effectiveMode}
+                  onResetMode={async () => {
+                    await signOut()
+                    setMode(null)
+                  }}
+                />
+              ) : (
+                <Navigate to="/login" replace />
+              )}
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/app"
+          element={
+            <ProtectedRoute>
+              {effectiveMode?.mode === 'client' ? (
+                <ClientDashboardPage
+                  mode={effectiveMode}
+                  onResetMode={async () => {
+                    await signOut()
+                    setMode(null)
+                  }}
+                />
+              ) : profile?.role === 'admin' ? (
+                <Navigate to="/dashboard" replace />
+              ) : (
+                <Navigate to="/login" replace />
+              )}
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/"
+          element={
+            <Navigate
+              to={
+                !session
+                  ? '/login'
+                  : profile?.role === 'admin'
+                    ? '/dashboard'
+                    : '/app'
+              }
+              replace
+            />
+          }
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </div>
   )
 }
