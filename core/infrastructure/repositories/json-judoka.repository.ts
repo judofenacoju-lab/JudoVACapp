@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { computeAge } from '@shared/utils/judoka'
+import { computeAge, isSameJudokaIdentity } from '@shared/utils/judoka'
 import type {
   DuplicateMatch,
   Judoka,
@@ -177,27 +177,24 @@ export class JsonJudokaRepository implements IJudokaRepository {
     const matches: DuplicateMatch[] = []
     for (const j of this.items) {
       if (candidate.excludeId && j.id === candidate.excludeId) continue
-      const matchedOn: DuplicateMatch['matchedOn'] = []
-      const sameName =
-        j.lastName.toLowerCase() === candidate.lastName.trim().toLowerCase() &&
-        j.firstName.toLowerCase() === candidate.firstName.trim().toLowerCase()
-      if (sameName) matchedOn.push('name')
-      if (j.birthDate === candidate.birthDate) matchedOn.push('birthDate')
       if (
-        candidate.licenseNumber &&
-        candidate.licenseNumber.trim() &&
-        j.licenseNumber &&
-        j.licenseNumber === candidate.licenseNumber.trim()
+        !isSameJudokaIdentity(
+          {
+            lastName: candidate.lastName,
+            middleName: candidate.middleName,
+            firstName: candidate.firstName,
+            birthDate: candidate.birthDate,
+            club: candidate.club
+          },
+          j
+        )
       ) {
-        matchedOn.push('licenseNumber')
+        continue
       }
-      if (
-        (sameName && j.birthDate === candidate.birthDate) ||
-        (candidate.licenseNumber?.trim() &&
-          j.licenseNumber === candidate.licenseNumber.trim())
-      ) {
-        matches.push({ judoka: j, matchedOn })
-      }
+      matches.push({
+        judoka: j,
+        matchedOn: ['name', 'middleName', 'birthDate', 'club']
+      })
     }
     return matches
   }

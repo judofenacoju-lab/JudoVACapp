@@ -8,7 +8,7 @@ import type { AppSettings } from '@shared/types/settings'
 import type { UserAccount } from '@shared/types/user-account'
 import { createDefaultBadgeTemplate } from '@shared/types/badge'
 import { createDefaultSettings } from '@shared/types/settings'
-import { computeAge, resolveJudokaCategory, setActiveCategoryAgeRanges } from '@shared/utils/judoka'
+import { computeAge, isSameJudokaIdentity, resolveJudokaCategory, setActiveCategoryAgeRanges } from '@shared/utils/judoka'
 import { formatCreatorLabel } from '@shared/utils/creator'
 import { judokaFormSchema } from '@shared/validation/judoka'
 import { createId } from './create-id'
@@ -116,9 +116,10 @@ async function nextDisplayId(): Promise<string> {
 
 async function findDuplicates(candidate: {
   lastName: string
+  middleName?: string
   firstName: string
   birthDate: string
-  licenseNumber?: string
+  club?: string
   excludeId?: string
 }): Promise<DuplicateMatch[]> {
   const { data } = await supabase.from('judokas').select('*')
@@ -126,24 +127,24 @@ async function findDuplicates(candidate: {
   const matches: DuplicateMatch[] = []
   for (const j of items) {
     if (candidate.excludeId && j.id === candidate.excludeId) continue
-    const matchedOn: DuplicateMatch['matchedOn'] = []
-    const sameName =
-      j.lastName.toLowerCase() === candidate.lastName.trim().toLowerCase() &&
-      j.firstName.toLowerCase() === candidate.firstName.trim().toLowerCase()
-    if (sameName) matchedOn.push('name')
-    if (j.birthDate === candidate.birthDate) matchedOn.push('birthDate')
     if (
-      candidate.licenseNumber?.trim() &&
-      j.licenseNumber === candidate.licenseNumber.trim()
+      !isSameJudokaIdentity(
+        {
+          lastName: candidate.lastName,
+          middleName: candidate.middleName,
+          firstName: candidate.firstName,
+          birthDate: candidate.birthDate,
+          club: candidate.club
+        },
+        j
+      )
     ) {
-      matchedOn.push('licenseNumber')
+      continue
     }
-    if (
-      (sameName && j.birthDate === candidate.birthDate) ||
-      (candidate.licenseNumber?.trim() && j.licenseNumber === candidate.licenseNumber.trim())
-    ) {
-      matches.push({ judoka: j, matchedOn })
-    }
+    matches.push({
+      judoka: j,
+      matchedOn: ['name', 'middleName', 'birthDate', 'club']
+    })
   }
   return matches
 }
@@ -500,15 +501,20 @@ export const judovacClient = {
         return fail('Données judoka invalides', 'VALIDATION', parsed.error.flatten())
       }
 
-      const force = Boolean((body as { force?: boolean })?.force)
       const duplicates = await findDuplicates({
         lastName: parsed.data.lastName,
+        middleName: parsed.data.middleName,
         firstName: parsed.data.firstName,
         birthDate: parsed.data.birthDate,
-        licenseNumber: parsed.data.licenseNumber
+        club: parsed.data.club
       })
-      if (duplicates.length > 0 && !force) {
-        return fail('Doublon potentiel détecté', 'DUPLICATE', { duplicates })
+      if (duplicates.length > 0) {
+        const ids = duplicates.map((d) => d.judoka.displayId).join(', ')
+        return fail(
+          `Doublon bloqué : un judoka avec le même Nom, Postnom, Prénom, Date de naissance et Club existe déjà (${ids}).`,
+          'DUPLICATE',
+          { duplicates }
+        )
       }
 
       const displayId = await nextDisplayId()
@@ -555,10 +561,29 @@ export const judovacClient = {
         birthDate,
         patch.category ?? (existing as JudokaRow).category
       )
+      const nextIdentity = {
+        lastName: patch.lastName ?? (existing as JudokaRow).last_name,
+        middleName: patch.middleName ?? (existing as JudokaRow).middle_name,
+        firstName: patch.firstName ?? (existing as JudokaRow).first_name,
+        birthDate,
+        club: patch.club ?? (existing as JudokaRow).club
+      }
+      const duplicates = await findDuplicates({
+        ...nextIdentity,
+        excludeId: id
+      })
+      if (duplicates.length > 0) {
+        const ids = duplicates.map((d) => d.judoka.displayId).join(', ')
+        return fail(
+          `Doublon bloqué : un judoka avec le même Nom, Postnom, Prénom, Date de naissance et Club existe déjà (${ids}).`,
+          'DUPLICATE',
+          { duplicates }
+        )
+      }
       const update = {
-        last_name: patch.lastName ?? (existing as JudokaRow).last_name,
-        middle_name: patch.middleName ?? (existing as JudokaRow).middle_name,
-        first_name: patch.firstName ?? (existing as JudokaRow).first_name,
+        last_name: nextIdentity.lastName,
+        middle_name: nextIdentity.middleName,
+        first_name: nextIdentity.firstName,
         sex: patch.sex ?? (existing as JudokaRow).sex,
         birth_date: birthDate,
         age,
@@ -568,7 +593,7 @@ export const judovacClient = {
         address: patch.address ?? (existing as JudokaRow).address,
         phone: patch.phone ?? (existing as JudokaRow).phone,
         email: patch.email ?? (existing as JudokaRow).email,
-        club: patch.club ?? (existing as JudokaRow).club,
+        club: nextIdentity.club,
         league: patch.league ?? (existing as JudokaRow).league,
         sport_province: patch.sportProvince ?? (existing as JudokaRow).sport_province,
         grade: patch.grade ?? (existing as JudokaRow).grade,

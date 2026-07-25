@@ -36,12 +36,16 @@ export class UpdateJudokaUseCase {
       firstName: input.firstName,
       middleName: input.middleName,
       birthDate: input.birthDate,
-      licenseNumber: input.licenseNumber,
+      club: input.club,
       excludeId: id
     })
 
-    if (duplicates.length > 0 && !options.force) {
-      throw new DuplicateError('Doublon potentiel détecté', { duplicates })
+    if (duplicates.length > 0) {
+      const ids = duplicates.map((d) => d.judoka.displayId).join(', ')
+      throw new DuplicateError(
+        `Doublon bloqué : un judoka avec le même Nom, Postnom, Prénom, Date de naissance et Club existe déjà (${ids}).`,
+        { duplicates }
+      )
     }
 
     const judoka = await this.repo.update(id, input)

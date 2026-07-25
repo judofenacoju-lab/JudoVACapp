@@ -104,3 +104,36 @@ export function formatJudokaFullName(parts: {
     .filter(Boolean)
     .join(' ')
 }
+
+/** Normalise un champ texte pour comparaison doublon. */
+export function normalizeIdentityField(value: string | undefined | null): string {
+  return (value ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+/**
+ * Doublon strict : Nom + Postnom + Prénom + Date de naissance + Club identiques.
+ */
+export function isSameJudokaIdentity(
+  a: {
+    lastName: string
+    middleName?: string | null
+    firstName: string
+    birthDate: string
+    club?: string | null
+  },
+  b: {
+    lastName: string
+    middleName?: string | null
+    firstName: string
+    birthDate: string
+    club?: string | null
+  }
+): boolean {
+  return (
+    normalizeIdentityField(a.lastName) === normalizeIdentityField(b.lastName) &&
+    normalizeIdentityField(a.middleName) === normalizeIdentityField(b.middleName) &&
+    normalizeIdentityField(a.firstName) === normalizeIdentityField(b.firstName) &&
+    (a.birthDate ?? '').trim() === (b.birthDate ?? '').trim() &&
+    normalizeIdentityField(a.club) === normalizeIdentityField(b.club)
+  )
+}

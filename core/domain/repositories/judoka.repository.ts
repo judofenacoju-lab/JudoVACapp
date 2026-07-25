@@ -31,6 +31,7 @@ export interface DuplicateCandidate {
   firstName: string
   middleName?: string
   birthDate: string
+  club?: string
   licenseNumber?: string
   excludeId?: string
 }

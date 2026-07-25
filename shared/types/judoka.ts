@@ -47,5 +47,5 @@ export type JudokaCreateInput = Omit<
 
 export interface DuplicateMatch {
   judoka: Judoka
-  matchedOn: Array<'name' | 'birthDate' | 'licenseNumber'>
+  matchedOn: Array<'name' | 'middleName' | 'birthDate' | 'club' | 'licenseNumber'>
 }

@@ -162,7 +162,8 @@ export function JudokaFormPage({
     if (!res.ok) {
       if (res.code === 'DUPLICATE') {
         setDuplicateHint(
-          'Un judoka similaire existe déjà (nom / date / licence). Continuer ou modifier ?'
+          res.error ||
+            'Doublon bloqué : Nom, Postnom, Prénom, Date de naissance et Club déjà enregistrés.'
         )
         setError(res.error)
         return
@@ -352,14 +353,12 @@ export function JudokaFormPage({
         {error && <p className="text-sm text-destructive">{error}</p>}
 
         {duplicateHint && (
-          <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
-            <p>{duplicateHint}</p>
+          <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-900">
+            <p className="font-medium">Enregistrement refusé</p>
+            <p className="mt-1">{duplicateHint}</p>
             <div className="mt-3 flex flex-wrap gap-2">
-              <Button type="button" variant="accent" disabled={busy} onClick={() => void submit(true)}>
-                Continuer
-              </Button>
               <Button type="button" variant="outline" disabled={busy} onClick={() => setDuplicateHint(null)}>
-                Modifier
+                Modifier le formulaire
               </Button>
               <Button type="button" variant="ghost" disabled={busy} onClick={onBack}>
                 Annuler
