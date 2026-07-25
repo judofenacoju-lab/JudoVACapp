@@ -6,7 +6,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { AppShell } from '@/layouts/AppShell'
 import { PhotoCapture } from '@/components/PhotoCapture'
-import { computeAge } from '@shared/utils/judoka'
+import {
+  categoryFromAge,
+  computeAge,
+  DEFAULT_JUDOKA_CATEGORIES
+} from '@shared/utils/judoka'
 
 interface Props {
   createdBy: string
@@ -119,6 +123,14 @@ export function JudokaFormPage({
     () => (form.birthDate.match(/^\d{4}-\d{2}-\d{2}$/) ? computeAge(form.birthDate) : null),
     [form.birthDate]
   )
+
+  // Dès que l'âge est détecté → catégorie appropriée
+  useEffect(() => {
+    if (age === null) return
+    const next = categoryFromAge(age)
+    if (!next) return
+    setForm((prev) => (prev.category === next ? prev : { ...prev, category: next }))
+  }, [age])
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]): void {
     setForm((prev) => ({ ...prev, [key]: value }))
@@ -286,8 +298,24 @@ export function JudokaFormPage({
             <Field label="Ceinture" id="belt">
               <Input id="belt" value={form.belt} onChange={(e) => set('belt', e.target.value)} />
             </Field>
-            <Field label="Catégorie" id="category">
-              <Input id="category" value={form.category} onChange={(e) => set('category', e.target.value)} />
+            <Field label="Catégorie (auto)" id="category">
+              <select
+                id="category"
+                className="flex h-10 w-full rounded-md border border-input bg-white/80 px-3 text-sm"
+                value={form.category}
+                onChange={(e) => set('category', e.target.value)}
+              >
+                <option value="">— Sélectionner —</option>
+                {DEFAULT_JUDOKA_CATEGORIES.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+                {form.category &&
+                  !(DEFAULT_JUDOKA_CATEGORIES as readonly string[]).includes(form.category) && (
+                    <option value={form.category}>{form.category}</option>
+                  )}
+              </select>
             </Field>
             <Field label="Poids (kg)" id="weightKg">
               <Input

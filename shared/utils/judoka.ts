@@ -12,6 +12,38 @@ export function computeAge(birthDate: string, at: Date = new Date()): number {
   return Math.max(0, age)
 }
 
+/** Catégories d'âge par défaut (formulaire judoka). */
+export const DEFAULT_JUDOKA_CATEGORIES = [
+  'Eveil',
+  'Pré-poussin',
+  'Poussin',
+  'Benjamin',
+  'Minim',
+  'Cadet',
+  'Junior',
+  'Sénior'
+] as const
+
+export type DefaultJudokaCategory = (typeof DEFAULT_JUDOKA_CATEGORIES)[number]
+
+const CATEGORY_BY_AGE: ReadonlyArray<{ min: number; max: number; category: DefaultJudokaCategory }> = [
+  { min: 4, max: 5, category: 'Eveil' },
+  { min: 6, max: 8, category: 'Pré-poussin' },
+  { min: 9, max: 10, category: 'Poussin' },
+  { min: 11, max: 12, category: 'Benjamin' },
+  { min: 13, max: 14, category: 'Minim' },
+  { min: 15, max: 18, category: 'Cadet' },
+  { min: 19, max: 21, category: 'Junior' },
+  { min: 22, max: 99, category: 'Sénior' }
+]
+
+/** Catégorie par défaut selon l'âge (null hors plages). */
+export function categoryFromAge(age: number): DefaultJudokaCategory | null {
+  if (!Number.isFinite(age) || age < 0) return null
+  const hit = CATEGORY_BY_AGE.find((r) => age >= r.min && age <= r.max)
+  return hit?.category ?? null
+}
+
 /** Affichage badge : Prénom Nom uniquement. */
 export function formatBadgeJudokaName(parts: { firstName: string; lastName: string }): string {
   const first = parts.firstName.trim()
