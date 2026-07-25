@@ -27,6 +27,13 @@
   @apply border-border;
 }
 
+/* Android Chrome : boutons sans fond explicite → pastilles grises natives */
+button {
+  -webkit-appearance: none;
+  appearance: none;
+  background-color: transparent;
+}
+
 html,
 body,
 #root {

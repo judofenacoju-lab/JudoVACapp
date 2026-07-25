@@ -65,7 +65,7 @@ interface Props {
 }
 
 /**
- * Shell applicatif — sidebar fixe bureau, tiroir sur tablette/mobile.
+ * Shell applicatif — sidebar fixe (même rendu bureau / tablette paysage).
  */
 export function WorkspaceLayout({
   role,
@@ -102,7 +102,8 @@ export function WorkspaceLayout({
   const aside = (
     <aside
       className={cn(
-        'flex h-full w-56 shrink-0 flex-col text-white',
+        'flex w-56 shrink-0 flex-col text-white',
+        'h-full min-h-full',
         role === 'server' ? 'bg-judo-red' : 'bg-judo-navy'
       )}
     >
@@ -123,7 +124,7 @@ export function WorkspaceLayout({
           </div>
           <button
             type="button"
-            className="rounded-md p-1.5 text-white/80 hover:bg-white/10 lg:hidden"
+            className="rounded-md bg-transparent p-1.5 text-white/80 hover:bg-white/10 md:hidden"
             onClick={() => setNavOpen(false)}
             aria-label="Fermer le menu"
           >
@@ -146,12 +147,12 @@ export function WorkspaceLayout({
               type="button"
               onClick={() => navigate(item.id)}
               className={cn(
-                'flex w-full items-center gap-2.5 rounded-md px-3 py-2.5 text-left text-sm transition-colors',
+                'flex w-full items-center gap-2.5 rounded-md border-0 px-3 py-2.5 text-left text-sm transition-colors',
                 isActive
                   ? role === 'server'
                     ? 'bg-white text-judo-red'
                     : 'bg-judo-red text-white'
-                  : 'text-white/75 hover:bg-white/10 hover:text-white'
+                  : 'bg-transparent text-white/75 hover:bg-white/10 hover:text-white'
               )}
             >
               {item.icon}
@@ -161,10 +162,10 @@ export function WorkspaceLayout({
         })}
       </nav>
 
-      <div className="border-t border-white/10 p-3">
+      <div className="mt-auto border-t border-white/10 p-3">
         <Button
           variant="ghost"
-          className="w-full justify-start text-white/80 hover:bg-white/10 hover:text-white"
+          className="w-full justify-start bg-transparent text-white/80 hover:bg-white/10 hover:text-white"
           onClick={onLogout}
         >
           <LogOut className="h-4 w-4" />
@@ -175,29 +176,31 @@ export function WorkspaceLayout({
   )
 
   return (
-    <div className="relative flex min-h-dvh min-h-full w-full">
-      {/* Desktop sidebar */}
-      <div className="hidden lg:flex lg:min-h-dvh">{aside}</div>
+    <div className="relative flex min-h-screen min-h-dvh w-full">
+      {/* Sidebar fixe — tablette paysage & desktop (même style) */}
+      <div className="sticky top-0 hidden h-screen min-h-screen w-56 shrink-0 self-start md:flex md:h-dvh md:min-h-dvh">
+        {aside}
+      </div>
 
-      {/* Mobile / tablet drawer */}
+      {/* Tiroir téléphone uniquement */}
       {navOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden">
+        <div className="fixed inset-0 z-50 md:hidden">
           <button
             type="button"
             className="absolute inset-0 bg-black/45"
             aria-label="Fermer le menu"
             onClick={() => setNavOpen(false)}
           />
-          <div className="absolute inset-y-0 left-0 shadow-xl">{aside}</div>
+          <div className="absolute inset-y-0 left-0 flex h-full shadow-xl">{aside}</div>
         </div>
       )}
 
-      <div className="flex min-h-dvh min-w-0 flex-1 flex-col">
+      <div className="flex min-h-screen min-h-dvh min-w-0 flex-1 flex-col">
         <header className="flex items-start justify-between gap-4 border-b bg-white px-4 py-4 sm:px-6">
           <div className="flex min-w-0 items-start gap-3">
             <button
               type="button"
-              className="mt-0.5 rounded-md border bg-white p-2 text-judo-navy shadow-sm lg:hidden"
+              className="mt-0.5 rounded-md border border-input bg-white p-2 text-judo-navy shadow-sm md:hidden"
               onClick={() => setNavOpen(true)}
               aria-label="Ouvrir le menu"
             >
