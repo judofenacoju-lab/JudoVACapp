@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Copy, Check, RefreshCw, Save, Trash2, Plus, Eraser } from 'lucide-react'
 import type { AppSettings } from '@shared/types/settings'
+import { createDefaultCategoryAgeRanges } from '@shared/types/settings'
 import type { SystemLogEntry } from '@shared/types/dashboard'
 import type { CreatedUserAccount, UserAccount } from '@shared/types/user-account'
 import { Button } from '@/components/ui/button'
@@ -13,7 +14,7 @@ interface Props {
   embedded?: boolean
 }
 
-type Tab = 'event' | 'users' | 'print' | 'colors' | 'network' | 'logs'
+type Tab = 'event' | 'users' | 'categories' | 'print' | 'colors' | 'network' | 'logs'
 
 interface LocalNetworkInfo {
   addresses: Array<{ address: string; iface: string }>
@@ -75,7 +76,27 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     if (!settings) return
     setBusy(true)
     setError(null)
-    const res = await window.judovac.setSettings(settings)
+    const categories = (settings.categories ?? []).map((r) => ({
+      name: r.name.trim(),
+      minAge: Number(r.minAge),
+      maxAge: Number(r.maxAge)
+    }))
+    for (const r of categories) {
+      if (!r.name) {
+        setBusy(false)
+        setError('Chaque catégorie doit avoir un nom.')
+        setTab('categories')
+        return
+      }
+      if (!Number.isFinite(r.minAge) || !Number.isFinite(r.maxAge) || r.minAge > r.maxAge) {
+        setBusy(false)
+        setError(`Tranche invalide pour « ${r.name} » (âge min ≤ âge max).`)
+        setTab('categories')
+        return
+      }
+    }
+    const payload = { ...settings, categories }
+    const res = await window.judovac.setSettings(payload)
     setBusy(false)
     if (!res.ok) {
       setError(res.error)
@@ -184,7 +205,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     <AppShell
       embedded={embedded}
       title="Configuration"
-      subtitle="Événement · Utilisateurs · Impression · Couleurs · Réseau · Journal"
+      subtitle="Événement · Utilisateurs · Catégorie · Impression · Couleurs · Réseau · Journal"
       actions={
         !embedded ? (
           <Button variant="outline" onClick={onBack}>
@@ -200,6 +221,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
             [
               ['event', 'Événement'],
               ['users', 'Utilisateurs'],
+              ['categories', 'Catégorie'],
               ['print', 'Impression'],
               ['colors', 'Couleurs'],
               ['network', 'Réseau'],
@@ -390,6 +412,123 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                 </li>
               ))}
             </ul>
+          </section>
+        )}
+
+        {tab === 'categories' && (
+          <section className="space-y-4 rounded-xl border bg-white/75 p-5">
+            <p className="text-sm text-muted-foreground">
+              Définissez les tranches d’âge utilisées pour attribuer automatiquement la catégorie
+              d’un judoka (formulaire et liste).
+            </p>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[28rem] text-left text-sm">
+                <thead className="border-b text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th className="px-2 py-2">Catégorie</th>
+                    <th className="px-2 py-2 w-28">Âge min</th>
+                    <th className="px-2 py-2 w-28">Âge max</th>
+                    <th className="px-2 py-2 w-16" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {(settings.categories ?? createDefaultCategoryAgeRanges()).map((row, index) => (
+                    <tr key={`${row.name}-${index}`} className="border-b last:border-0">
+                      <td className="px-2 py-2">
+                        <Input
+                          value={row.name}
+                          onChange={(e) => {
+                            const categories = [...(settings.categories ?? [])]
+                            categories[index] = { ...categories[index], name: e.target.value }
+                            setSettings({ ...settings, categories })
+                          }}
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <Input
+                          type="number"
+                          min={0}
+                          max={120}
+                          value={row.minAge}
+                          onChange={(e) => {
+                            const categories = [...(settings.categories ?? [])]
+                            categories[index] = {
+                              ...categories[index],
+                              minAge: Number(e.target.value)
+                            }
+                            setSettings({ ...settings, categories })
+                          }}
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <Input
+                          type="number"
+                          min={0}
+                          max={120}
+                          value={row.maxAge}
+                          onChange={(e) => {
+                            const categories = [...(settings.categories ?? [])]
+                            categories[index] = {
+                              ...categories[index],
+                              maxAge: Number(e.target.value)
+                            }
+                            setSettings({ ...settings, categories })
+                          }}
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          title="Supprimer"
+                          disabled={(settings.categories ?? []).length <= 1}
+                          onClick={() => {
+                            const categories = (settings.categories ?? []).filter((_, i) => i !== index)
+                            setSettings({ ...settings, categories })
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setSettings({
+                    ...settings,
+                    categories: [
+                      ...(settings.categories ?? []),
+                      { name: 'Nouvelle', minAge: 0, maxAge: 0 }
+                    ]
+                  })
+                }
+              >
+                <Plus className="h-4 w-4" />
+                Ajouter une catégorie
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setSettings({
+                    ...settings,
+                    categories: createDefaultCategoryAgeRanges()
+                  })
+                }
+              >
+                <RefreshCw className="h-4 w-4" />
+                Restaurer les défauts
+              </Button>
+            </div>
           </section>
         )}
 

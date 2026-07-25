@@ -1,3 +1,6 @@
+import type { CategoryAgeRange } from '@shared/types/settings'
+import { createDefaultCategoryAgeRanges } from '@shared/types/settings'
+
 /**
  * Calcule l'âge à partir d'une date ISO (AAAA-MM-JJ).
  * Partagé UI / domain / PDF — logique pure.
@@ -13,35 +16,48 @@ export function computeAge(birthDate: string, at: Date = new Date()): number {
 }
 
 /** Catégories d'âge par défaut (formulaire judoka). */
-export const DEFAULT_JUDOKA_CATEGORIES = [
-  'Eveil',
-  'Pré-poussin',
-  'Poussin',
-  'Benjamin',
-  'Minim',
-  'Cadet',
-  'Junior',
-  'Sénior'
-] as const
+export const DEFAULT_JUDOKA_CATEGORIES = createDefaultCategoryAgeRanges().map((r) => r.name)
 
 export type DefaultJudokaCategory = (typeof DEFAULT_JUDOKA_CATEGORIES)[number]
 
-const CATEGORY_BY_AGE: ReadonlyArray<{ min: number; max: number; category: DefaultJudokaCategory }> = [
-  { min: 4, max: 5, category: 'Eveil' },
-  { min: 6, max: 8, category: 'Pré-poussin' },
-  { min: 9, max: 10, category: 'Poussin' },
-  { min: 11, max: 12, category: 'Benjamin' },
-  { min: 13, max: 14, category: 'Minim' },
-  { min: 15, max: 18, category: 'Cadet' },
-  { min: 19, max: 21, category: 'Junior' },
-  { min: 22, max: 99, category: 'Sénior' }
-]
+const DEFAULT_RANGES: CategoryAgeRange[] = createDefaultCategoryAgeRanges()
 
-/** Catégorie par défaut selon l'âge (null hors plages). */
-export function categoryFromAge(age: number): DefaultJudokaCategory | null {
+/** Tranches actives (issues de Configuration → Catégorie). */
+let activeCategoryRanges: CategoryAgeRange[] = DEFAULT_RANGES.map((r) => ({ ...r }))
+
+export function setActiveCategoryAgeRanges(ranges: CategoryAgeRange[] | null | undefined): void {
+  if (!ranges?.length) {
+    activeCategoryRanges = DEFAULT_RANGES.map((r) => ({ ...r }))
+    return
+  }
+  activeCategoryRanges = ranges
+    .filter((r) => r.name.trim() && Number.isFinite(r.minAge) && Number.isFinite(r.maxAge))
+    .map((r) => ({
+      name: r.name.trim(),
+      minAge: Math.max(0, Math.min(120, Math.floor(r.minAge))),
+      maxAge: Math.max(0, Math.min(120, Math.floor(r.maxAge)))
+    }))
+  if (activeCategoryRanges.length === 0) {
+    activeCategoryRanges = DEFAULT_RANGES.map((r) => ({ ...r }))
+  }
+}
+
+export function getActiveCategoryAgeRanges(): CategoryAgeRange[] {
+  return activeCategoryRanges.map((r) => ({ ...r }))
+}
+
+export function getActiveCategoryNames(): string[] {
+  return activeCategoryRanges.map((r) => r.name)
+}
+
+/** Catégorie selon l'âge et les tranches configurées (ou défaut). */
+export function categoryFromAge(
+  age: number,
+  ranges: CategoryAgeRange[] = activeCategoryRanges
+): string | null {
   if (!Number.isFinite(age) || age < 0) return null
-  const hit = CATEGORY_BY_AGE.find((r) => age >= r.min && age <= r.max)
-  return hit?.category ?? null
+  const hit = ranges.find((r) => age >= r.minAge && age <= r.maxAge)
+  return hit?.name ?? null
 }
 
 /**
@@ -50,10 +66,11 @@ export function categoryFromAge(age: number): DefaultJudokaCategory | null {
  */
 export function resolveJudokaCategory(
   birthDate: string | undefined | null,
-  storedCategory?: string | null
+  storedCategory?: string | null,
+  ranges?: CategoryAgeRange[]
 ): string {
   if (birthDate && /^\d{4}-\d{2}-\d{2}$/.test(birthDate)) {
-    const fromAge = categoryFromAge(computeAge(birthDate))
+    const fromAge = categoryFromAge(computeAge(birthDate), ranges ?? activeCategoryRanges)
     if (fromAge) return fromAge
   }
   return (storedCategory ?? '').trim()

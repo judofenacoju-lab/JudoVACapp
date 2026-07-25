@@ -9,7 +9,7 @@ import { PhotoCapture } from '@/components/PhotoCapture'
 import {
   categoryFromAge,
   computeAge,
-  DEFAULT_JUDOKA_CATEGORIES
+  getActiveCategoryNames
 } from '@shared/utils/judoka'
 
 interface Props {
@@ -123,6 +123,8 @@ export function JudokaFormPage({
     () => (form.birthDate.match(/^\d{4}-\d{2}-\d{2}$/) ? computeAge(form.birthDate) : null),
     [form.birthDate]
   )
+
+  const categoryOptions = getActiveCategoryNames()
 
   // Dès que l'âge est détecté → catégorie appropriée
   useEffect(() => {
@@ -306,13 +308,12 @@ export function JudokaFormPage({
                 onChange={(e) => set('category', e.target.value)}
               >
                 <option value="">— Sélectionner —</option>
-                {DEFAULT_JUDOKA_CATEGORIES.map((cat) => (
+                {categoryOptions.map((cat) => (
                   <option key={cat} value={cat}>
                     {cat}
                   </option>
                 ))}
-                {form.category &&
-                  !(DEFAULT_JUDOKA_CATEGORIES as readonly string[]).includes(form.category) && (
+                {form.category && !categoryOptions.includes(form.category) && (
                     <option value={form.category}>{form.category}</option>
                   )}
               </select>

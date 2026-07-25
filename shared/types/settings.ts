@@ -1,6 +1,27 @@
 /**
  * Paramètres applicatifs persistés (table settings + cache fichier).
  */
+
+/** Tranche d'âge → catégorie judoka. */
+export interface CategoryAgeRange {
+  name: string
+  minAge: number
+  maxAge: number
+}
+
+export function createDefaultCategoryAgeRanges(): CategoryAgeRange[] {
+  return [
+    { name: 'Eveil', minAge: 3, maxAge: 5 },
+    { name: 'Pré-poussin', minAge: 6, maxAge: 7 },
+    { name: 'Poussin', minAge: 8, maxAge: 9 },
+    { name: 'Benjamin', minAge: 10, maxAge: 11 },
+    { name: 'Minim', minAge: 12, maxAge: 13 },
+    { name: 'Cadet', minAge: 14, maxAge: 17 },
+    { name: 'Junior', minAge: 18, maxAge: 20 },
+    { name: 'Sénior', minAge: 21, maxAge: 99 }
+  ]
+}
+
 export interface AppSettings {
   event: {
     name: string
@@ -23,6 +44,8 @@ export interface AppSettings {
   network: {
     serverPort: number
   }
+  /** Tranches d'âge pour la catégorisation automatique. */
+  categories: CategoryAgeRange[]
   updatedAt: string
 }
 
@@ -49,6 +72,7 @@ export function createDefaultSettings(): AppSettings {
     network: {
       serverPort: 3847
     },
+    categories: createDefaultCategoryAgeRanges(),
     updatedAt: new Date().toISOString()
   }
 }

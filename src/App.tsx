@@ -32,6 +32,11 @@ export default function App() {
   const [mode, setMode] = useState<ModeConfig | null>(null)
   const modeKeyRef = useRef<string>('')
 
+  // Charger les tranches de catégorie dès le démarrage
+  useEffect(() => {
+    void window.judovac.getSettings()
+  }, [])
+
   // Gate unique : dès que l'auth a répondu, sortir du splash (pas de dépendance session/profile)
   useEffect(() => {
     if (loading) return

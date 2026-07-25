@@ -97,11 +97,20 @@ export function profileToUserAccount(row: ProfileRow): UserAccount {
 export function mergeSettings(raw: Partial<AppSettings> | null): AppSettings {
   const defaults = createDefaultSettings()
   if (!raw) return defaults
+  const categories =
+    Array.isArray(raw.categories) && raw.categories.length > 0
+      ? raw.categories.map((r) => ({
+          name: String(r.name ?? '').trim(),
+          minAge: Number(r.minAge),
+          maxAge: Number(r.maxAge)
+        })).filter((r) => r.name && Number.isFinite(r.minAge) && Number.isFinite(r.maxAge))
+      : defaults.categories
   return {
     event: { ...defaults.event, ...raw.event },
     print: { ...defaults.print, ...raw.print },
     ui: { ...defaults.ui, ...raw.ui },
     network: { ...defaults.network, ...raw.network },
+    categories: categories.length > 0 ? categories : defaults.categories,
     updatedAt: raw.updatedAt ?? defaults.updatedAt
   }
 }

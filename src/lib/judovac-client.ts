@@ -8,7 +8,7 @@ import type { AppSettings } from '@shared/types/settings'
 import type { UserAccount } from '@shared/types/user-account'
 import { createDefaultBadgeTemplate } from '@shared/types/badge'
 import { createDefaultSettings } from '@shared/types/settings'
-import { computeAge, resolveJudokaCategory } from '@shared/utils/judoka'
+import { computeAge, resolveJudokaCategory, setActiveCategoryAgeRanges } from '@shared/utils/judoka'
 import { formatCreatorLabel } from '@shared/utils/creator'
 import { judokaFormSchema } from '@shared/validation/judoka'
 import { supabase, type JudokaRow, type ProfileRow } from './supabase'
@@ -1222,7 +1222,9 @@ export const judovacClient = {
 
   getSettings: async (): Promise<IpcResult<AppSettings>> => {
     const { data } = await supabase.from('app_settings').select('*').eq('id', 'default').single()
-    return ok(mergeSettings((data?.settings ?? null) as Partial<AppSettings> | null))
+    const settings = mergeSettings((data?.settings ?? null) as Partial<AppSettings> | null)
+    setActiveCategoryAgeRanges(settings.categories)
+    return ok(settings)
   },
 
   setSettings: async (patch: Partial<AppSettings>): Promise<IpcResult<AppSettings>> => {
@@ -1235,6 +1237,7 @@ export const judovacClient = {
       print: { ...current.data.print, ...patch.print },
       ui: { ...current.data.ui, ...patch.ui },
       network: { ...current.data.network, ...patch.network },
+      categories: patch.categories ?? current.data.categories,
       updatedAt: new Date().toISOString()
     }
     const { error } = await supabase.from('app_settings').upsert({
@@ -1243,6 +1246,7 @@ export const judovacClient = {
       updated_at: merged.updatedAt
     })
     if (error) return fail(error.message)
+    setActiveCategoryAgeRanges(merged.categories)
     return ok(merged)
   },
 
