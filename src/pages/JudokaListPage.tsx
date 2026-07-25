@@ -200,6 +200,33 @@ export function JudokaListPage({
     setMessage(`${res.data.count} badge(s) exporté(s) → ${res.data.path}`)
   }
 
+  async function exportListPdf(): Promise<void> {
+    setBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const parts: string[] = []
+      if (query.trim()) parts.push(`Recherche « ${query.trim()} »`)
+      if (club) parts.push(`Club « ${club} »`)
+      if (province) parts.push(`Province « ${province} »`)
+      if (league) parts.push(`Ligue « ${league} »`)
+      if (grade) parts.push(`Grade « ${grade} »`)
+      if (createdBy) parts.push(`Utilisateur « ${createdBy} »`)
+      const { downloadPdfBytes, exportJudokaListPdfBytes } = await import('@/lib/judoka-list-pdf')
+      const bytes = await exportJudokaListPdfBytes({
+        judokas: items,
+        filterSummary: parts.length ? parts.join(' · ') : 'Aucun (tous les judokas affichés)'
+      })
+      const filename = `liste-judokas-${new Date().toISOString().slice(0, 10)}.pdf`
+      downloadPdfBytes(bytes, filename)
+      setMessage(`Liste exportée (${items.length} judoka(s)) → ${filename}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Export liste impossible')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function printSelected(): Promise<void> {
     if (selected.size === 0) return
     setBusy(true)
@@ -258,23 +285,35 @@ export function JudokaListPage({
           <Input placeholder="Ligue" value={league} onChange={(e) => setLeague(e.target.value)} />
           <Input placeholder="Grade" value={grade} onChange={(e) => setGrade(e.target.value)} />
           {!clientMode && (
-            <div className="space-y-1">
-              <Label htmlFor="filter-user" className="sr-only">
-                Utilisateur
-              </Label>
-              <select
-                id="filter-user"
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                value={createdBy}
-                onChange={(e) => setCreatedBy(e.target.value)}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="min-w-0 flex-1 space-y-1">
+                <Label htmlFor="filter-user" className="sr-only">
+                  Utilisateur
+                </Label>
+                <select
+                  id="filter-user"
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={createdBy}
+                  onChange={(e) => setCreatedBy(e.target.value)}
+                >
+                  <option value="">Utilisateur (tous)</option>
+                  {creators.map((user) => (
+                    <option key={user} value={user}>
+                      {user}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                disabled={busy || loading}
+                onClick={() => void exportListPdf()}
+                className="h-10 shrink-0 bg-emerald-600 px-4 text-white hover:bg-emerald-700 hover:text-white"
               >
-                <option value="">Utilisateur (tous)</option>
-                {creators.map((user) => (
-                  <option key={user} value={user}>
-                    {user}
-                  </option>
-                ))}
-              </select>
+                <FileDown className="h-4 w-4" />
+                Export Liste
+              </Button>
             </div>
           )}
         </div>
