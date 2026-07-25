@@ -8,7 +8,7 @@ import type { AppSettings } from '@shared/types/settings'
 import type { UserAccount } from '@shared/types/user-account'
 import { createDefaultBadgeTemplate } from '@shared/types/badge'
 import { createDefaultSettings } from '@shared/types/settings'
-import { computeAge } from '@shared/utils/judoka'
+import { computeAge, resolveJudokaCategory } from '@shared/utils/judoka'
 import { formatCreatorLabel } from '@shared/utils/creator'
 import { judokaFormSchema } from '@shared/validation/judoka'
 import { supabase, type JudokaRow, type ProfileRow } from './supabase'
@@ -512,11 +512,13 @@ export const judovacClient = {
 
       const displayId = await nextDisplayId()
       const now = new Date().toISOString()
+      const age = computeAge(parsed.data.birthDate)
       const row = judokaToRow({
         id: crypto.randomUUID(),
         displayId,
         ...parsed.data,
-        age: computeAge(parsed.data.birthDate),
+        age,
+        category: resolveJudokaCategory(parsed.data.birthDate, parsed.data.category),
         createdAt: now,
         updatedAt: now,
         syncStatus: 'synced',
@@ -547,13 +549,18 @@ export const judovacClient = {
 
       const patch = body as Partial<Judoka>
       const birthDate = patch.birthDate ?? (existing as JudokaRow).birth_date
+      const age = computeAge(birthDate)
+      const category = resolveJudokaCategory(
+        birthDate,
+        patch.category ?? (existing as JudokaRow).category
+      )
       const update = {
         last_name: patch.lastName ?? (existing as JudokaRow).last_name,
         middle_name: patch.middleName ?? (existing as JudokaRow).middle_name,
         first_name: patch.firstName ?? (existing as JudokaRow).first_name,
         sex: patch.sex ?? (existing as JudokaRow).sex,
         birth_date: birthDate,
-        age: computeAge(birthDate),
+        age,
         province: patch.province ?? (existing as JudokaRow).province,
         city: patch.city ?? (existing as JudokaRow).city,
         commune: patch.commune ?? (existing as JudokaRow).commune,
@@ -565,7 +572,7 @@ export const judovacClient = {
         sport_province: patch.sportProvince ?? (existing as JudokaRow).sport_province,
         grade: patch.grade ?? (existing as JudokaRow).grade,
         belt: patch.belt ?? (existing as JudokaRow).belt,
-        category: patch.category ?? (existing as JudokaRow).category,
+        category,
         weight_kg: patch.weightKg !== undefined ? patch.weightKg : (existing as JudokaRow).weight_kg,
         height_cm: patch.heightCm !== undefined ? patch.heightCm : (existing as JudokaRow).height_cm,
         license_number: patch.licenseNumber ?? (existing as JudokaRow).license_number,

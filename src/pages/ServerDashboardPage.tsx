@@ -5,6 +5,7 @@ import type { ModeConfig } from '@shared/types/mode'
 import type { DashboardStats, ServerStatus } from '@shared/types/dashboard'
 import type { Judoka } from '@shared/types/judoka'
 import { StatTile } from '@/components/StatTile'
+import { UserClubsModal } from '@/components/UserClubsModal'
 import { WorkspaceLayout, type ServerNavId } from '@/layouts/WorkspaceLayout'
 import { JudokaFormPage } from '@/pages/JudokaFormPage'
 import { JudokaListPage } from '@/pages/JudokaListPage'
@@ -50,6 +51,7 @@ export function ServerDashboardPage({ onResetMode }: Props) {
   const [editing, setEditing] = useState<Judoka | null>(null)
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [status, setStatus] = useState<ServerStatus | null>(null)
+  const [clubsUser, setClubsUser] = useState<string | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -157,7 +159,14 @@ export function ServerDashboardPage({ onResetMode }: Props) {
                       key={entry.username}
                       className="flex items-center justify-between gap-3 border-b border-border/60 pb-2 last:border-0"
                     >
-                      <span className="font-medium text-judo-navy">{entry.username}</span>
+                      <button
+                        type="button"
+                        onClick={() => setClubsUser(entry.username)}
+                        className="bg-transparent text-left font-medium text-judo-navy underline-offset-2 hover:underline"
+                        title="Voir les clubs enregistrés"
+                      >
+                        {entry.username}
+                      </button>
                       <span className="rounded-full bg-judo-red/10 px-2.5 py-0.5 font-mono text-sm font-semibold text-judo-red">
                         {entry.count}
                       </span>
@@ -174,6 +183,10 @@ export function ServerDashboardPage({ onResetMode }: Props) {
             </div>
           </section>
         </div>
+      )}
+
+      {clubsUser && (
+        <UserClubsModal username={clubsUser} onClose={() => setClubsUser(null)} />
       )}
 
       {view === 'form' && (

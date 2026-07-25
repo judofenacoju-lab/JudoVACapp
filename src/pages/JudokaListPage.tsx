@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, FileDown, Pencil, Printer, Search, Trash2 } from 'lucide-react'
 import type { Judoka } from '@shared/types/judoka'
-import { formatJudokaFullName } from '@shared/utils/judoka'
+import { formatJudokaFullName, resolveJudokaCategory, computeAge } from '@shared/utils/judoka'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -399,7 +399,9 @@ export function JudokaListPage({
                     <td className="px-3 py-2 font-medium">{formatJudokaFullName(j)}</td>
                     <td className="px-3 py-2">{j.club || '—'}</td>
                     <td className="px-3 py-2">{j.grade || '—'}</td>
-                    <td className="px-3 py-2">{j.category || '—'}</td>
+                    <td className="px-3 py-2">
+                      {resolveJudokaCategory(j.birthDate, j.category) || '—'}
+                    </td>
                     <td className="px-3 py-2">
                       <div className="flex justify-end gap-1">
                         <Button
@@ -445,6 +447,7 @@ function queueItemToJudoka(item: {
   const firstName = String(p.firstName ?? '')
   if (!lastName || !firstName) return null
   const birthDate = String(p.birthDate ?? '')
+  const age = birthDate.match(/^\d{4}-\d{2}-\d{2}$/) ? computeAge(birthDate) : 0
   return {
     id: typeof p.id === 'string' ? p.id : `pending-${item.id}`,
     displayId: typeof p.displayId === 'string' ? p.displayId : 'Sync…',
@@ -453,7 +456,7 @@ function queueItemToJudoka(item: {
     firstName,
     sex: p.sex === 'F' ? 'F' : 'M',
     birthDate,
-    age: 0,
+    age,
     province: String(p.province ?? ''),
     city: String(p.city ?? ''),
     commune: String(p.commune ?? ''),
@@ -465,7 +468,7 @@ function queueItemToJudoka(item: {
     sportProvince: String(p.sportProvince ?? ''),
     grade: String(p.grade ?? ''),
     belt: String(p.belt ?? ''),
-    category: String(p.category ?? ''),
+    category: resolveJudokaCategory(birthDate, String(p.category ?? '')),
     weightKg: p.weightKg == null ? null : Number(p.weightKg),
     heightCm: p.heightCm == null ? null : Number(p.heightCm),
     licenseNumber: String(p.licenseNumber ?? ''),

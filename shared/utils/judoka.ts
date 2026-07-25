@@ -44,6 +44,21 @@ export function categoryFromAge(age: number): DefaultJudokaCategory | null {
   return hit?.category ?? null
 }
 
+/**
+ * Catégorie affichée / enregistrée : dérivée de l'âge (date de naissance),
+ * sinon valeur stockée.
+ */
+export function resolveJudokaCategory(
+  birthDate: string | undefined | null,
+  storedCategory?: string | null
+): string {
+  if (birthDate && /^\d{4}-\d{2}-\d{2}$/.test(birthDate)) {
+    const fromAge = categoryFromAge(computeAge(birthDate))
+    if (fromAge) return fromAge
+  }
+  return (storedCategory ?? '').trim()
+}
+
 /** Affichage badge : Prénom Nom uniquement. */
 export function formatBadgeJudokaName(parts: { firstName: string; lastName: string }): string {
   const first = parts.firstName.trim()

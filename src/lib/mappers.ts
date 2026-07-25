@@ -4,9 +4,12 @@ import type { AppSettings } from '@shared/types/settings'
 import { createDefaultSettings } from '@shared/types/settings'
 import type { UserAccount } from '@shared/types/user-account'
 import type { SystemLogEntry } from '@shared/types/dashboard'
+import { computeAge, resolveJudokaCategory } from '@shared/utils/judoka'
 import type { JudokaRow, ProfileRow } from './supabase'
 
 export function rowToJudoka(row: JudokaRow): Judoka {
+  const birthDate = row.birth_date
+  const age = birthDate && /^\d{4}-\d{2}-\d{2}$/.test(birthDate) ? computeAge(birthDate) : row.age
   return {
     id: row.id,
     displayId: row.display_id,
@@ -14,8 +17,8 @@ export function rowToJudoka(row: JudokaRow): Judoka {
     middleName: row.middle_name,
     firstName: row.first_name,
     sex: row.sex,
-    birthDate: row.birth_date,
-    age: row.age,
+    birthDate,
+    age,
     province: row.province,
     city: row.city,
     commune: row.commune,
@@ -27,7 +30,7 @@ export function rowToJudoka(row: JudokaRow): Judoka {
     sportProvince: row.sport_province,
     grade: row.grade,
     belt: row.belt,
-    category: row.category,
+    category: resolveJudokaCategory(birthDate, row.category),
     weightKg: row.weight_kg,
     heightCm: row.height_cm,
     licenseNumber: row.license_number,
