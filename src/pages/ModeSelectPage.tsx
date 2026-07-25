@@ -88,14 +88,14 @@ export function ModeSelectPage({ onConfigured }: Props) {
         }}
       />
       <div
-        className="pointer-events-none absolute -left-[20%] -top-[25%] h-[70vmax] w-[70vmax] animate-home-drift rounded-full opacity-50 blur-3xl"
+        className="pointer-events-none absolute -left-[20%] -top-[25%] h-[70vmax] w-[70vmax] rounded-full opacity-50"
         style={{
           background:
             'radial-gradient(circle, rgba(96,165,250,0.45) 0%, rgba(37,99,235,0.18) 45%, transparent 70%)'
         }}
       />
       <div
-        className="pointer-events-none absolute -bottom-[30%] -right-[15%] h-[65vmax] w-[65vmax] animate-home-drift-alt rounded-full opacity-45 blur-3xl"
+        className="pointer-events-none absolute -bottom-[30%] -right-[15%] h-[65vmax] w-[65vmax] rounded-full opacity-45"
         style={{
           background:
             'radial-gradient(circle, rgba(56,189,248,0.35) 0%, rgba(14,116,144,0.2) 40%, transparent 72%)'
@@ -163,7 +163,7 @@ export function ModeSelectPage({ onConfigured }: Props) {
         {step === 'client-form' && (
           <form
             onSubmit={(e) => void startClient(e)}
-            className="mt-10 w-full max-w-md animate-fade-up space-y-4 rounded-xl border border-white/20 bg-white/95 p-6 shadow-2xl shadow-sky-950/40 backdrop-blur-md"
+            className="mt-10 w-full max-w-md space-y-4 rounded-xl border border-white/20 bg-white p-6 shadow-2xl shadow-sky-950/40"
           >
             <div className="flex items-center gap-2 text-judo-navy">
               <Wifi className="h-5 w-5 text-sky-600" />
@@ -217,7 +217,7 @@ export function ModeSelectPage({ onConfigured }: Props) {
         )}
 
         {error && step === 'choose' && (
-          <p className="mt-6 max-w-md rounded-md bg-black/35 px-4 py-2 text-sm text-red-200 backdrop-blur-sm">
+          <p className="mt-6 max-w-md rounded-md bg-black/50 px-4 py-2 text-sm text-red-200">
             {error}
           </p>
         )}

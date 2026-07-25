@@ -7,7 +7,10 @@ export default defineConfig({
   publicDir: resolve(__dirname, 'public'),
   build: {
     outDir: resolve(__dirname, 'dist'),
-    emptyOutDir: true
+    emptyOutDir: true,
+    // Tablettes Android / navigateurs plus anciens
+    target: ['es2019', 'chrome80', 'safari13', 'firefox78'],
+    cssTarget: ['chrome80', 'safari13']
   },
   resolve: {
     alias: {

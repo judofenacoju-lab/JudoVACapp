@@ -193,7 +193,7 @@ export function WorkspaceLayout({
       )}
 
       <div className="flex min-h-dvh min-w-0 flex-1 flex-col">
-        <header className="flex items-start justify-between gap-4 border-b bg-white/60 px-4 py-4 backdrop-blur-sm sm:px-6">
+        <header className="flex items-start justify-between gap-4 border-b bg-white px-4 py-4 sm:px-6">
           <div className="flex min-w-0 items-start gap-3">
             <button
               type="button"

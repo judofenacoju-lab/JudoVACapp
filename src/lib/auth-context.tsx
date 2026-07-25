@@ -55,27 +55,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     let cancelled = false
-
-    void supabase.auth.getSession().then(async ({ data: { session: s } }) => {
-      if (cancelled) return
-      setSession(s)
-      syncAccessToken(s?.access_token ?? null)
-      if (s?.user) {
-        const p = await loadProfile(s.user.id)
-        if (!cancelled) setProfile(p)
+    const timeout = window.setTimeout(() => {
+      if (!cancelled) {
+        console.warn('[auth] Timeout session — affichage login')
+        setLoading(false)
       }
-      setLoading(false)
-    }).catch(() => {
-      if (!cancelled) setLoading(false)
-    })
+    }, 8000)
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, s) => {
+    void supabase.auth
+      .getSession()
+      .then(async ({ data: { session: s } }) => {
+        if (cancelled) return
+        setSession(s)
+        syncAccessToken(s?.access_token ?? null)
+        if (s?.user) {
+          try {
+            const p = await loadProfile(s.user.id)
+            if (!cancelled) setProfile(p)
+          } catch (e) {
+            console.warn('[auth] profil:', e)
+          }
+        }
+        if (!cancelled) setLoading(false)
+      })
+      .catch((e) => {
+        console.warn('[auth] getSession:', e)
+        if (!cancelled) setLoading(false)
+      })
+      .finally(() => {
+        window.clearTimeout(timeout)
+      })
+
+    const {
+      data: { subscription }
+    } = supabase.auth.onAuthStateChange(async (_event, s) => {
       clearProfileCache()
       syncAccessToken(s?.access_token ?? null)
       setSession(s)
       if (s?.user) {
-        const p = await loadProfile(s.user.id)
-        setProfile(p)
+        try {
+          const p = await loadProfile(s.user.id)
+          setProfile(p)
+        } catch {
+          setProfile(null)
+        }
       } else {
         setProfile(null)
       }
@@ -83,6 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       cancelled = true
+      window.clearTimeout(timeout)
       subscription.unsubscribe()
     }
   }, [])

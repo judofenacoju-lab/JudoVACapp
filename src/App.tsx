@@ -75,7 +75,7 @@ export default function App() {
   const effectiveMode = mode ?? (session && profile?.active ? buildModeConfig() : null)
 
   return (
-    <div className="min-h-dvh w-full">
+    <div className="min-h-screen min-h-dvh w-full">
       <Routes>
         <Route
           path="/login"

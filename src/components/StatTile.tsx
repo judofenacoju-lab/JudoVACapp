@@ -20,7 +20,7 @@ export function StatTile({ icon, label, value, tone = 'default', action }: Props
           : 'text-judo-navy'
 
   return (
-    <div className="rounded-xl border bg-white/75 p-4 shadow-sm backdrop-blur-sm">
+    <div className="rounded-xl border bg-white p-4 shadow-sm">
       <div className="flex items-center gap-2 text-muted-foreground">
         <span className="text-judo-red">{icon}</span>
         <span className="min-w-0 flex-1 text-xs font-medium uppercase tracking-wide">{label}</span>

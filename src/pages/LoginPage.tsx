@@ -42,13 +42,13 @@ export function LoginPage() {
   }
 
   return (
-    <div className="relative flex min-h-full flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-judo-navy via-[#0f2847] to-judo-navy p-6">
+    <div className="relative flex min-h-screen min-h-dvh flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-judo-navy via-[#0f2847] to-judo-navy p-6">
       <div className="pointer-events-none absolute inset-0 opacity-30">
-        <div className="absolute -left-20 -top-20 h-72 w-72 animate-home-drift rounded-full bg-judo-red/20 blur-3xl" />
-        <div className="absolute -bottom-24 -right-16 h-80 w-80 animate-home-drift-alt rounded-full bg-white/10 blur-3xl" />
+        <div className="absolute -left-20 -top-20 h-72 w-72 rounded-full bg-judo-red/20" />
+        <div className="absolute -bottom-24 -right-16 h-80 w-80 rounded-full bg-white/10" />
       </div>
 
-      <div className="relative z-10 w-full max-w-md animate-fade-up">
+      <div className="relative z-10 w-full max-w-md">
         <div className="mb-8 flex flex-col items-center text-center">
           <img src={brandLogo} alt="JudoVACapp" className="mb-4 h-20 w-20 rounded-2xl shadow-lg" />
           <h1 className="font-display text-3xl font-bold text-white">JudoVACapp</h1>
@@ -60,7 +60,7 @@ export function LoginPage() {
         <form
           onSubmit={(e) => void handleSubmit(e)}
           autoComplete="off"
-          className="space-y-5 rounded-2xl border border-white/10 bg-white/95 p-8 shadow-2xl backdrop-blur"
+          className="space-y-5 rounded-2xl border border-white/10 bg-white p-8 shadow-2xl"
         >
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>

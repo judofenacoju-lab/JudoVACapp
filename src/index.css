@@ -30,25 +30,20 @@
 html,
 body,
 #root {
-  min-height: 100%;
-  min-height: 100dvh;
-  height: 100%;
   width: 100%;
-}
-
-@supports (height: 100dvh) {
-  html,
-  body,
-  #root {
-    height: 100dvh;
-  }
+  min-height: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 body {
   @apply bg-background text-foreground font-sans antialiased;
+  /* Pas de background-attachment: fixed — provoque écran blanc sur tablettes Android */
   background-image:
     radial-gradient(ellipse 80% 60% at 10% 0%, rgba(200, 16, 46, 0.12), transparent 55%),
     radial-gradient(ellipse 70% 50% at 90% 10%, rgba(11, 31, 58, 0.18), transparent 50%),
     linear-gradient(160deg, #eef3f8 0%, #e4ebf3 45%, #dce5ef 100%);
-  background-attachment: fixed;
+  background-attachment: scroll;
+  background-repeat: no-repeat;
+  background-size: cover;
 }
