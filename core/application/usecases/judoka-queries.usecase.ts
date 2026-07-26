@@ -20,7 +20,14 @@ export class ListJudokaUseCase {
 export class GetJudokaStatsUseCase {
   constructor(private readonly repo: IJudokaRepository) {}
 
-  async execute(): Promise<{ total: number }> {
-    return { total: await this.repo.count() }
+  async execute(): Promise<{ total: number; male: number; female: number }> {
+    const items = await this.repo.list(50_000, 0)
+    let male = 0
+    let female = 0
+    for (const j of items) {
+      if (j.sex === 'F') female += 1
+      else if (j.sex === 'M') male += 1
+    }
+    return { total: items.length, male, female }
   }
 }

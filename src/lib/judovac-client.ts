@@ -453,10 +453,15 @@ export const judovacClient = {
       void judovacClient.heartbeat()
     }
 
-    const { data: judokas } = await supabase.from('judokas').select('created_by')
+    const { data: judokas } = await supabase.from('judokas').select('created_by, sex')
     const all = judokas ?? []
+    let maleJudokas = 0
+    let femaleJudokas = 0
     const map = new Map<string, number>()
     for (const j of all) {
+      const sex = String((j as { sex?: string }).sex ?? '').toUpperCase()
+      if (sex === 'F') femaleJudokas += 1
+      else if (sex === 'M') maleJudokas += 1
       const label = formatCreatorLabel(j.created_by as string)
       map.set(label, (map.get(label) ?? 0) + 1)
     }
@@ -479,6 +484,8 @@ export const judovacClient = {
 
     return ok({
       totalJudokas: all.length,
+      maleJudokas,
+      femaleJudokas,
       connectedClients: online.length,
       networkStatus: 'online',
       pendingSyncCount: 0,

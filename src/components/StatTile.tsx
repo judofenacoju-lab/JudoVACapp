@@ -4,12 +4,14 @@ interface Props {
   icon: React.ReactNode
   label: string
   value: string
+  /** Texte secondaire sous la valeur (ex. détail garçons / filles). */
+  hint?: string
   tone?: 'ok' | 'warn' | 'muted' | 'default'
   /** Action optionnelle (ex. bouton Actualiser) à droite du libellé */
   action?: React.ReactNode
 }
 
-export function StatTile({ icon, label, value, tone = 'default', action }: Props) {
+export function StatTile({ icon, label, value, hint, tone = 'default', action }: Props) {
   const toneClass =
     tone === 'ok'
       ? 'text-emerald-700'
@@ -27,6 +29,7 @@ export function StatTile({ icon, label, value, tone = 'default', action }: Props
         {action}
       </div>
       <p className={cn('mt-2 text-2xl font-semibold', toneClass)}>{value}</p>
+      {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
     </div>
   )
 }

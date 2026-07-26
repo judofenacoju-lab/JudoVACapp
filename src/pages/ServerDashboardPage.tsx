@@ -97,6 +97,7 @@ export function ServerDashboardPage({ onResetMode }: Props) {
               icon={<Users className="h-5 w-5" />}
               label="Judokas"
               value={String(stats?.totalJudokas ?? 0)}
+              hint={`${stats?.maleJudokas ?? 0} Garçon${(stats?.maleJudokas ?? 0) > 1 ? 's' : ''} · ${stats?.femaleJudokas ?? 0} Fille${(stats?.femaleJudokas ?? 0) > 1 ? 's' : ''}`}
             />
             <StatTile
               icon={<Network className="h-5 w-5" />}

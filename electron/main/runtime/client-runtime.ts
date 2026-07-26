@@ -414,6 +414,8 @@ class ClientRuntime {
     q.reload()
     return {
       totalJudokas: 0,
+      maleJudokas: 0,
+      femaleJudokas: 0,
       connectedClients: 0,
       networkStatus: connected ? 'online' : 'offline',
       pendingSyncCount: q.size(),

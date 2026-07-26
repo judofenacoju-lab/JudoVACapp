@@ -69,6 +69,8 @@ class ServerRuntime {
     if (!this.running) {
       return {
         totalJudokas: 0,
+        maleJudokas: 0,
+        femaleJudokas: 0,
         connectedClients: 0,
         networkStatus: 'offline',
         pendingSyncCount: 0,
@@ -96,6 +98,8 @@ class ServerRuntime {
       )
       return {
         totalJudokas: total.total,
+        maleJudokas: total.male ?? 0,
+        femaleJudokas: total.female ?? 0,
         connectedClients: clientRegistry.size(),
         networkStatus: 'online',
         pendingSyncCount: 0,
@@ -107,6 +111,8 @@ class ServerRuntime {
     } catch {
       return {
         totalJudokas: 0,
+        maleJudokas: 0,
+        femaleJudokas: 0,
         connectedClients: 0,
         networkStatus: 'degraded',
         pendingSyncCount: 0,

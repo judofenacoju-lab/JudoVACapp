@@ -14,6 +14,10 @@ export interface JudokaUserStat {
 
 export interface DashboardStats {
   totalJudokas: number
+  /** Hommes / garçons (sexe M). */
+  maleJudokas: number
+  /** Femmes / filles (sexe F). */
+  femaleJudokas: number
   connectedClients: number
   networkStatus: 'online' | 'offline' | 'degraded'
   pendingSyncCount: number

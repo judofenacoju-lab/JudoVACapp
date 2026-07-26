@@ -23,13 +23,15 @@ export function createApiRouter(): Router {
 
   router.get('/dashboard', async (_req, res) => {
     const c = getContainer()
-    const total = c.getJudokaStats ? (await c.getJudokaStats.execute()).total : 0
+    const total = c.getJudokaStats ? await c.getJudokaStats.execute() : { total: 0, male: 0, female: 0 }
     const judokaByUser =
       c.judokaRepo && 'countByUser' in c.judokaRepo
         ? (c.judokaRepo as { countByUser(): Array<{ username: string; count: number }> }).countByUser()
         : []
     res.json({
-      totalJudokas: total,
+      totalJudokas: total.total,
+      maleJudokas: total.male ?? 0,
+      femaleJudokas: total.female ?? 0,
       connectedClients: clientRegistry.size(),
       networkStatus: 'online',
       pendingSyncCount: 0,
