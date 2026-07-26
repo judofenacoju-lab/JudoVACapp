@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Activity, Network, Users, Database } from 'lucide-react'
+import { Activity, Database, FileDown, Network, Users } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { ModeConfig } from '@shared/types/mode'
 import type { DashboardStats, ServerStatus } from '@shared/types/dashboard'
 import type { Judoka } from '@shared/types/judoka'
+import { Button } from '@/components/ui/button'
 import { StatTile } from '@/components/StatTile'
 import { UserClubsModal } from '@/components/UserClubsModal'
 import { WorkspaceLayout, type ServerNavId } from '@/layouts/WorkspaceLayout'
@@ -52,6 +53,9 @@ export function ServerDashboardPage({ onResetMode }: Props) {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [status, setStatus] = useState<ServerStatus | null>(null)
   const [clubsUser, setClubsUser] = useState<string | null>(null)
+  const [ficheBusy, setFicheBusy] = useState(false)
+  const [ficheMessage, setFicheMessage] = useState<string | null>(null)
+  const [ficheError, setFicheError] = useState<string | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -68,6 +72,26 @@ export function ServerDashboardPage({ onResetMode }: Props) {
       clearInterval(id)
     }
   }, [])
+
+  async function exportUserFiche(): Promise<void> {
+    setFicheBusy(true)
+    setFicheError(null)
+    setFicheMessage(null)
+    try {
+      const res = await window.judovac.listJudokas({ limit: 50_000, offset: 0 })
+      if (!res.ok) {
+        setFicheError(res.error)
+        return
+      }
+      const { exportAndDownloadUserClubsPdf } = await import('@/lib/user-clubs-pdf')
+      const out = await exportAndDownloadUserClubsPdf(res.data.items)
+      setFicheMessage(`Fiche exportée (${out.userCount} utilisateur(s)) → ${out.filename}`)
+    } catch (e) {
+      setFicheError(e instanceof Error ? e.message : 'Export fiche utilisateurs impossible')
+    } finally {
+      setFicheBusy(false)
+    }
+  }
 
   return (
     <WorkspaceLayout
@@ -152,7 +176,21 @@ export function ServerDashboardPage({ onResetMode }: Props) {
             </div>
 
             <div className="rounded-xl border bg-white/70 p-5">
-              <h2 className="font-semibold text-judo-navy">Judokas par utilisateur</h2>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="font-semibold text-judo-navy">Judokas par utilisateur</h2>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={ficheBusy || !(stats?.judokaByUser?.length)}
+                  onClick={() => void exportUserFiche()}
+                  className="bg-emerald-600 text-white hover:bg-emerald-700 hover:text-white"
+                >
+                  <FileDown className="h-4 w-4" />
+                  {ficheBusy ? 'Export…' : 'Fiche Utilisateurs'}
+                </Button>
+              </div>
+              {ficheError && <p className="mt-2 text-sm text-destructive">{ficheError}</p>}
+              {ficheMessage && <p className="mt-2 text-sm text-emerald-700">{ficheMessage}</p>}
               {stats?.judokaByUser?.length ? (
                 <ul className="mt-4 max-h-64 space-y-2 overflow-auto text-sm">
                   {stats.judokaByUser.map((entry) => (
