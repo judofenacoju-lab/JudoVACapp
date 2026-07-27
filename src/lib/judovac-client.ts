@@ -482,6 +482,13 @@ export const judovacClient = {
     } catch (e) {
       return fail(e instanceof Error ? e.message : 'Impossible de charger les judokas')
     }
+
+    // Opérateur : stats limitées à ses propres enregistrements
+    if (profile.role === 'operator') {
+      const me = profile.username.trim().toLowerCase()
+      all = all.filter((r) => String(r.created_by ?? '').trim().toLowerCase() === me)
+    }
+
     let maleJudokas = 0
     let femaleJudokas = 0
     let weighedJudokas = 0
@@ -502,7 +509,7 @@ export const judovacClient = {
       const label = formatCreatorLabel(row.created_by)
       map.set(label, (map.get(label) ?? 0) + 1)
     }
-    if (!map.has('Serveur')) map.set('Serveur', 0)
+    if (profile.role === 'admin' && !map.has('Serveur')) map.set('Serveur', 0)
     const judokaByUser = [...map.entries()]
       .map(([username, count]) => ({ username, count }))
       .sort((a, b) => {

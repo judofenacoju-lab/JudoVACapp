@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { RefreshCw, UserRound, Plus } from 'lucide-react'
+import { RefreshCw, UserRound, Plus, Scale } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { ModeConfig } from '@shared/types/mode'
 import type { ClientConnectionStatus, DashboardStats } from '@shared/types/dashboard'
 import type { Judoka } from '@shared/types/judoka'
 import { Button } from '@/components/ui/button'
 import { StatTile } from '@/components/StatTile'
+import { UnweighedJudokasModal } from '@/components/UnweighedJudokasModal'
 import { WorkspaceLayout, type ClientNavId } from '@/layouts/WorkspaceLayout'
 import { JudokaFormPage } from '@/pages/JudokaFormPage'
 import { JudokaListPage } from '@/pages/JudokaListPage'
@@ -19,9 +20,11 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
   const navigate = useNavigate()
   const [view, setView] = useState<ClientNavId>('home')
   const [editing, setEditing] = useState<Judoka | null>(null)
+  const [focusWeight, setFocusWeight] = useState(false)
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [status, setStatus] = useState<ClientConnectionStatus | null>(null)
   const [registeredCount, setRegisteredCount] = useState(0)
+  const [unweighedOpen, setUnweighedOpen] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [flushBusy, setFlushBusy] = useState(false)
   const [refreshBusy, setRefreshBusy] = useState(false)
@@ -151,6 +154,12 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
           ? 'Liste / Recherche'
           : 'Synchronisation'
 
+  const male = stats?.maleJudokas ?? 0
+  const female = stats?.femaleJudokas ?? 0
+  const weighed = stats?.weighedJudokas ?? 0
+  const maleWeighed = stats?.maleWeighedJudokas ?? 0
+  const femaleWeighed = stats?.femaleWeighedJudokas ?? 0
+
   return (
     <WorkspaceLayout
       role="client"
@@ -159,6 +168,7 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
       subtitle={`${mode.workstation ?? ''} → ${mode.serverHost ?? ''}`}
       onNavigate={(id) => {
         setEditing(null)
+        setFocusWeight(false)
         if (id === 'sync') {
           setView('sync')
           void flush()
@@ -173,7 +183,7 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
     >
       {view === 'home' && (
         <div className="space-y-6 animate-fade-in">
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <StatTile
               icon={<UserRound className="h-5 w-5" />}
               label="État serveur"
@@ -184,6 +194,9 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
               icon={<RefreshCw className="h-5 w-5" />}
               label="Enregistrés"
               value={String(registeredCount)}
+              hint={`${male} Garçon${male > 1 ? 's' : ''} · ${female} Fille${female > 1 ? 's' : ''}`}
+              onValueClick={() => setUnweighedOpen(true)}
+              valueTitle="Voir les judokas sans poids et renseigner"
               action={
                 <Button
                   type="button"
@@ -197,6 +210,12 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
                   <RefreshCw className={`h-3.5 w-3.5 ${refreshBusy ? 'animate-spin' : ''}`} />
                 </Button>
               }
+            />
+            <StatTile
+              icon={<Scale className="h-5 w-5" />}
+              label="Pesés"
+              value={String(weighed)}
+              hint={`${maleWeighed} Garçon${maleWeighed > 1 ? 's' : ''} · ${femaleWeighed} Fille${femaleWeighed > 1 ? 's' : ''}`}
             />
             <StatTile
               icon={<Plus className="h-5 w-5" />}
@@ -221,14 +240,29 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
         </div>
       )}
 
+      {unweighedOpen && (
+        <UnweighedJudokasModal
+          onClose={() => setUnweighedOpen(false)}
+          onUpdated={() => void refreshRegistered()}
+          onOpenForm={(j) => {
+            setUnweighedOpen(false)
+            setEditing(j)
+            setFocusWeight(true)
+            setView('form')
+          }}
+        />
+      )}
+
       {view === 'form' && (
         <JudokaFormPage
           embedded
           createdBy={mode.username ?? 'client'}
           createdWorkstation={mode.workstation ?? 'poste'}
           editing={editing}
+          focusWeight={focusWeight}
           onBack={() => {
             setEditing(null)
+            setFocusWeight(false)
             setView(editing ? 'list' : 'home')
           }}
           onSaved={(result) => {
@@ -245,6 +279,7 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
               )
             }
             setEditing(null)
+            setFocusWeight(false)
             setView('list')
             void refreshRegistered()
           }}
@@ -259,6 +294,7 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
           autoRefreshMs={2000}
           onBack={() => setView('home')}
           onEdit={(j) => {
+            setFocusWeight(false)
             setEditing(j)
             setView('form')
           }}

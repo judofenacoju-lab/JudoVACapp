@@ -20,6 +20,8 @@ interface Props {
   /** Mode édition */
   editing?: Judoka | null
   embedded?: boolean
+  /** Mettre le focus sur le champ Poids (pesée rapide). */
+  focusWeight?: boolean
 }
 
 type FormState = {
@@ -79,7 +81,8 @@ export function JudokaFormPage({
   onBack,
   onSaved,
   editing = null,
-  embedded = false
+  embedded = false,
+  focusWeight = false
 }: Props) {
   const [form, setForm] = useState<FormState>(empty)
   const [photoPath, setPhotoPath] = useState<string | null>(null)
@@ -118,6 +121,15 @@ export function JudokaFormPage({
     })
     setPhotoPath(editing.photoPath)
   }, [editing])
+
+  useEffect(() => {
+    if (!focusWeight) return
+    const t = window.setTimeout(() => {
+      document.getElementById('weightKg')?.focus()
+      document.getElementById('weightKg')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 150)
+    return () => window.clearTimeout(t)
+  }, [focusWeight, editing?.id])
 
   const age = useMemo(
     () => (form.birthDate.match(/^\d{4}-\d{2}-\d{2}$/) ? computeAge(form.birthDate) : null),
@@ -212,7 +224,7 @@ export function JudokaFormPage({
                 required
                 value={form.lastName}
                 onChange={(e) => set('lastName', e.target.value)}
-                autoFocus
+                autoFocus={!focusWeight}
               />
             </Field>
             <Field label="Postnom" id="middleName">
@@ -328,6 +340,8 @@ export function JudokaFormPage({
                 placeholder="Ex. 73"
                 value={form.weightKg}
                 onChange={(e) => set('weightKg', e.target.value)}
+                autoFocus={focusWeight}
+                className={focusWeight ? 'ring-2 ring-judo-red/40' : undefined}
               />
             </Field>
             <Field label="N° licence" id="licenseNumber">
