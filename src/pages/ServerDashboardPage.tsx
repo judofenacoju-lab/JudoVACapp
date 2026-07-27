@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Activity, Database, FileDown, Network, Users } from 'lucide-react'
+import { Activity, Database, FileDown, Network, Scale, Users } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { ModeConfig } from '@shared/types/mode'
 import type { DashboardStats, ServerStatus } from '@shared/types/dashboard'
@@ -116,12 +116,18 @@ export function ServerDashboardPage({ onResetMode }: Props) {
     >
       {view === 'home' && (
         <div className="space-y-8 animate-fade-in">
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             <StatTile
               icon={<Users className="h-5 w-5" />}
               label="Judokas"
               value={String(stats?.totalJudokas ?? 0)}
               hint={`${stats?.maleJudokas ?? 0} Garçon${(stats?.maleJudokas ?? 0) > 1 ? 's' : ''} · ${stats?.femaleJudokas ?? 0} Fille${(stats?.femaleJudokas ?? 0) > 1 ? 's' : ''}`}
+            />
+            <StatTile
+              icon={<Scale className="h-5 w-5" />}
+              label="Pesés"
+              value={String(stats?.weighedJudokas ?? 0)}
+              hint={`${stats?.maleWeighedJudokas ?? 0} Garçon${(stats?.maleWeighedJudokas ?? 0) > 1 ? 's' : ''} · ${stats?.femaleWeighedJudokas ?? 0} Fille${(stats?.femaleWeighedJudokas ?? 0) > 1 ? 's' : ''}`}
             />
             <StatTile
               icon={<Network className="h-5 w-5" />}

@@ -18,6 +18,10 @@ export interface DashboardStats {
   maleJudokas: number
   /** Femmes / filles (sexe F). */
   femaleJudokas: number
+  /** Judokas avec le champ Poids (kg) renseigné. */
+  weighedJudokas: number
+  maleWeighedJudokas: number
+  femaleWeighedJudokas: number
   connectedClients: number
   networkStatus: 'online' | 'offline' | 'degraded'
   pendingSyncCount: number

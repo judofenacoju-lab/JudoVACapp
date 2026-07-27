@@ -453,16 +453,28 @@ export const judovacClient = {
       void judovacClient.heartbeat()
     }
 
-    const { data: judokas } = await supabase.from('judokas').select('created_by, sex')
+    const { data: judokas } = await supabase.from('judokas').select('created_by, sex, weight_kg')
     const all = judokas ?? []
     let maleJudokas = 0
     let femaleJudokas = 0
+    let weighedJudokas = 0
+    let maleWeighedJudokas = 0
+    let femaleWeighedJudokas = 0
     const map = new Map<string, number>()
     for (const j of all) {
-      const sex = String((j as { sex?: string }).sex ?? '').toUpperCase()
-      if (sex === 'F') femaleJudokas += 1
-      else if (sex === 'M') maleJudokas += 1
-      const label = formatCreatorLabel(j.created_by as string)
+      const row = j as { sex?: string; weight_kg?: number | null; created_by?: string }
+      const sex = String(row.sex ?? '').toUpperCase()
+      const hasWeight =
+        row.weight_kg != null && Number.isFinite(Number(row.weight_kg)) && Number(row.weight_kg) > 0
+      if (sex === 'F') {
+        femaleJudokas += 1
+        if (hasWeight) femaleWeighedJudokas += 1
+      } else if (sex === 'M') {
+        maleJudokas += 1
+        if (hasWeight) maleWeighedJudokas += 1
+      }
+      if (hasWeight) weighedJudokas += 1
+      const label = formatCreatorLabel(row.created_by as string)
       map.set(label, (map.get(label) ?? 0) + 1)
     }
     if (!map.has('Serveur')) map.set('Serveur', 0)
@@ -486,6 +498,9 @@ export const judovacClient = {
       totalJudokas: all.length,
       maleJudokas,
       femaleJudokas,
+      weighedJudokas,
+      maleWeighedJudokas,
+      femaleWeighedJudokas,
       connectedClients: online.length,
       networkStatus: 'online',
       pendingSyncCount: 0,
