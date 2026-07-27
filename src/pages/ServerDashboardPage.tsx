@@ -8,6 +8,9 @@ import { Button } from '@/components/ui/button'
 import { StatTile } from '@/components/StatTile'
 import { UserClubsModal } from '@/components/UserClubsModal'
 import { WeighedJudokasModal } from '@/components/WeighedJudokasModal'
+import { RegisteredJudokasMenuModal } from '@/components/RegisteredJudokasMenuModal'
+import { UnweighedJudokasModal } from '@/components/UnweighedJudokasModal'
+import { UnphotographedJudokasModal } from '@/components/UnphotographedJudokasModal'
 import { WorkspaceLayout, type ServerNavId } from '@/layouts/WorkspaceLayout'
 import { JudokaFormPage } from '@/pages/JudokaFormPage'
 import { JudokaListPage } from '@/pages/JudokaListPage'
@@ -55,6 +58,10 @@ export function ServerDashboardPage({ onResetMode }: Props) {
   const [status, setStatus] = useState<ServerStatus | null>(null)
   const [clubsUser, setClubsUser] = useState<string | null>(null)
   const [weighedOpen, setWeighedOpen] = useState(false)
+  const [judokasMenuOpen, setJudokasMenuOpen] = useState(false)
+  const [unweighedOpen, setUnweighedOpen] = useState(false)
+  const [unphotoOpen, setUnphotoOpen] = useState(false)
+  const [focusWeight, setFocusWeight] = useState(false)
   const [ficheBusy, setFicheBusy] = useState(false)
   const [ficheMessage, setFicheMessage] = useState<string | null>(null)
   const [ficheError, setFicheError] = useState<string | null>(null)
@@ -109,6 +116,7 @@ export function ServerDashboardPage({ onResetMode }: Props) {
       subtitle={view === 'home' ? 'Dashboard du Serveur' : undefined}
       onNavigate={(id) => {
         setEditing(null)
+        setFocusWeight(false)
         setView(id as ServerNavId)
       }}
       onLogout={async () => {
@@ -124,6 +132,8 @@ export function ServerDashboardPage({ onResetMode }: Props) {
               label="Judokas"
               value={String(stats?.totalJudokas ?? 0)}
               hint={`${stats?.maleJudokas ?? 0} Garçon${(stats?.maleJudokas ?? 0) > 1 ? 's' : ''} · ${stats?.femaleJudokas ?? 0} Fille${(stats?.femaleJudokas ?? 0) > 1 ? 's' : ''}`}
+              onValueClick={() => setJudokasMenuOpen(true)}
+              valueTitle="Compléter poids ou photo des judokas"
             />
             <StatTile
               icon={<Scale className="h-5 w-5" />}
@@ -240,18 +250,51 @@ export function ServerDashboardPage({ onResetMode }: Props) {
 
       {weighedOpen && <WeighedJudokasModal onClose={() => setWeighedOpen(false)} />}
 
+      {judokasMenuOpen && (
+        <RegisteredJudokasMenuModal
+          onClose={() => setJudokasMenuOpen(false)}
+          onOpenUnweighed={() => {
+            setJudokasMenuOpen(false)
+            setUnweighedOpen(true)
+          }}
+          onOpenUnphotographed={() => {
+            setJudokasMenuOpen(false)
+            setUnphotoOpen(true)
+          }}
+        />
+      )}
+
+      {unweighedOpen && (
+        <UnweighedJudokasModal
+          onClose={() => setUnweighedOpen(false)}
+          onOpenForm={(j) => {
+            setUnweighedOpen(false)
+            setEditing(j)
+            setFocusWeight(true)
+            setView('form')
+          }}
+        />
+      )}
+
+      {unphotoOpen && (
+        <UnphotographedJudokasModal onClose={() => setUnphotoOpen(false)} />
+      )}
+
       {view === 'form' && (
         <JudokaFormPage
           embedded
           createdBy="serveur"
           createdWorkstation="local"
           editing={editing}
+          focusWeight={focusWeight}
           onBack={() => {
             setEditing(null)
+            setFocusWeight(false)
             setView(editing ? 'list' : 'home')
           }}
           onSaved={() => {
             setEditing(null)
+            setFocusWeight(false)
             setView('list')
           }}
         />
