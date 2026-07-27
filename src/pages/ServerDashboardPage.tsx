@@ -7,6 +7,7 @@ import type { Judoka } from '@shared/types/judoka'
 import { Button } from '@/components/ui/button'
 import { StatTile } from '@/components/StatTile'
 import { UserClubsModal } from '@/components/UserClubsModal'
+import { WeighedJudokasModal } from '@/components/WeighedJudokasModal'
 import { WorkspaceLayout, type ServerNavId } from '@/layouts/WorkspaceLayout'
 import { JudokaFormPage } from '@/pages/JudokaFormPage'
 import { JudokaListPage } from '@/pages/JudokaListPage'
@@ -53,6 +54,7 @@ export function ServerDashboardPage({ onResetMode }: Props) {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [status, setStatus] = useState<ServerStatus | null>(null)
   const [clubsUser, setClubsUser] = useState<string | null>(null)
+  const [weighedOpen, setWeighedOpen] = useState(false)
   const [ficheBusy, setFicheBusy] = useState(false)
   const [ficheMessage, setFicheMessage] = useState<string | null>(null)
   const [ficheError, setFicheError] = useState<string | null>(null)
@@ -128,6 +130,8 @@ export function ServerDashboardPage({ onResetMode }: Props) {
               label="Pesés"
               value={String(stats?.weighedJudokas ?? 0)}
               hint={`${stats?.maleWeighedJudokas ?? 0} Garçon${(stats?.maleWeighedJudokas ?? 0) > 1 ? 's' : ''} · ${stats?.femaleWeighedJudokas ?? 0} Fille${(stats?.femaleWeighedJudokas ?? 0) > 1 ? 's' : ''}`}
+              onValueClick={() => setWeighedOpen(true)}
+              valueTitle="Voir les judokas pesés par équipe"
             />
             <StatTile
               icon={<Network className="h-5 w-5" />}
@@ -233,6 +237,8 @@ export function ServerDashboardPage({ onResetMode }: Props) {
       {clubsUser && (
         <UserClubsModal username={clubsUser} onClose={() => setClubsUser(null)} />
       )}
+
+      {weighedOpen && <WeighedJudokasModal onClose={() => setWeighedOpen(false)} />}
 
       {view === 'form' && (
         <JudokaFormPage
