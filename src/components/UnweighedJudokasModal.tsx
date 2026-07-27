@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Scale, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Scale, Search, X } from 'lucide-react'
 import type { Judoka } from '@shared/types/judoka'
 import { formatJudokaFullName, hasRecordedWeight, resolveJudokaCategory } from '@shared/utils/judoka'
 import { Button } from '@/components/ui/button'
@@ -20,6 +20,7 @@ export function UnweighedJudokasModal({ onClose, onUpdated, onOpenForm }: Props)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [items, setItems] = useState<Judoka[]>([])
+  const [query, setQuery] = useState('')
   const [weights, setWeights] = useState<Record<string, string>>({})
   const [busyId, setBusyId] = useState<string | null>(null)
   const [rowError, setRowError] = useState<Record<string, string>>({})
@@ -59,6 +60,24 @@ export function UnweighedJudokasModal({ onClose, onUpdated, onOpenForm }: Props)
   useEffect(() => {
     void load()
   }, [])
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return items
+    return items.filter((j) => {
+      const hay = [
+        j.lastName,
+        j.middleName,
+        j.firstName,
+        formatJudokaFullName(j),
+        j.displayId,
+        j.club
+      ]
+        .join(' ')
+        .toLowerCase()
+      return hay.includes(q)
+    })
+  }, [items, query])
 
   async function saveWeight(j: Judoka): Promise<void> {
     const raw = (weights[j.id] ?? '').trim().replace(',', '.')
@@ -116,7 +135,9 @@ export function UnweighedJudokasModal({ onClose, onUpdated, onOpenForm }: Props)
             <p className="mt-0.5 text-sm text-muted-foreground">
               {loading
                 ? 'Chargement…'
-                : `${items.length} judoka(s) sans poids — saisissez et validez`}
+                : query.trim()
+                  ? `${filtered.length} résultat(s) sur ${items.length} sans poids`
+                  : `${items.length} judoka(s) sans poids — saisissez et validez`}
             </p>
           </div>
           <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="Fermer">
@@ -124,13 +145,32 @@ export function UnweighedJudokasModal({ onClose, onUpdated, onOpenForm }: Props)
           </Button>
         </div>
 
+        <div className="border-b px-3 py-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="pl-9"
+              placeholder="Rechercher par nom, prénom, ID…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              autoFocus
+              disabled={loading}
+            />
+          </div>
+        </div>
+
         <div className="flex-1 overflow-auto px-3 py-3">
           {error && <p className="px-2 text-sm text-destructive">{error}</p>}
           {!loading && !error && items.length === 0 && (
             <p className="px-2 text-sm text-emerald-700">Tous vos judokas ont un poids renseigné.</p>
           )}
+          {!loading && !error && items.length > 0 && filtered.length === 0 && (
+            <p className="px-2 text-sm text-muted-foreground">
+              Aucun judoka non pesé ne correspond à « {query.trim()} ».
+            </p>
+          )}
           <ul className="space-y-2">
-            {items.map((j) => {
+            {filtered.map((j) => {
               const category = resolveJudokaCategory(j.birthDate, j.category)
               return (
                 <li key={j.id} className="rounded-lg border bg-white p-3">
