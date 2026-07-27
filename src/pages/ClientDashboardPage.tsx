@@ -7,6 +7,8 @@ import type { Judoka } from '@shared/types/judoka'
 import { Button } from '@/components/ui/button'
 import { StatTile } from '@/components/StatTile'
 import { UnweighedJudokasModal } from '@/components/UnweighedJudokasModal'
+import { UnphotographedJudokasModal } from '@/components/UnphotographedJudokasModal'
+import { RegisteredJudokasMenuModal } from '@/components/RegisteredJudokasMenuModal'
 import { WorkspaceLayout, type ClientNavId } from '@/layouts/WorkspaceLayout'
 import { JudokaFormPage } from '@/pages/JudokaFormPage'
 import { JudokaListPage } from '@/pages/JudokaListPage'
@@ -25,6 +27,8 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
   const [status, setStatus] = useState<ClientConnectionStatus | null>(null)
   const [registeredCount, setRegisteredCount] = useState(0)
   const [unweighedOpen, setUnweighedOpen] = useState(false)
+  const [unphotoOpen, setUnphotoOpen] = useState(false)
+  const [registeredMenuOpen, setRegisteredMenuOpen] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [flushBusy, setFlushBusy] = useState(false)
   const [refreshBusy, setRefreshBusy] = useState(false)
@@ -195,8 +199,8 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
               label="Enregistrés"
               value={String(registeredCount)}
               hint={`${male} Garçon${male > 1 ? 's' : ''} · ${female} Fille${female > 1 ? 's' : ''}`}
-              onValueClick={() => setUnweighedOpen(true)}
-              valueTitle="Voir les judokas sans poids et renseigner"
+              onValueClick={() => setRegisteredMenuOpen(true)}
+              valueTitle="Compléter poids ou photo des judokas"
               action={
                 <Button
                   type="button"
@@ -240,6 +244,20 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
         </div>
       )}
 
+      {registeredMenuOpen && (
+        <RegisteredJudokasMenuModal
+          onClose={() => setRegisteredMenuOpen(false)}
+          onOpenUnweighed={() => {
+            setRegisteredMenuOpen(false)
+            setUnweighedOpen(true)
+          }}
+          onOpenUnphotographed={() => {
+            setRegisteredMenuOpen(false)
+            setUnphotoOpen(true)
+          }}
+        />
+      )}
+
       {unweighedOpen && (
         <UnweighedJudokasModal
           onClose={() => setUnweighedOpen(false)}
@@ -250,6 +268,13 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
             setFocusWeight(true)
             setView('form')
           }}
+        />
+      )}
+
+      {unphotoOpen && (
+        <UnphotographedJudokasModal
+          onClose={() => setUnphotoOpen(false)}
+          onUpdated={() => void refreshRegistered()}
         />
       )}
 
