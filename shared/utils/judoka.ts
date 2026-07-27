@@ -111,6 +111,21 @@ export function normalizeIdentityField(value: string | undefined | null): string
 }
 
 /**
+ * Judoka considéré comme pesé : Poids (kg) renseigné (nombre > 0, y compris chaînes / décimales).
+ */
+export function hasRecordedWeight(weightKg: unknown): boolean {
+  if (weightKg === null || weightKg === undefined) return false
+  if (typeof weightKg === 'string') {
+    const t = weightKg.trim()
+    if (!t) return false
+    const n = Number(t.replace(',', '.'))
+    return Number.isFinite(n) && n > 0
+  }
+  const n = Number(weightKg)
+  return Number.isFinite(n) && n > 0
+}
+
+/**
  * Doublon strict : Nom + Postnom + Prénom + Date de naissance + Club identiques.
  */
 export function isSameJudokaIdentity(

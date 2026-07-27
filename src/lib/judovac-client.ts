@@ -8,7 +8,7 @@ import type { AppSettings } from '@shared/types/settings'
 import type { UserAccount } from '@shared/types/user-account'
 import { createDefaultBadgeTemplate } from '@shared/types/badge'
 import { createDefaultSettings } from '@shared/types/settings'
-import { computeAge, isSameJudokaIdentity, resolveJudokaCategory, setActiveCategoryAgeRanges } from '@shared/utils/judoka'
+import { computeAge, hasRecordedWeight, isSameJudokaIdentity, resolveJudokaCategory, setActiveCategoryAgeRanges } from '@shared/utils/judoka'
 import { formatCreatorLabel } from '@shared/utils/creator'
 import { judokaFormSchema } from '@shared/validation/judoka'
 import { createId } from './create-id'
@@ -362,6 +362,29 @@ async function fetchOnlineClients(): Promise<
   }
 }
 
+async function fetchAllJudokasForDashboard(): Promise<
+  Array<{ created_by: string; sex: string; weight_kg: unknown }>
+> {
+  const pageSize = 1000
+  const rows: Array<{ created_by: string; sex: string; weight_kg: unknown }> = []
+  let offset = 0
+  for (;;) {
+    const { data, error } = await supabase
+      .from('judokas')
+      .select('created_by, sex, weight_kg')
+      .order('created_at', { ascending: true })
+      .range(offset, offset + pageSize - 1)
+    if (error) throw new Error(error.message)
+    const batch = data ?? []
+    for (const row of batch) {
+      rows.push(row as { created_by: string; sex: string; weight_kg: unknown })
+    }
+    if (batch.length < pageSize) break
+    offset += pageSize
+  }
+  return rows
+}
+
 export const judovacClient = {
   invoke: <T = unknown>(_channel: string, ..._args: unknown[]) =>
     Promise.resolve({ ok: false, error: 'Non supporté en mode web' } as T),
@@ -453,19 +476,21 @@ export const judovacClient = {
       void judovacClient.heartbeat()
     }
 
-    const { data: judokas } = await supabase.from('judokas').select('created_by, sex, weight_kg')
-    const all = judokas ?? []
+    let all: Array<{ created_by: string; sex: string; weight_kg: unknown }> = []
+    try {
+      all = await fetchAllJudokasForDashboard()
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : 'Impossible de charger les judokas')
+    }
     let maleJudokas = 0
     let femaleJudokas = 0
     let weighedJudokas = 0
     let maleWeighedJudokas = 0
     let femaleWeighedJudokas = 0
     const map = new Map<string, number>()
-    for (const j of all) {
-      const row = j as { sex?: string; weight_kg?: number | null; created_by?: string }
+    for (const row of all) {
       const sex = String(row.sex ?? '').toUpperCase()
-      const hasWeight =
-        row.weight_kg != null && Number.isFinite(Number(row.weight_kg)) && Number(row.weight_kg) > 0
+      const hasWeight = hasRecordedWeight(row.weight_kg)
       if (sex === 'F') {
         femaleJudokas += 1
         if (hasWeight) femaleWeighedJudokas += 1
@@ -474,7 +499,7 @@ export const judovacClient = {
         if (hasWeight) maleWeighedJudokas += 1
       }
       if (hasWeight) weighedJudokas += 1
-      const label = formatCreatorLabel(row.created_by as string)
+      const label = formatCreatorLabel(row.created_by)
       map.set(label, (map.get(label) ?? 0) + 1)
     }
     if (!map.has('Serveur')) map.set('Serveur', 0)

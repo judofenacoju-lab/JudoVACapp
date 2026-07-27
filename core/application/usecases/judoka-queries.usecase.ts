@@ -1,5 +1,6 @@
 import type { IJudokaRepository, JudokaSearchFilters } from '@core/domain/repositories/judoka.repository'
 import type { Judoka } from '@shared/types/judoka'
+import { hasRecordedWeight } from '@shared/utils/judoka'
 
 export class SearchJudokaUseCase {
   constructor(private readonly repo: IJudokaRepository) {}
@@ -35,7 +36,7 @@ export class GetJudokaStatsUseCase {
     let maleWeighed = 0
     let femaleWeighed = 0
     for (const j of items) {
-      const hasWeight = j.weightKg != null && Number.isFinite(j.weightKg) && j.weightKg > 0
+      const hasWeight = hasRecordedWeight(j.weightKg)
       if (j.sex === 'F') {
         female += 1
         if (hasWeight) femaleWeighed += 1
