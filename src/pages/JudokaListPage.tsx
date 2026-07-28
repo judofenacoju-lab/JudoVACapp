@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, FileDown, Pencil, Printer, Search, Trash2 } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, FileDown, Pencil, Printer, Search, Trash2 } from 'lucide-react'
 import type { Judoka } from '@shared/types/judoka'
 import { formatJudokaFullName, resolveJudokaCategory, computeAge } from '@shared/utils/judoka'
 import { Button } from '@/components/ui/button'
@@ -18,6 +18,8 @@ interface Props {
   /** Rafraîchissement automatique en arrière-plan (ms), ex. 1000 pour le serveur. */
   autoRefreshMs?: number
 }
+
+const PAGE_SIZE = 12
 
 /**
  * Recherche + actions édition/suppression + sélection export/impression (serveur).
@@ -45,6 +47,7 @@ export function JudokaListPage({
   const [busy, setBusy] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [pollTick, setPollTick] = useState(0)
+  const [pageIndex, setPageIndex] = useState(0)
 
   const filters = useMemo(
     () => ({
@@ -90,7 +93,19 @@ export function JudokaListPage({
 
   useEffect(() => {
     setSelected(new Set())
+    setPageIndex(0)
   }, [query, club, province, league, grade, createdBy])
+
+  const pageCount = Math.max(1, Math.ceil(items.length / PAGE_SIZE))
+
+  useEffect(() => {
+    setPageIndex((p) => Math.min(p, pageCount - 1))
+  }, [pageCount])
+
+  const pageItems = useMemo(() => {
+    const start = pageIndex * PAGE_SIZE
+    return items.slice(start, start + PAGE_SIZE)
+  }, [items, pageIndex])
 
   useEffect(() => {
     let cancelled = false
@@ -200,18 +215,23 @@ export function JudokaListPage({
     setMessage(`${res.data.count} badge(s) exporté(s) → ${res.data.path}`)
   }
 
+  function buildFilterSummaryParts(): string[] {
+    const parts: string[] = []
+    if (query.trim()) parts.push(`Recherche « ${query.trim()} »`)
+    if (club) parts.push(`Club « ${club} »`)
+    if (province) parts.push(`Province « ${province} »`)
+    if (league) parts.push(`Ligue « ${league} »`)
+    if (grade) parts.push(`Grade « ${grade} »`)
+    if (createdBy) parts.push(`Utilisateur « ${createdBy} »`)
+    return parts
+  }
+
   async function exportListPdf(): Promise<void> {
     setBusy(true)
     setError(null)
     setMessage(null)
     try {
-      const parts: string[] = []
-      if (query.trim()) parts.push(`Recherche « ${query.trim()} »`)
-      if (club) parts.push(`Club « ${club} »`)
-      if (province) parts.push(`Province « ${province} »`)
-      if (league) parts.push(`Ligue « ${league} »`)
-      if (grade) parts.push(`Grade « ${grade} »`)
-      if (createdBy) parts.push(`Utilisateur « ${createdBy} »`)
+      const parts = buildFilterSummaryParts()
       const { downloadPdfBytes, exportJudokaListPdfBytes } = await import('@/lib/judoka-list-pdf')
       const bytes = await exportJudokaListPdfBytes({
         judokas: items,
@@ -222,6 +242,25 @@ export function JudokaListPage({
       setMessage(`Liste exportée (${items.length} judoka(s)) → ${filename}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Export liste impossible')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function exportClubsPdf(): Promise<void> {
+    setBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const parts = buildFilterSummaryParts()
+      const { exportAndDownloadClubsListPdf } = await import('@/lib/clubs-list-pdf')
+      const out = await exportAndDownloadClubsListPdf(
+        items,
+        parts.length ? parts.join(' · ') : 'Tous les judokas affichés'
+      )
+      setMessage(`Clubs exportés (${out.clubCount} club(s)) → ${out.filename}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Export clubs impossible')
     } finally {
       setBusy(false)
     }
@@ -314,6 +353,16 @@ export function JudokaListPage({
                 <FileDown className="h-4 w-4" />
                 Export Liste
               </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={busy || loading}
+                onClick={() => void exportClubsPdf()}
+                className="h-10 shrink-0 bg-emerald-600 px-4 text-white hover:bg-emerald-700 hover:text-white"
+              >
+                <FileDown className="h-4 w-4" />
+                Exporter Clubs
+              </Button>
             </div>
           )}
         </div>
@@ -383,7 +432,7 @@ export function JudokaListPage({
                   </td>
                 </tr>
               ) : (
-                items.map((j) => (
+                pageItems.map((j) => (
                   <tr key={j.id} className="border-b last:border-0 hover:bg-judo-mist/50">
                     {!clientMode && (
                       <td className="px-3 py-2">
@@ -431,6 +480,42 @@ export function JudokaListPage({
             </tbody>
           </table>
         </div>
+
+        {items.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white/80 px-4 py-3">
+            <p className="text-sm text-muted-foreground">
+              {items.length} judoka(s) — page {pageIndex + 1} sur {pageCount}
+              {items.length > PAGE_SIZE && (
+                <span className="ml-1">
+                  (affichage {pageIndex * PAGE_SIZE + 1}–
+                  {Math.min((pageIndex + 1) * PAGE_SIZE, items.length)})
+                </span>
+              )}
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={pageIndex <= 0 || loading}
+                onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Précédent
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={pageIndex >= pageCount - 1 || loading}
+                onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
+              >
+                Suivant
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </AppShell>
   )
