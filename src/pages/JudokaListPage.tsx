@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ChevronLeft, ChevronRight, FileDown, Pencil, Printer, Search, Trash2 } from 'lucide-react'
 import type { Judoka } from '@shared/types/judoka'
 import { formatJudokaFullName, resolveJudokaCategory, computeAge } from '@shared/utils/judoka'
@@ -46,10 +46,10 @@ export function JudokaListPage({
   const [message, setMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
-  const [pollTick, setPollTick] = useState(0)
   const [pageIndex, setPageIndex] = useState(0)
   /** Total exact en base (tous les judokas du périmètre serveur / opérateur). */
   const [systemTotal, setSystemTotal] = useState<number | null>(null)
+  const loadSeqRef = useRef(0)
 
   const filters = useMemo(
     () => ({
@@ -64,67 +64,9 @@ export function JudokaListPage({
 
   const reload = useCallback(() => setRefreshKey((k) => k + 1), [])
 
-  useEffect(() => {
-    if (!autoRefreshMs) return
-    const id = setInterval(() => setPollTick((t) => t + 1), autoRefreshMs)
-    return () => clearInterval(id)
-  }, [autoRefreshMs])
-
-  // Temps réel : nouveau judoka (admin ou opérateur) → rafraîchir sans recharger la page
-  useEffect(() => {
-    if (!window.judovac.subscribeJudokas) return
-    return window.judovac.subscribeJudokas(() => {
-      setPollTick((t) => t + 1)
-    })
-  }, [])
-
-  useEffect(() => {
-    if (clientMode) {
-      setCreators([])
-      return
-    }
-    let cancelled = false
-    void (async () => {
-      const res = await window.judovac.listJudokaCreators()
-      if (!cancelled && res.ok) setCreators(res.data.items)
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [refreshKey, pollTick, clientMode])
-
-  useEffect(() => {
-    setSelected(new Set())
-    setPageIndex(0)
-  }, [query, club, province, league, grade, createdBy])
-
-  const pageCount = Math.max(1, Math.ceil(items.length / PAGE_SIZE))
-
-  useEffect(() => {
-    setPageIndex((p) => Math.min(p, pageCount - 1))
-  }, [pageCount])
-
-  const pageItems = useMemo(() => {
-    const start = pageIndex * PAGE_SIZE
-    return items.slice(start, start + PAGE_SIZE)
-  }, [items, pageIndex])
-
-  useEffect(() => {
-    if (clientMode) return
-    let cancelled = false
-    void (async () => {
-      const stats = await window.judovac.getDashboardStats()
-      if (!cancelled && stats.ok) setSystemTotal(stats.data.totalJudokas)
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [clientMode, refreshKey])
-
-  useEffect(() => {
-    let cancelled = false
-    const silent = pollTick > 0 && Boolean(autoRefreshMs)
-    const timer = setTimeout(async () => {
+  const loadJudokas = useCallback(
+    async (silent: boolean): Promise<void> => {
+      const seq = ++loadSeqRef.current
       if (!silent) setLoading(true)
       setError(null)
 
@@ -136,7 +78,7 @@ export function JudokaListPage({
           clientMode ? window.judovac.getSyncQueue() : Promise.resolve(null)
         ])
 
-        if (cancelled) return
+        if (seq !== loadSeqRef.current) return
 
         const pendingRaw: Judoka[] =
           queueRes && queueRes.ok
@@ -175,16 +117,77 @@ export function JudokaListPage({
         }
         setItems([...pending, ...list])
       } finally {
-        if (!cancelled && !silent) setLoading(false)
+        if (seq === loadSeqRef.current && !silent) setLoading(false)
       }
-    }, pollTick > 0 && autoRefreshMs ? 0 : 200)
+    },
+    [query, filters, clientMode, clientUsername]
+  )
 
+  useEffect(() => {
+    if (!autoRefreshMs) return
+    const id = setInterval(() => {
+      void loadJudokas(true)
+    }, autoRefreshMs)
+    return () => clearInterval(id)
+  }, [autoRefreshMs, loadJudokas])
+
+  // Temps réel : nouveau judoka (admin ou opérateur) → rafraîchir sans recharger la page
+  useEffect(() => {
+    if (!window.judovac.subscribeJudokas) return
+    return window.judovac.subscribeJudokas(() => {
+      void loadJudokas(true)
+    })
+  }, [loadJudokas])
+
+  useEffect(() => {
+    if (clientMode) {
+      setCreators([])
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const res = await window.judovac.listJudokaCreators()
+      if (!cancelled && res.ok) setCreators(res.data.items)
+    })()
     return () => {
       cancelled = true
-      clearTimeout(timer)
-      if (!silent) setLoading(false)
     }
-  }, [query, filters, refreshKey, pollTick, clientMode, clientUsername, autoRefreshMs])
+  }, [refreshKey, clientMode])
+
+  useEffect(() => {
+    setSelected(new Set())
+    setPageIndex(0)
+  }, [query, club, province, league, grade, createdBy])
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void loadJudokas(false)
+    }, 200)
+    return () => clearTimeout(timer)
+  }, [loadJudokas, refreshKey])
+
+  useEffect(() => {
+    if (clientMode) return
+    let cancelled = false
+    void (async () => {
+      const stats = await window.judovac.getDashboardStats()
+      if (!cancelled && stats.ok) setSystemTotal(stats.data.totalJudokas)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [clientMode, refreshKey])
+
+  const pageCount = Math.max(1, Math.ceil(items.length / PAGE_SIZE))
+
+  useEffect(() => {
+    setPageIndex((p) => Math.min(p, pageCount - 1))
+  }, [pageCount])
+
+  const pageItems = useMemo(() => {
+    const start = pageIndex * PAGE_SIZE
+    return items.slice(start, start + PAGE_SIZE)
+  }, [items, pageIndex])
 
   function toggle(id: string): void {
     setSelected((prev) => {
