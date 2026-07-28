@@ -385,6 +385,57 @@ async function fetchAllJudokasForDashboard(): Promise<
   return rows
 }
 
+const JUDOKA_FETCH_PAGE = 1000
+
+/** Charge tous les judokas visibles pour le profil (pages Supabase de 1000). */
+async function fetchAllJudokasForProfile(): Promise<{ items: Judoka[]; total: number }> {
+  const profile = await requireProfile()
+  const items: Judoka[] = []
+  let total = 0
+  let offset = 0
+  for (;;) {
+    let q = supabase
+      .from('judokas')
+      .select('*', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + JUDOKA_FETCH_PAGE - 1)
+    if (profile.role !== 'admin') {
+      q = q.eq('created_by', profile.username)
+    }
+    const { data, count, error } = await q
+    if (error) throw new Error(error.message)
+    if (offset === 0) total = count ?? 0
+    const batch = (data ?? []).map((r) => rowToJudoka(r as never))
+    items.push(...batch)
+    if (batch.length < JUDOKA_FETCH_PAGE) break
+    offset += JUDOKA_FETCH_PAGE
+  }
+  return { items, total }
+}
+
+function filterJudokasBySearch(
+  all: Judoka[],
+  query: string,
+  filters?: Record<string, string>
+): Judoka[] {
+  const ql = query.trim().toLowerCase()
+  return all.filter((j) => {
+    if (filters?.club && !j.club.toLowerCase().includes(filters.club.toLowerCase())) return false
+    if (filters?.province && !j.province.toLowerCase().includes(filters.province.toLowerCase()))
+      return false
+    if (filters?.league && !j.league.toLowerCase().includes(filters.league.toLowerCase())) return false
+    if (filters?.grade && !j.grade.toLowerCase().includes(filters.grade.toLowerCase())) return false
+    if (filters?.phone && !j.phone.includes(filters.phone)) return false
+    if (filters?.licenseNumber && !j.licenseNumber.includes(filters.licenseNumber)) return false
+    if (filters?.createdBy && formatCreatorLabel(j.createdBy) !== filters.createdBy) return false
+    if (!ql) return true
+    const hay = [j.lastName, j.middleName, j.firstName, j.displayId, j.licenseNumber, j.phone, j.club]
+      .join(' ')
+      .toLowerCase()
+    return hay.includes(ql)
+  })
+}
+
 export const judovacClient = {
   invoke: <T = unknown>(_channel: string, ..._args: unknown[]) =>
     Promise.resolve({ ok: false, error: 'Non supporté en mode web' } as T),
@@ -678,9 +729,22 @@ export const judovacClient = {
   listJudokas: async (opts?: { limit?: number; offset?: number }): Promise<
     IpcResult<{ items: Judoka[]; total: number }>
   > => {
-    const profile = await requireProfile()
     const limit = opts?.limit ?? 100
     const offset = opts?.offset ?? 0
+
+    if (limit > JUDOKA_FETCH_PAGE) {
+      if (offset !== 0) {
+        return fail('Utilisez offset 0 pour charger plus de 1000 judokas.')
+      }
+      try {
+        const { items: all, total } = await fetchAllJudokasForProfile()
+        return ok({ items: all.slice(0, limit), total })
+      } catch (e) {
+        return fail(e instanceof Error ? e.message : 'Chargement judokas impossible')
+      }
+    }
+
+    const profile = await requireProfile()
     let q = supabase
       .from('judokas')
       .select('*', { count: 'exact' })
@@ -697,33 +761,14 @@ export const judovacClient = {
   searchJudokas: async (
     query: string,
     filters?: Record<string, string>
-  ): Promise<IpcResult<{ items: Judoka[] }>> => {
-    const profile = await requireProfile()
-    let q = supabase.from('judokas').select('*').order('created_at', { ascending: false }).limit(5000)
-    if (profile.role !== 'admin') {
-      q = q.eq('created_by', profile.username)
+  ): Promise<IpcResult<{ items: Judoka[]; total: number }>> => {
+    try {
+      const { items: all, total } = await fetchAllJudokasForProfile()
+      const items = filterJudokasBySearch(all, query, filters)
+      return ok({ items, total })
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : 'Recherche impossible')
     }
-    const { data, error } = await q
-    if (error) return fail(error.message)
-
-    const ql = query.trim().toLowerCase()
-    const items = (data ?? [])
-      .map((r) => rowToJudoka(r as never))
-      .filter((j) => {
-        if (filters?.club && !j.club.toLowerCase().includes(filters.club.toLowerCase())) return false
-        if (filters?.province && !j.province.toLowerCase().includes(filters.province.toLowerCase())) return false
-        if (filters?.league && !j.league.toLowerCase().includes(filters.league.toLowerCase())) return false
-        if (filters?.grade && !j.grade.toLowerCase().includes(filters.grade.toLowerCase())) return false
-        if (filters?.phone && !j.phone.includes(filters.phone)) return false
-        if (filters?.licenseNumber && !j.licenseNumber.includes(filters.licenseNumber)) return false
-        if (filters?.createdBy && formatCreatorLabel(j.createdBy) !== filters.createdBy) return false
-        if (!ql) return true
-        const hay = [j.lastName, j.middleName, j.firstName, j.displayId, j.licenseNumber, j.phone, j.club]
-          .join(' ')
-          .toLowerCase()
-        return hay.includes(ql)
-      })
-    return ok({ items })
   },
 
   /** Abonnement temps réel aux changements de judokas (liste auto). */

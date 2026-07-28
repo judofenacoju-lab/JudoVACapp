@@ -48,6 +48,8 @@ export function JudokaListPage({
   const [refreshKey, setRefreshKey] = useState(0)
   const [pollTick, setPollTick] = useState(0)
   const [pageIndex, setPageIndex] = useState(0)
+  /** Total exact en base (tous les judokas du périmètre serveur / opérateur). */
+  const [systemTotal, setSystemTotal] = useState<number | null>(null)
 
   const filters = useMemo(
     () => ({
@@ -108,59 +110,79 @@ export function JudokaListPage({
   }, [items, pageIndex])
 
   useEffect(() => {
+    if (clientMode) return
     let cancelled = false
-    const silent = pollTick > 0
+    void (async () => {
+      const stats = await window.judovac.getDashboardStats()
+      if (!cancelled && stats.ok) setSystemTotal(stats.data.totalJudokas)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [clientMode, refreshKey])
+
+  useEffect(() => {
+    let cancelled = false
+    const silent = pollTick > 0 && Boolean(autoRefreshMs)
     const timer = setTimeout(async () => {
       if (!silent) setLoading(true)
       setError(null)
 
-      const [res, queueRes] = await Promise.all([
-        query.trim() || Object.keys(filters).length
-          ? window.judovac.searchJudokas(query, filters)
-          : window.judovac.listJudokas({ limit: clientMode ? 500 : 50_000 }),
-        clientMode ? window.judovac.getSyncQueue() : Promise.resolve(null)
-      ])
+      try {
+        const [res, queueRes] = await Promise.all([
+          query.trim() || Object.keys(filters).length
+            ? window.judovac.searchJudokas(query, filters)
+            : window.judovac.listJudokas({ limit: clientMode ? 500 : 1_000_000, offset: 0 }),
+          clientMode ? window.judovac.getSyncQueue() : Promise.resolve(null)
+        ])
 
-      if (cancelled) return
-      if (!silent) setLoading(false)
+        if (cancelled) return
 
-      const pendingRaw: Judoka[] =
-        queueRes && queueRes.ok
-          ? (queueRes.data.items
-              .filter((i) => i.operation === 'upsert')
-              .map((i) => queueItemToJudoka(i))
-              .filter(Boolean) as Judoka[])
-          : []
-      const pending =
-        clientMode && clientUsername
-          ? pendingRaw.filter(
-              (j) => j.createdBy.trim().toLowerCase() === clientUsername.trim().toLowerCase()
-            )
-          : pendingRaw
+        const pendingRaw: Judoka[] =
+          queueRes && queueRes.ok
+            ? (queueRes.data.items
+                .filter((i) => i.operation === 'upsert')
+                .map((i) => queueItemToJudoka(i))
+                .filter(Boolean) as Judoka[])
+            : []
+        const pending =
+          clientMode && clientUsername
+            ? pendingRaw.filter(
+                (j) => j.createdBy.trim().toLowerCase() === clientUsername.trim().toLowerCase()
+              )
+            : pendingRaw
 
-      if (!res.ok) {
-        if (pending.length > 0) {
-          setError(`Serveur injoignable (${res.error}). Éléments en file locale affichés.`)
-          setItems(pending)
-        } else {
-          setError(res.error)
-          setItems([])
+        if (!res.ok) {
+          if (pending.length > 0) {
+            setError(`Serveur injoignable (${res.error}). Éléments en file locale affichés.`)
+            setItems(pending)
+          } else {
+            setError(res.error)
+            setItems([])
+          }
+          return
         }
-        return
-      }
 
-      let list = res.data.items
-      if (clientMode && clientUsername) {
-        list = list.filter(
-          (j) => j.createdBy.trim().toLowerCase() === clientUsername.trim().toLowerCase()
-        )
+        if (!clientMode && typeof res.data.total === 'number') {
+          setSystemTotal(res.data.total)
+        }
+
+        let list = res.data.items
+        if (clientMode && clientUsername) {
+          list = list.filter(
+            (j) => j.createdBy.trim().toLowerCase() === clientUsername.trim().toLowerCase()
+          )
+        }
+        setItems([...pending, ...list])
+      } finally {
+        if (!cancelled && !silent) setLoading(false)
       }
-      setItems([...pending, ...list])
     }, pollTick > 0 && autoRefreshMs ? 0 : 200)
 
     return () => {
       cancelled = true
       clearTimeout(timer)
+      if (!silent) setLoading(false)
     }
   }, [query, filters, refreshKey, pollTick, clientMode, clientUsername, autoRefreshMs])
 
@@ -226,20 +248,30 @@ export function JudokaListPage({
     return parts
   }
 
+  async function loadJudokasForExport(): Promise<Judoka[]> {
+    if (items.length > 0 && (clientMode || systemTotal == null || items.length >= systemTotal)) {
+      return items
+    }
+    const res = await window.judovac.listJudokas({ limit: 1_000_000, offset: 0 })
+    if (!res.ok) throw new Error(res.error)
+    return res.data.items
+  }
+
   async function exportListPdf(): Promise<void> {
     setBusy(true)
     setError(null)
     setMessage(null)
     try {
       const parts = buildFilterSummaryParts()
+      const judokas = query.trim() || parts.length ? items : await loadJudokasForExport()
       const { downloadPdfBytes, exportJudokaListPdfBytes } = await import('@/lib/judoka-list-pdf')
       const bytes = await exportJudokaListPdfBytes({
-        judokas: items,
+        judokas,
         filterSummary: parts.length ? parts.join(' · ') : 'Aucun (tous les judokas affichés)'
       })
       const filename = `liste-judokas-${new Date().toISOString().slice(0, 10)}.pdf`
       downloadPdfBytes(bytes, filename)
-      setMessage(`Liste exportée (${items.length} judoka(s)) → ${filename}`)
+      setMessage(`Liste exportée (${judokas.length} judoka(s)) → ${filename}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Export liste impossible')
     } finally {
@@ -253,10 +285,11 @@ export function JudokaListPage({
     setMessage(null)
     try {
       const parts = buildFilterSummaryParts()
+      const judokas = query.trim() || parts.length ? items : await loadJudokasForExport()
       const { exportAndDownloadClubsListPdf } = await import('@/lib/clubs-list-pdf')
       const out = await exportAndDownloadClubsListPdf(
-        items,
-        parts.length ? parts.join(' · ') : 'Tous les judokas affichés'
+        judokas,
+        parts.length ? parts.join(' · ') : 'Tous les judokas enregistrés'
       )
       setMessage(`Clubs exportés (${out.clubCount} club(s)) → ${out.filename}`)
     } catch (e) {
@@ -324,45 +357,23 @@ export function JudokaListPage({
           <Input placeholder="Ligue" value={league} onChange={(e) => setLeague(e.target.value)} />
           <Input placeholder="Grade" value={grade} onChange={(e) => setGrade(e.target.value)} />
           {!clientMode && (
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="min-w-0 flex-1 space-y-1">
-                <Label htmlFor="filter-user" className="sr-only">
-                  Utilisateur
-                </Label>
-                <select
-                  id="filter-user"
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  value={createdBy}
-                  onChange={(e) => setCreatedBy(e.target.value)}
-                >
-                  <option value="">Utilisateur (tous)</option>
-                  {creators.map((user) => (
-                    <option key={user} value={user}>
-                      {user}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                disabled={busy || loading}
-                onClick={() => void exportListPdf()}
-                className="h-10 shrink-0 bg-emerald-600 px-4 text-white hover:bg-emerald-700 hover:text-white"
+            <div className="min-w-0 space-y-1">
+              <Label htmlFor="filter-user" className="sr-only">
+                Utilisateur
+              </Label>
+              <select
+                id="filter-user"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                value={createdBy}
+                onChange={(e) => setCreatedBy(e.target.value)}
               >
-                <FileDown className="h-4 w-4" />
-                Export Liste
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                disabled={busy || loading}
-                onClick={() => void exportClubsPdf()}
-                className="h-10 shrink-0 bg-emerald-600 px-4 text-white hover:bg-emerald-700 hover:text-white"
-              >
-                <FileDown className="h-4 w-4" />
-                Exporter Clubs
-              </Button>
+                <option value="">Utilisateur (tous)</option>
+                {creators.map((user) => (
+                  <option key={user} value={user}>
+                    {user}
+                  </option>
+                ))}
+              </select>
             </div>
           )}
         </div>
@@ -481,23 +492,42 @@ export function JudokaListPage({
           </table>
         </div>
 
-        {items.length > 0 && (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white/80 px-4 py-3">
-            <p className="text-sm text-muted-foreground">
-              {items.length} judoka(s) — page {pageIndex + 1} sur {pageCount}
-              {items.length > PAGE_SIZE && (
-                <span className="ml-1">
-                  (affichage {pageIndex * PAGE_SIZE + 1}–
-                  {Math.min((pageIndex + 1) * PAGE_SIZE, items.length)})
-                </span>
+        {(items.length > 0 || !clientMode) && (
+          <div className="flex flex-col gap-3 rounded-xl border bg-white/80 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+            <div className="space-y-0.5 text-sm text-muted-foreground">
+              {!clientMode && (
+                <p className="font-medium text-judo-navy">
+                  {systemTotal != null
+                    ? `${systemTotal.toLocaleString('fr-FR')} judoka(s)`
+                    : loading
+                      ? 'Chargement…'
+                      : '— judoka(s)'}
+                </p>
               )}
-            </p>
-            <div className="flex items-center gap-2">
+              {items.length > 0 && (
+                <p>
+                  {clientMode
+                    ? `${items.length.toLocaleString('fr-FR')} judoka(s)`
+                    : systemTotal != null && items.length !== systemTotal
+                      ? `${items.length.toLocaleString('fr-FR')} résultat(s) · `
+                      : ''}
+                  Page {pageIndex + 1} sur {pageCount}
+                  {items.length > PAGE_SIZE && (
+                    <span>
+                      {' '}
+                      (lignes {pageIndex * PAGE_SIZE + 1}–
+                      {Math.min((pageIndex + 1) * PAGE_SIZE, items.length)})
+                    </span>
+                  )}
+                </p>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={pageIndex <= 0 || loading}
+                disabled={pageIndex <= 0 || items.length === 0}
                 onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
               >
                 <ChevronLeft className="h-4 w-4" />
@@ -507,12 +537,36 @@ export function JudokaListPage({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={pageIndex >= pageCount - 1 || loading}
+                disabled={pageIndex >= pageCount - 1 || items.length === 0}
                 onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
               >
                 Suivant
                 <ChevronRight className="h-4 w-4" />
               </Button>
+              {!clientMode && (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void exportListPdf()}
+                    className="bg-emerald-600 px-4 text-white hover:bg-emerald-700 hover:text-white"
+                  >
+                    <FileDown className="h-4 w-4" />
+                    Export Liste
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void exportClubsPdf()}
+                    className="bg-emerald-600 px-4 text-white hover:bg-emerald-700 hover:text-white"
+                  >
+                    <FileDown className="h-4 w-4" />
+                    Exporter Clubs
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         )}
