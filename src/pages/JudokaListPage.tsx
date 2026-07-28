@@ -49,7 +49,13 @@ export function JudokaListPage({
   const [pageIndex, setPageIndex] = useState(0)
   /** Total exact en base (tous les judokas du périmètre serveur / opérateur). */
   const [systemTotal, setSystemTotal] = useState<number | null>(null)
+  /** Total pour la recherche / filtres courants (pagination). */
+  const [listTotal, setListTotal] = useState(0)
   const loadSeqRef = useRef(0)
+
+  const hasActiveSearch = Boolean(
+    query.trim() || club || province || league || grade || createdBy
+  )
 
   const filters = useMemo(
     () => ({
@@ -70,11 +76,13 @@ export function JudokaListPage({
       if (!silent) setLoading(true)
       setError(null)
 
+      const offset = pageIndex * PAGE_SIZE
+
       try {
         const [res, queueRes] = await Promise.all([
-          query.trim() || Object.keys(filters).length
-            ? window.judovac.searchJudokas(query, filters)
-            : window.judovac.listJudokas({ limit: clientMode ? 500 : 1_000_000, offset: 0 }),
+          hasActiveSearch
+            ? window.judovac.searchJudokas(query, filters, { limit: PAGE_SIZE, offset })
+            : window.judovac.listJudokas({ limit: PAGE_SIZE, offset }),
           clientMode ? window.judovac.getSyncQueue() : Promise.resolve(null)
         ])
 
@@ -95,17 +103,19 @@ export function JudokaListPage({
             : pendingRaw
 
         if (!res.ok) {
-          if (pending.length > 0) {
+          if (pending.length > 0 && pageIndex === 0) {
             setError(`Serveur injoignable (${res.error}). Éléments en file locale affichés.`)
             setItems(pending)
+            setListTotal(pending.length)
           } else {
             setError(res.error)
             setItems([])
+            setListTotal(0)
           }
           return
         }
 
-        if (!clientMode && typeof res.data.total === 'number') {
+        if (!clientMode && !hasActiveSearch && typeof res.data.total === 'number') {
           setSystemTotal(res.data.total)
         }
 
@@ -115,12 +125,20 @@ export function JudokaListPage({
             (j) => j.createdBy.trim().toLowerCase() === clientUsername.trim().toLowerCase()
           )
         }
-        setItems([...pending, ...list])
+
+        const total = res.data.total ?? list.length
+        setListTotal(total)
+
+        if (pageIndex === 0 && pending.length > 0) {
+          setItems([...pending, ...list])
+        } else {
+          setItems(list)
+        }
       } finally {
         if (seq === loadSeqRef.current && !silent) setLoading(false)
       }
     },
-    [query, filters, clientMode, clientUsername]
+    [query, filters, clientMode, clientUsername, pageIndex, hasActiveSearch]
   )
 
   useEffect(() => {
@@ -162,9 +180,9 @@ export function JudokaListPage({
   useEffect(() => {
     const timer = setTimeout(() => {
       void loadJudokas(false)
-    }, 200)
+    }, hasActiveSearch ? 280 : 120)
     return () => clearTimeout(timer)
-  }, [loadJudokas, refreshKey])
+  }, [loadJudokas, refreshKey, hasActiveSearch])
 
   useEffect(() => {
     if (clientMode) return
@@ -178,16 +196,11 @@ export function JudokaListPage({
     }
   }, [clientMode, refreshKey])
 
-  const pageCount = Math.max(1, Math.ceil(items.length / PAGE_SIZE))
+  const pageCount = Math.max(1, Math.ceil(listTotal / PAGE_SIZE))
 
   useEffect(() => {
     setPageIndex((p) => Math.min(p, pageCount - 1))
   }, [pageCount])
-
-  const pageItems = useMemo(() => {
-    const start = pageIndex * PAGE_SIZE
-    return items.slice(start, start + PAGE_SIZE)
-  }, [items, pageIndex])
 
   function toggle(id: string): void {
     setSelected((prev) => {
@@ -199,11 +212,21 @@ export function JudokaListPage({
   }
 
   function toggleAll(): void {
-    if (selected.size === items.length) {
-      setSelected(new Set())
+    const pageIds = items.map((j) => j.id)
+    const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id))
+    if (allPageSelected) {
+      setSelected((prev) => {
+        const next = new Set(prev)
+        for (const id of pageIds) next.delete(id)
+        return next
+      })
       return
     }
-    setSelected(new Set(items.map((j) => j.id)))
+    setSelected((prev) => {
+      const next = new Set(prev)
+      for (const id of pageIds) next.add(id)
+      return next
+    })
   }
 
   async function handleDelete(j: Judoka): Promise<void> {
@@ -251,13 +274,19 @@ export function JudokaListPage({
     return parts
   }
 
-  async function loadJudokasForExport(): Promise<Judoka[]> {
-    if (items.length > 0 && (clientMode || systemTotal == null || items.length >= systemTotal)) {
-      return items
+  async function fetchAllJudokasForExport(): Promise<Judoka[]> {
+    if (hasActiveSearch) {
+      const res = await window.judovac.searchJudokas(query, filters)
+      if (!res.ok) throw new Error(res.error)
+      return res.data.items
     }
     const res = await window.judovac.listJudokas({ limit: 1_000_000, offset: 0 })
     if (!res.ok) throw new Error(res.error)
     return res.data.items
+  }
+
+  async function loadJudokasForExport(): Promise<Judoka[]> {
+    return fetchAllJudokasForExport()
   }
 
   async function exportListPdf(): Promise<void> {
@@ -266,7 +295,7 @@ export function JudokaListPage({
     setMessage(null)
     try {
       const parts = buildFilterSummaryParts()
-      const judokas = query.trim() || parts.length ? items : await loadJudokasForExport()
+      const judokas = await loadJudokasForExport()
       const { downloadPdfBytes, exportJudokaListPdfBytes } = await import('@/lib/judoka-list-pdf')
       const bytes = await exportJudokaListPdfBytes({
         judokas,
@@ -288,7 +317,7 @@ export function JudokaListPage({
     setMessage(null)
     try {
       const parts = buildFilterSummaryParts()
-      const judokas = query.trim() || parts.length ? items : await loadJudokasForExport()
+      const judokas = await loadJudokasForExport()
       const { exportAndDownloadClubsListPdf } = await import('@/lib/clubs-list-pdf')
       const out = await exportAndDownloadClubsListPdf(
         judokas,
@@ -421,9 +450,11 @@ export function JudokaListPage({
                   <th className="px-3 py-2">
                     <input
                       type="checkbox"
-                      checked={items.length > 0 && selected.size === items.length}
+                      checked={
+                        items.length > 0 && items.every((j) => selected.has(j.id))
+                      }
                       onChange={toggleAll}
-                      aria-label="Tout sélectionner"
+                      aria-label="Tout sélectionner sur cette page"
                     />
                   </th>
                 )}
@@ -446,7 +477,7 @@ export function JudokaListPage({
                   </td>
                 </tr>
               ) : (
-                pageItems.map((j) => (
+                items.map((j) => (
                   <tr key={j.id} className="border-b last:border-0 hover:bg-judo-mist/50">
                     {!clientMode && (
                       <td className="px-3 py-2">
@@ -495,7 +526,7 @@ export function JudokaListPage({
           </table>
         </div>
 
-        {(items.length > 0 || !clientMode) && (
+        {(listTotal > 0 || !clientMode) && (
           <div className="flex flex-col gap-3 rounded-xl border bg-white/80 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
             <div className="space-y-0.5 text-sm text-muted-foreground">
               {!clientMode && (
@@ -507,19 +538,19 @@ export function JudokaListPage({
                       : '— judoka(s)'}
                 </p>
               )}
-              {items.length > 0 && (
+              {(listTotal > 0 || clientMode) && (
                 <p>
                   {clientMode
-                    ? `${items.length.toLocaleString('fr-FR')} judoka(s)`
-                    : systemTotal != null && items.length !== systemTotal
-                      ? `${items.length.toLocaleString('fr-FR')} résultat(s) · `
+                    ? `${listTotal.toLocaleString('fr-FR')} judoka(s)`
+                    : hasActiveSearch && systemTotal != null && listTotal !== systemTotal
+                      ? `${listTotal.toLocaleString('fr-FR')} résultat(s) · `
                       : ''}
                   Page {pageIndex + 1} sur {pageCount}
-                  {items.length > PAGE_SIZE && (
+                  {listTotal > 0 && (
                     <span>
                       {' '}
                       (lignes {pageIndex * PAGE_SIZE + 1}–
-                      {Math.min((pageIndex + 1) * PAGE_SIZE, items.length)})
+                      {Math.min((pageIndex + 1) * PAGE_SIZE, listTotal)})
                     </span>
                   )}
                 </p>
@@ -530,7 +561,7 @@ export function JudokaListPage({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={pageIndex <= 0 || items.length === 0}
+                disabled={pageIndex <= 0 || listTotal === 0}
                 onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
               >
                 <ChevronLeft className="h-4 w-4" />
@@ -540,7 +571,7 @@ export function JudokaListPage({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={pageIndex >= pageCount - 1 || items.length === 0}
+                disabled={pageIndex >= pageCount - 1 || listTotal === 0}
                 onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
               >
                 Suivant

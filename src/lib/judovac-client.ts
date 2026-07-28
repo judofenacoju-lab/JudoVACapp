@@ -436,6 +436,64 @@ function filterJudokasBySearch(
   })
 }
 
+function ilikeFragment(raw: string): string {
+  const safe = raw.replace(/[%_,]/g, ' ').trim()
+  return `%${safe}%`
+}
+
+/** Liste paginée avec filtres / recherche côté Supabase (affichage rapide). */
+async function queryJudokasPaginated(
+  query: string,
+  filters: Record<string, string> | undefined,
+  limit: number,
+  offset: number
+): Promise<{ items: Judoka[]; total: number }> {
+  const profile = await requireProfile()
+  let q = supabase
+    .from('judokas')
+    .select('*', { count: 'exact' })
+    .order('created_at', { ascending: false })
+
+  if (profile.role !== 'admin') {
+    q = q.eq('created_by', profile.username)
+  }
+
+  if (filters?.club) q = q.ilike('club', ilikeFragment(filters.club))
+  if (filters?.province) q = q.ilike('province', ilikeFragment(filters.province))
+  if (filters?.league) q = q.ilike('league', ilikeFragment(filters.league))
+  if (filters?.grade) q = q.ilike('grade', ilikeFragment(filters.grade))
+  if (filters?.createdBy) {
+    if (filters.createdBy === 'Serveur') {
+      q = q.or('created_by.is.null,created_by.eq.,created_by.ilike.serveur')
+    } else {
+      q = q.eq('created_by', filters.createdBy)
+    }
+  }
+
+  const ql = query.trim()
+  if (ql) {
+    const pat = ilikeFragment(ql)
+    q = q.or(
+      [
+        `last_name.ilike.${pat}`,
+        `middle_name.ilike.${pat}`,
+        `first_name.ilike.${pat}`,
+        `display_id.ilike.${pat}`,
+        `license_number.ilike.${pat}`,
+        `phone.ilike.${pat}`,
+        `club.ilike.${pat}`
+      ].join(',')
+    )
+  }
+
+  const { data, count, error } = await q.range(offset, offset + limit - 1)
+  if (error) throw new Error(error.message)
+  return {
+    items: (data ?? []).map((r) => rowToJudoka(r as never)),
+    total: count ?? 0
+  }
+}
+
 export const judovacClient = {
   invoke: <T = unknown>(_channel: string, ..._args: unknown[]) =>
     Promise.resolve({ ok: false, error: 'Non supporté en mode web' } as T),
@@ -760,8 +818,22 @@ export const judovacClient = {
 
   searchJudokas: async (
     query: string,
-    filters?: Record<string, string>
+    filters?: Record<string, string>,
+    opts?: { limit?: number; offset?: number }
   ): Promise<IpcResult<{ items: Judoka[]; total: number }>> => {
+    if (opts && typeof opts.limit === 'number') {
+      try {
+        const { items, total } = await queryJudokasPaginated(
+          query,
+          filters,
+          opts.limit,
+          opts.offset ?? 0
+        )
+        return ok({ items, total })
+      } catch (e) {
+        return fail(e instanceof Error ? e.message : 'Recherche impossible')
+      }
+    }
     try {
       const { items: all, total } = await fetchAllJudokasForProfile()
       const items = filterJudokasBySearch(all, query, filters)
