@@ -65,6 +65,9 @@ export function ServerDashboardPage({ onResetMode }: Props) {
   const [ficheBusy, setFicheBusy] = useState(false)
   const [ficheMessage, setFicheMessage] = useState<string | null>(null)
   const [ficheError, setFicheError] = useState<string | null>(null)
+  const [triageBusy, setTriageBusy] = useState(false)
+  const [triageMessage, setTriageMessage] = useState<string | null>(null)
+  const [triageError, setTriageError] = useState<string | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -99,6 +102,34 @@ export function ServerDashboardPage({ onResetMode }: Props) {
       setFicheError(e instanceof Error ? e.message : 'Export fiche utilisateurs impossible')
     } finally {
       setFicheBusy(false)
+    }
+  }
+
+  async function exportWeighedTriage(): Promise<void> {
+    setTriageBusy(true)
+    setTriageError(null)
+    setTriageMessage(null)
+    try {
+      const pageSize = 1000
+      const all: Judoka[] = []
+      let offset = 0
+      for (;;) {
+        const res = await window.judovac.listJudokas({ limit: pageSize, offset })
+        if (!res.ok) {
+          setTriageError(res.error)
+          return
+        }
+        all.push(...res.data.items)
+        if (res.data.items.length < pageSize) break
+        offset += pageSize
+      }
+      const { exportAndDownloadWeighedTriagePdf } = await import('@/lib/weighed-triage-pdf')
+      const out = await exportAndDownloadWeighedTriagePdf(all)
+      setTriageMessage(`Triage exporté (${out.count} pesé(s)) → ${out.filename}`)
+    } catch (e) {
+      setTriageError(e instanceof Error ? e.message : 'Export triage impossible')
+    } finally {
+      setTriageBusy(false)
     }
   }
 
@@ -142,6 +173,19 @@ export function ServerDashboardPage({ onResetMode }: Props) {
               hint={`${stats?.maleWeighedJudokas ?? 0} Garçon${(stats?.maleWeighedJudokas ?? 0) > 1 ? 's' : ''} · ${stats?.femaleWeighedJudokas ?? 0} Fille${(stats?.femaleWeighedJudokas ?? 0) > 1 ? 's' : ''}`}
               onValueClick={() => setWeighedOpen(true)}
               valueTitle="Voir les judokas pesés par équipe"
+              action={
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={triageBusy || !(stats?.weighedJudokas)}
+                  onClick={() => void exportWeighedTriage()}
+                  className="h-7 shrink-0 bg-emerald-600 px-2.5 text-xs text-white hover:bg-emerald-700 hover:text-white"
+                  title="Exporter le triage PDF (sexe + poids)"
+                >
+                  <FileDown className="h-3.5 w-3.5" />
+                  {triageBusy ? '…' : 'Triage'}
+                </Button>
+              }
             />
             <StatTile
               icon={<Network className="h-5 w-5" />}
@@ -161,6 +205,18 @@ export function ServerDashboardPage({ onResetMode }: Props) {
               tone={status?.dbReady ? 'ok' : 'muted'}
             />
           </div>
+
+          {(triageError || triageMessage) && (
+            <p
+              className={
+                triageError
+                  ? 'rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-destructive'
+                  : 'rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800'
+              }
+            >
+              {triageError ?? triageMessage}
+            </p>
+          )}
 
           <section className="grid gap-6 lg:grid-cols-2">
             <div className="rounded-xl border bg-white/70 p-5">
