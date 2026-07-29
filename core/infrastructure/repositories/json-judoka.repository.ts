@@ -168,7 +168,8 @@ export class JsonJudokaRepository implements IJudokaRepository {
         ]
           .join(' ')
           .toLowerCase()
-        return hay.includes(q)
+        const tokens = q.split(/\s+/).filter(Boolean)
+        return tokens.every((t) => hay.includes(t))
       })
       .slice(0, 200)
   }

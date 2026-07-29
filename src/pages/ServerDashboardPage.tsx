@@ -90,10 +90,6 @@ export function ServerDashboardPage({ onResetMode }: Props) {
   const [ownerSearchResults, setOwnerSearchResults] = useState<Judoka[]>([])
   const [ownerSearchError, setOwnerSearchError] = useState<string | null>(null)
   const [ownerSearchTotal, setOwnerSearchTotal] = useState(0)
-  const [userClubFiches, setUserClubFiches] = useState<
-    import('@/lib/user-clubs-pdf').UserClubsFiche[]
-  >([])
-  const [userClubFichesLoading, setUserClubFichesLoading] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -146,27 +142,6 @@ export function ServerDashboardPage({ onResetMode }: Props) {
     }
   }, [ownerSearchQuery])
 
-  useEffect(() => {
-    if (view !== 'home') return
-    let cancelled = false
-    void (async () => {
-      setUserClubFichesLoading(true)
-      try {
-        const all = await fetchAllJudokas()
-        if (cancelled) return
-        const { buildUserClubsFiches } = await import('@/lib/user-clubs-pdf')
-        setUserClubFiches(buildUserClubsFiches(all))
-      } catch {
-        if (!cancelled) setUserClubFiches([])
-      } finally {
-        if (!cancelled) setUserClubFichesLoading(false)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [view, stats?.totalJudokas])
-
   const judokaSearchActive = Boolean(ownerSearchQuery.trim())
 
   async function exportUserFiche(): Promise<void> {
@@ -180,7 +155,6 @@ export function ServerDashboardPage({ onResetMode }: Props) {
       )
       const fiches = buildUserClubsFiches(all)
       const out = await exportAndDownloadUserClubsPdf(all, { fiches })
-      setUserClubFiches(fiches)
       setFicheMessage(`Fiche exportée (${out.userCount} utilisateur(s)) → ${out.filename}`)
     } catch (e) {
       setFicheError(e instanceof Error ? e.message : 'Export fiche utilisateurs impossible')
@@ -401,50 +375,28 @@ export function ServerDashboardPage({ onResetMode }: Props) {
               )}
               {ficheError && <p className="mt-2 text-sm text-destructive">{ficheError}</p>}
               {ficheMessage && <p className="mt-2 text-sm text-emerald-700">{ficheMessage}</p>}
-              {!judokaSearchActive && userClubFichesLoading && !userClubFiches.length && (
-                <p className="mt-4 text-sm text-muted-foreground">Chargement des clubs…</p>
-              )}
-              {!judokaSearchActive && userClubFiches.length > 0 ? (
-                <ul className="mt-4 max-h-72 space-y-3 overflow-auto text-sm">
-                  {userClubFiches.map((fiche) => (
+              {!judokaSearchActive && stats?.judokaByUser?.length ? (
+                <ul className="mt-4 max-h-64 space-y-2 overflow-auto text-sm">
+                  {stats.judokaByUser.map((entry) => (
                     <li
-                      key={fiche.username}
-                      className="rounded-lg border border-border/60 bg-white/80 p-3"
+                      key={entry.username}
+                      className="flex items-center justify-between gap-3 border-b border-border/60 pb-2 last:border-0"
                     >
-                      <div className="flex items-center justify-between gap-3">
-                        <button
-                          type="button"
-                          onClick={() => setClubsUser(fiche.username)}
-                          className="bg-transparent text-left font-medium text-judo-navy underline-offset-2 hover:underline"
-                          title="Voir le détail des clubs"
-                        >
-                          {fiche.username}
-                        </button>
-                        <span className="shrink-0 rounded-full bg-judo-red/10 px-2.5 py-0.5 font-mono text-sm font-semibold text-judo-red">
-                          {fiche.judokaCount}
-                        </span>
-                      </div>
-                      {fiche.clubs.length > 0 ? (
-                        <ul className="mt-2 space-y-1 border-t border-border/50 pt-2 text-xs text-muted-foreground">
-                          {fiche.clubs.map((c) => (
-                            <li
-                              key={`${fiche.username}-${c.name}`}
-                              className="flex justify-between gap-2"
-                            >
-                              <span className="text-foreground">{c.name}</span>
-                              <span className="font-mono font-medium text-judo-navy">
-                                {c.count} judoka{c.count > 1 ? 's' : ''}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="mt-2 text-xs text-muted-foreground">Aucun club</p>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => setClubsUser(entry.username)}
+                        className="bg-transparent text-left font-medium text-judo-navy underline-offset-2 hover:underline"
+                        title="Voir les clubs enregistrés"
+                      >
+                        {entry.username}
+                      </button>
+                      <span className="rounded-full bg-judo-red/10 px-2.5 py-0.5 font-mono text-sm font-semibold text-judo-red">
+                        {entry.count}
+                      </span>
                     </li>
                   ))}
                 </ul>
-              ) : !judokaSearchActive && !userClubFichesLoading && !stats?.judokaByUser?.length ? (
+              ) : !judokaSearchActive ? (
                 <p className="mt-4 text-sm text-muted-foreground">
                   {status?.dbReady
                     ? 'Aucun judoka enregistré pour l’instant.'

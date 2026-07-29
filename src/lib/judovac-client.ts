@@ -413,12 +413,28 @@ async function fetchAllJudokasForProfile(): Promise<{ items: Judoka[]; total: nu
   return { items, total }
 }
 
+function judokaSearchHaystack(j: Judoka): string {
+  return [j.lastName, j.middleName, j.firstName, j.displayId, j.licenseNumber, j.phone, j.club]
+    .join(' ')
+    .toLowerCase()
+}
+
+function judokaSearchTokens(query: string): string[] {
+  return query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+}
+
+function judokaMatchesSearchQuery(j: Judoka, query: string): boolean {
+  const tokens = judokaSearchTokens(query)
+  if (tokens.length === 0) return true
+  const hay = judokaSearchHaystack(j)
+  return tokens.every((t) => hay.includes(t))
+}
+
 function filterJudokasBySearch(
   all: Judoka[],
   query: string,
   filters?: Record<string, string>
 ): Judoka[] {
-  const ql = query.trim().toLowerCase()
   return all.filter((j) => {
     if (filters?.club && !j.club.toLowerCase().includes(filters.club.toLowerCase())) return false
     if (filters?.province && !j.province.toLowerCase().includes(filters.province.toLowerCase()))
@@ -428,11 +444,7 @@ function filterJudokasBySearch(
     if (filters?.phone && !j.phone.includes(filters.phone)) return false
     if (filters?.licenseNumber && !j.licenseNumber.includes(filters.licenseNumber)) return false
     if (filters?.createdBy && formatCreatorLabel(j.createdBy) !== filters.createdBy) return false
-    if (!ql) return true
-    const hay = [j.lastName, j.middleName, j.firstName, j.displayId, j.licenseNumber, j.phone, j.club]
-      .join(' ')
-      .toLowerCase()
-    return hay.includes(ql)
+    return judokaMatchesSearchQuery(j, query)
   })
 }
 
@@ -470,9 +482,9 @@ async function queryJudokasPaginated(
     }
   }
 
-  const ql = query.trim()
-  if (ql) {
-    const pat = ilikeFragment(ql)
+  const tokens = judokaSearchTokens(query)
+  for (const token of tokens) {
+    const pat = ilikeFragment(token)
     q = q.or(
       [
         `last_name.ilike.${pat}`,
