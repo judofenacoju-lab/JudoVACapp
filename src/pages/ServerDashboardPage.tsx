@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
-import { Activity, Database, FileDown, Network, Scale, Users } from 'lucide-react'
+import { Activity, Database, FileDown, Network, Scale, Search, Users } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { ModeConfig } from '@shared/types/mode'
 import type { DashboardStats, ServerStatus } from '@shared/types/dashboard'
 import type { Judoka } from '@shared/types/judoka'
+import { formatJudokaFullName } from '@shared/utils/judoka'
+import { formatCreatorLabel } from '@shared/utils/creator'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { StatTile } from '@/components/StatTile'
 import { UserClubsModal } from '@/components/UserClubsModal'
 import { WeighedJudokasModal } from '@/components/WeighedJudokasModal'
@@ -68,6 +71,11 @@ export function ServerDashboardPage({ onResetMode }: Props) {
   const [triageBusy, setTriageBusy] = useState(false)
   const [triageMessage, setTriageMessage] = useState<string | null>(null)
   const [triageError, setTriageError] = useState<string | null>(null)
+  const [ownerSearchQuery, setOwnerSearchQuery] = useState('')
+  const [ownerSearchLoading, setOwnerSearchLoading] = useState(false)
+  const [ownerSearchResults, setOwnerSearchResults] = useState<Judoka[]>([])
+  const [ownerSearchError, setOwnerSearchError] = useState<string | null>(null)
+  const [ownerSearchTotal, setOwnerSearchTotal] = useState(0)
 
   useEffect(() => {
     let alive = true
@@ -84,6 +92,41 @@ export function ServerDashboardPage({ onResetMode }: Props) {
       clearInterval(id)
     }
   }, [])
+
+  useEffect(() => {
+    const q = ownerSearchQuery.trim()
+    if (!q) {
+      setOwnerSearchResults([])
+      setOwnerSearchError(null)
+      setOwnerSearchTotal(0)
+      setOwnerSearchLoading(false)
+      return
+    }
+
+    let cancelled = false
+    const timer = setTimeout(() => {
+      void (async () => {
+        setOwnerSearchLoading(true)
+        setOwnerSearchError(null)
+        const res = await window.judovac.searchJudokas(q, {}, { limit: 25, offset: 0 })
+        if (cancelled) return
+        setOwnerSearchLoading(false)
+        if (!res.ok) {
+          setOwnerSearchResults([])
+          setOwnerSearchTotal(0)
+          setOwnerSearchError(res.error)
+          return
+        }
+        setOwnerSearchResults(res.data.items)
+        setOwnerSearchTotal(res.data.total)
+      })()
+    }, 280)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [ownerSearchQuery])
 
   async function exportUserFiche(): Promise<void> {
     setFicheBusy(true)
@@ -252,19 +295,85 @@ export function ServerDashboardPage({ onResetMode }: Props) {
             </div>
 
             <div className="rounded-xl border bg-white/70 p-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
                 <h2 className="font-semibold text-judo-navy">Judokas par utilisateur</h2>
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={ficheBusy || !(stats?.judokaByUser?.length)}
-                  onClick={() => void exportUserFiche()}
-                  className="bg-emerald-600 text-white hover:bg-emerald-700 hover:text-white"
-                >
-                  <FileDown className="h-4 w-4" />
-                  {ficheBusy ? 'Export…' : 'Fiche Utilisateurs'}
-                </Button>
+                <div className="flex w-full min-w-0 flex-1 flex-wrap items-center gap-2 sm:max-w-xl sm:justify-end">
+                  <div className="relative min-w-[10rem] flex-1">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      className="h-9 pl-9"
+                      placeholder="Nom du judoka…"
+                      value={ownerSearchQuery}
+                      onChange={(e) => setOwnerSearchQuery(e.target.value)}
+                      aria-label="Rechercher un judoka pour voir qui l'a enregistré"
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={ficheBusy || !(stats?.judokaByUser?.length)}
+                    onClick={() => void exportUserFiche()}
+                    className="h-9 shrink-0 bg-emerald-600 text-white hover:bg-emerald-700 hover:text-white"
+                  >
+                    <FileDown className="h-4 w-4" />
+                    {ficheBusy ? 'Export…' : 'Fiche Utilisateurs'}
+                  </Button>
+                </div>
               </div>
+              {ownerSearchQuery.trim() && (
+                <div className="mt-3 rounded-lg border border-border/70 bg-white/90 p-3">
+                  {ownerSearchLoading && (
+                    <p className="text-sm text-muted-foreground">Recherche…</p>
+                  )}
+                  {ownerSearchError && (
+                    <p className="text-sm text-destructive">{ownerSearchError}</p>
+                  )}
+                  {!ownerSearchLoading && !ownerSearchError && ownerSearchResults.length === 0 && (
+                    <p className="text-sm text-muted-foreground">
+                      Aucun judoka ne correspond à « {ownerSearchQuery.trim()} ».
+                    </p>
+                  )}
+                  {!ownerSearchLoading && ownerSearchResults.length > 0 && (
+                    <>
+                      <p className="mb-2 text-xs text-muted-foreground">
+                        {ownerSearchTotal > ownerSearchResults.length
+                          ? `${ownerSearchResults.length} résultat(s) affiché(s) sur ${ownerSearchTotal}`
+                          : `${ownerSearchResults.length} résultat(s)`}
+                        {' — utilisateur enregistreur'}
+                      </p>
+                      <ul className="max-h-40 space-y-2 overflow-auto text-sm">
+                        {ownerSearchResults.map((j) => {
+                          const owner = formatCreatorLabel(j.createdBy)
+                          return (
+                            <li
+                              key={j.id}
+                              className="flex flex-wrap items-center justify-between gap-2 border-b border-border/50 pb-2 last:border-0"
+                            >
+                              <div className="min-w-0">
+                                <p className="font-medium text-judo-navy">
+                                  {formatJudokaFullName(j)}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {j.displayId}
+                                  {j.club ? ` · ${j.club}` : ''}
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setClubsUser(owner)}
+                                className="shrink-0 rounded-full bg-judo-navy/10 px-2.5 py-1 text-xs font-semibold text-judo-navy hover:bg-judo-navy/15"
+                                title="Voir les clubs de cet utilisateur"
+                              >
+                                {owner}
+                              </button>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              )}
               {ficheError && <p className="mt-2 text-sm text-destructive">{ficheError}</p>}
               {ficheMessage && <p className="mt-2 text-sm text-emerald-700">{ficheMessage}</p>}
               {stats?.judokaByUser?.length ? (
