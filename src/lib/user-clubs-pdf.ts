@@ -60,7 +60,10 @@ export function buildUserClubsFiches(judokas: Judoka[]): UserClubsFiche[] {
 /**
  * PDF « Fiche Utilisateurs » : chaque utilisateur + clubs enregistrés.
  */
-export async function exportUserClubsPdfBytes(fiches: UserClubsFiche[]): Promise<Uint8Array> {
+export async function exportUserClubsPdfBytes(
+  fiches: UserClubsFiche[],
+  options?: { filterSummary?: string }
+): Promise<Uint8Array> {
   const title = 'Fiche Utilisateurs — JudoVACapp'
   const pdf = await PDFDocument.create()
   pdf.setTitle(title)
@@ -76,6 +79,7 @@ export async function exportUserClubsPdfBytes(fiches: UserClubsFiche[]): Promise
   const text = rgb(0.08, 0.12, 0.18)
   const muted = rgb(0.4, 0.45, 0.5)
   const line = rgb(0.82, 0.85, 0.88)
+  const clubHeaderBg = rgb(0.94, 0.96, 0.98)
 
   let page = pdf.addPage([pageW, pageH])
   let y = pageH - margin
@@ -92,7 +96,27 @@ export async function exportUserClubsPdfBytes(fiches: UserClubsFiche[]): Promise
     `Export du ${new Date().toLocaleString('fr-FR')} — ${fiches.length} utilisateur(s)`,
     { x: margin, y: y - 10, size: 9, font, color: muted }
   )
-  y -= 24
+  y -= 14
+  page.drawText('Classement : par utilisateur, puis clubs enregistrés (ordre alphabétique).', {
+    x: margin,
+    y: y - 10,
+    size: 9,
+    font,
+    color: text
+  })
+  y -= 14
+  if (options?.filterSummary) {
+    page.drawText(truncate(font, options.filterSummary, 9, contentW), {
+      x: margin,
+      y: y - 10,
+      size: 9,
+      font,
+      color: muted
+    })
+    y -= 16
+  } else {
+    y -= 6
+  }
 
   if (fiches.length === 0) {
     page.drawText('Aucun utilisateur avec des judokas enregistrés.', {
@@ -135,6 +159,28 @@ export async function exportUserClubsPdfBytes(fiches: UserClubsFiche[]): Promise
       page.drawText('Aucun club', { x: margin + 12, y: y - 12, size: 10, font, color: muted })
       y -= 20
     } else {
+      page.drawRectangle({
+        x: margin + 4,
+        y: y - 14,
+        width: contentW - 8,
+        height: 14,
+        color: clubHeaderBg
+      })
+      page.drawText('Club', {
+        x: margin + 12,
+        y: y - 11,
+        size: 8,
+        font: fontBold,
+        color: muted
+      })
+      page.drawText('Judokas', {
+        x: margin + contentW - 48,
+        y: y - 11,
+        size: 8,
+        font: fontBold,
+        color: muted
+      })
+      y -= 16
       for (const club of fiche.clubs) {
         ensureSpace(18)
         page.drawText('•', { x: margin + 10, y: y - 12, size: 10, font, color: navy })
@@ -167,12 +213,17 @@ export async function exportUserClubsPdfBytes(fiches: UserClubsFiche[]): Promise
   return pdf.save()
 }
 
-export async function exportAndDownloadUserClubsPdf(judokas: Judoka[]): Promise<{
+export async function exportAndDownloadUserClubsPdf(
+  judokas: Judoka[],
+  options?: { filterSummary?: string; fiches?: UserClubsFiche[] }
+): Promise<{
   filename: string
   userCount: number
 }> {
-  const fiches = buildUserClubsFiches(judokas)
-  const bytes = await exportUserClubsPdfBytes(fiches)
+  const fiches = options?.fiches ?? buildUserClubsFiches(judokas)
+  const bytes = await exportUserClubsPdfBytes(fiches, {
+    filterSummary: options?.filterSummary
+  })
   const filename = `fiche-utilisateurs-${new Date().toISOString().slice(0, 10)}.pdf`
   downloadPdfBytes(bytes, filename)
   return { filename, userCount: fiches.length }
