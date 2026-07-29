@@ -14,6 +14,10 @@ const TITLE_SIZE = 14
 const META_SIZE = 9
 const CELL_SIZE = 8
 const SECTION_H = 22
+const WEIGHT_BLOCK_H = 15
+const WEIGHT_BLOCK_GAP = 8
+
+type WeightGroup = { weight: number; label: string; judokas: Judoka[] }
 
 type Col = { key: string; label: string; width: number; value: (j: Judoka, i: number) => string }
 
@@ -61,11 +65,14 @@ function normalizeWeightKey(weightKg: unknown): number {
   return Math.round(n * 10) / 10
 }
 
-/**
- * Regroupe par poids identique (même kg ensemble), puis nom à l'intérieur du groupe.
- * L'ordre des groupes de poids suit l'ordre d'apparition (pas de tri croissant global).
- */
-function sortSectionByIdenticalWeight(list: Judoka[]): Judoka[] {
+function formatWeightLabel(weightKg: unknown): string {
+  const key = normalizeWeightKey(weightKg)
+  if (key === 0 && weightKg !== 0 && weightKg !== '0') return '—'
+  return Number.isInteger(key) ? String(key) : key.toFixed(1).replace('.', ',')
+}
+
+/** Blocs de poids identiques (ordre d'apparition des groupes). */
+export function groupSectionByIdenticalWeight(list: Judoka[]): WeightGroup[] {
   const groups = new Map<number, Judoka[]>()
   const keyOrder: number[] = []
 
@@ -78,13 +85,18 @@ function sortSectionByIdenticalWeight(list: Judoka[]): Judoka[] {
     groups.get(key)!.push(j)
   }
 
-  const out: Judoka[] = []
+  const out: WeightGroup[] = []
   for (const key of keyOrder) {
-    const group = groups.get(key)!
-    group.sort((a, b) => formatJudokaFullName(a).localeCompare(formatJudokaFullName(b), 'fr'))
-    out.push(...group)
+    const judokas = groups.get(key)!
+    judokas.sort((a, b) => formatJudokaFullName(a).localeCompare(formatJudokaFullName(b), 'fr'))
+    const label = `${formatWeightLabel(judokas[0]!.weightKg)} kg`
+    out.push({ weight: key, label, judokas })
   }
   return out
+}
+
+function sortSectionByIdenticalWeight(list: Judoka[]): Judoka[] {
+  return groupSectionByIdenticalWeight(list).flatMap((g) => g.judokas)
 }
 
 /** Judokas pesés : Garçons puis Filles, regroupés par poids identique. */
@@ -118,6 +130,8 @@ export async function exportWeighedTriagePdfBytes(judokas: Judoka[]): Promise<Ui
   const line = rgb(0.78, 0.82, 0.86)
   const text = rgb(0.08, 0.12, 0.18)
   const sectionBg = rgb(0.85, 0.12, 0.15)
+  const weightBlockBg = rgb(0.92, 0.94, 0.97)
+  const weightBlockBorder = rgb(0.55, 0.6, 0.68)
 
   let page = pdf.addPage([pageW, pageH])
   let y = pageH - MARGIN
@@ -203,40 +217,84 @@ export async function exportWeighedTriagePdfBytes(judokas: Judoka[]): Promise<Ui
     drawTableHeader()
   }
 
-  function drawRows(list: Judoka[]): void {
-    list.forEach((j, index) => {
-      ensureSpace(ROW_H)
-      if (index % 2 === 1) {
-        page.drawRectangle({
-          x: tableX,
-          y: y - ROW_H,
-          width: tableW,
-          height: ROW_H,
-          color: zebra
-        })
-      }
+  function drawWeightBlockHeader(group: WeightGroup): void {
+    ensureSpace(WEIGHT_BLOCK_H + ROW_H)
+    page.drawRectangle({
+      x: tableX,
+      y: y - WEIGHT_BLOCK_H,
+      width: tableW,
+      height: WEIGHT_BLOCK_H,
+      color: weightBlockBg,
+      borderColor: weightBlockBorder,
+      borderWidth: 0.8
+    })
+    const title = `Poids ${group.label} — ${group.judokas.length} judoka(s)`
+    page.drawText(title, {
+      x: tableX + 8,
+      y: y - WEIGHT_BLOCK_H + 4,
+      size: 9,
+      font: fontBold,
+      color: navy
+    })
+    y -= WEIGHT_BLOCK_H
+  }
+
+  function drawRow(j: Judoka, rowIndex: number): void {
+    ensureSpace(ROW_H)
+    if (rowIndex % 2 === 1) {
       page.drawRectangle({
         x: tableX,
         y: y - ROW_H,
         width: tableW,
         height: ROW_H,
-        borderColor: line,
-        borderWidth: 0.4
+        color: zebra
       })
-      let x = tableX
-      for (const col of COLS) {
-        const cell = truncate(font, col.value(j, index), CELL_SIZE, col.width - 6)
-        page.drawText(cell, {
-          x: x + 3,
-          y: y - ROW_H + 4,
-          size: CELL_SIZE,
-          font,
-          color: text
-        })
-        x += col.width
-      }
-      y -= ROW_H
+    }
+    page.drawRectangle({
+      x: tableX,
+      y: y - ROW_H,
+      width: tableW,
+      height: ROW_H,
+      borderColor: line,
+      borderWidth: 0.4
     })
+    let x = tableX
+    for (const col of COLS) {
+      const cell = truncate(font, col.value(j, rowIndex), CELL_SIZE, col.width - 6)
+      page.drawText(cell, {
+        x: x + 3,
+        y: y - ROW_H + 4,
+        size: CELL_SIZE,
+        font,
+        color: text
+      })
+      x += col.width
+    }
+    y -= ROW_H
+  }
+
+  function drawWeightBlocks(list: Judoka[]): void {
+    const groups = groupSectionByIdenticalWeight(list)
+    let rowIndex = 0
+    groups.forEach((group, groupIndex) => {
+      if (groupIndex > 0) y -= WEIGHT_BLOCK_GAP
+      drawWeightBlockHeader(group)
+      for (const j of group.judokas) {
+        drawRow(j, rowIndex)
+        rowIndex += 1
+      }
+      page.drawLine({
+        start: { x: tableX, y },
+        end: { x: tableX + tableW, y },
+        thickness: 1.2,
+        color: weightBlockBorder
+      })
+      y -= 4
+    })
+  }
+
+  function drawRows(list: Judoka[]): void {
+    drawWeightBlocks(list)
   }
 
   drawDocHeader()

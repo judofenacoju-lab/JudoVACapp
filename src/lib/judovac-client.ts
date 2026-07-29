@@ -947,7 +947,32 @@ export const judovacClient = {
   listUsers: async (): Promise<IpcResult<{ items: UserAccount[] }>> => {
     const { data, error } = await supabase.from('profiles').select('*').order('username')
     if (error) return fail(error.message)
-    return ok({ items: (data ?? []).map((p) => profileToUserAccount(p as ProfileRow)) })
+    let items = (data ?? []).map((p) => profileToUserAccount(p as ProfileRow))
+
+    const adminUser = items.find(
+      (u) =>
+        u.role === 'admin' ||
+        u.username.toLowerCase() === 'admin' ||
+        u.email?.toLowerCase() === 'judovac@mail.com'
+    )
+    if (adminUser && !items.some((u) => u.username === 'Serveur')) {
+      items = [
+        {
+          ...adminUser,
+          username: 'Serveur',
+          displayName: adminUser.displayName ?? 'Serveur'
+        },
+        ...items.filter((u) => u.id !== adminUser.id)
+      ]
+    }
+
+    items.sort((a, b) => {
+      if (a.username === 'Serveur') return -1
+      if (b.username === 'Serveur') return 1
+      return a.username.localeCompare(b.username, 'fr')
+    })
+
+    return ok({ items })
   },
 
   createUser: async (
@@ -1005,6 +1030,48 @@ export const judovacClient = {
     const json = (await res.json()) as { ok?: boolean; error?: string }
     if (!res.ok || !json.ok) return fail(json.error ?? 'Suppression échouée')
     return ok(true)
+  },
+
+  resetUserPassword: async (
+    username: string,
+    password?: string
+  ): Promise<IpcResult<import('@shared/types/user-account').CreatedUserAccount>> => {
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        return fail('Session expirée — reconnectez-vous.')
+      }
+      const res = await fetch('/api/admin/users', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ username, password })
+      })
+      const text = await res.text()
+      let json: {
+        ok?: boolean
+        data?: import('@shared/types/user-account').CreatedUserAccount
+        error?: string
+      } = {}
+      try {
+        json = text ? (JSON.parse(text) as typeof json) : {}
+      } catch {
+        return fail(
+          res.ok
+            ? 'Réponse serveur invalide'
+            : `Erreur serveur (${res.status}). Vérifiez SUPABASE_SERVICE_ROLE_KEY sur Vercel.`
+        )
+      }
+      if (!res.ok || !json.ok) {
+        return fail(json.error ?? `Réinitialisation échouée (${res.status})`)
+      }
+      if (!json.data) return fail('Réponse serveur incomplète')
+      return ok(json.data)
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : 'Réinitialisation impossible')
+    }
   },
 
   savePhotoDataUrl: async (dataUrl: string): Promise<IpcResult<{ path: string; dataUrl?: string }>> => {

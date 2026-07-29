@@ -41,6 +41,10 @@ export function AdminPage({ onBack, embedded = false }: Props) {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [resetTarget, setResetTarget] = useState<string | null>(null)
+  const [resetPassword, setResetPassword] = useState('')
+  const [resetBusy, setResetBusy] = useState(false)
+  const [resetError, setResetError] = useState<string | null>(null)
 
   async function loadNetwork(): Promise<void> {
     const n = await window.judovac.getLocalNetworkInfo()
@@ -142,7 +146,41 @@ export function AdminPage({ onBack, embedded = false }: Props) {
   }
 
   function isProtectedAdmin(user: UserAccount): boolean {
-    return user.role === 'admin' || user.username.toLowerCase() === 'admin'
+    return (
+      user.role === 'admin' ||
+      user.username.toLowerCase() === 'admin' ||
+      user.username === 'Serveur'
+    )
+  }
+
+  function openResetPassword(username: string): void {
+    setResetError(null)
+    setResetPassword('')
+    setResetTarget(username)
+  }
+
+  async function confirmResetPassword(): Promise<void> {
+    if (!resetTarget) return
+    setResetBusy(true)
+    setResetError(null)
+    setMessage(null)
+    const pwd = resetPassword.trim()
+    if (pwd && pwd.length < 6) {
+      setResetBusy(false)
+      setResetError('Le mot de passe doit contenir au moins 6 caractères.')
+      return
+    }
+    const res = await window.judovac.resetUserPassword(resetTarget, pwd || undefined)
+    setResetBusy(false)
+    if (!res.ok) {
+      setResetError(res.error)
+      return
+    }
+    setResetTarget(null)
+    setResetPassword('')
+    setCreatedCredentials(res.data)
+    setMessage(`Mot de passe de « ${res.data.username} » réinitialisé.`)
+    await loadUsers()
   }
 
   async function removeUser(username: string): Promise<void> {
@@ -394,21 +432,35 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                       {user.active ? '' : ' · inactif'}
                     </p>
                   </div>
-                  {!isProtectedAdmin(user) ? (
+                  <div className="flex shrink-0 items-center gap-1">
                     <Button
                       type="button"
-                      size="sm"
+                      size="icon"
                       variant="ghost"
-                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                      disabled={busy}
-                      onClick={() => void removeUser(user.username)}
+                      className="h-8 w-8"
+                      title="Réinitialiser le mot de passe"
+                      disabled={busy || resetBusy}
+                      onClick={() => openResetPassword(user.username)}
                     >
-                      <Trash2 className="h-4 w-4" />
-                      Supprimer
+                      <RefreshCw className="h-4 w-4 text-judo-navy" />
+                      <span className="sr-only">Réinitialiser</span>
                     </Button>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">Non supprimable</span>
-                  )}
+                    {!isProtectedAdmin(user) ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        disabled={busy}
+                        onClick={() => void removeUser(user.username)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Supprimer
+                      </Button>
+                    ) : (
+                      <span className="px-2 text-xs text-muted-foreground">Non supprimable</span>
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>
@@ -820,7 +872,9 @@ export function AdminPage({ onBack, embedded = false }: Props) {
             className="w-full max-w-md rounded-xl border bg-white p-6 shadow-xl"
           >
             <h3 id="credentials-title" className="text-lg font-semibold text-judo-navy">
-              Compte créé — identifiants de connexion
+              {createdCredentials.password && message?.includes('réinitialisé')
+                ? 'Mot de passe réinitialisé'
+                : 'Compte créé — identifiants de connexion'}
             </h3>
             <p className="mt-2 text-sm text-muted-foreground">
               Communiquez ces informations à{' '}
@@ -867,6 +921,65 @@ export function AdminPage({ onBack, embedded = false }: Props) {
             <div className="mt-6 flex justify-end">
               <Button type="button" variant="accent" onClick={() => setCreatedCredentials(null)}>
                 Fermer
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {resetTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reset-password-title"
+            className="w-full max-w-md rounded-xl border bg-white p-6 shadow-xl"
+          >
+            <h3 id="reset-password-title" className="text-lg font-semibold text-judo-navy">
+              Réinitialiser le mot de passe
+            </h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Compte <strong>{resetTarget}</strong> — le mot de passe actuel n’est pas demandé.
+              Laissez vide pour générer un mot de passe automatiquement.
+            </p>
+            <div className="mt-4">
+              <Label htmlFor="reset-new-password">Nouveau mot de passe</Label>
+              <Input
+                id="reset-new-password"
+                type="text"
+                className="mt-1"
+                placeholder="Min. 6 caractères ou vide = généré"
+                value={resetPassword}
+                onChange={(e) => setResetPassword(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void confirmResetPassword()
+                  }
+                }}
+              />
+            </div>
+            {resetError && <p className="mt-3 text-sm text-destructive">{resetError}</p>}
+            <div className="mt-6 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={resetBusy}
+                onClick={() => {
+                  setResetTarget(null)
+                  setResetPassword('')
+                  setResetError(null)
+                }}
+              >
+                Annuler
+              </Button>
+              <Button
+                type="button"
+                variant="accent"
+                disabled={resetBusy}
+                onClick={() => void confirmResetPassword()}
+              >
+                {resetBusy ? 'Réinitialisation…' : 'Réinitialiser'}
               </Button>
             </div>
           </div>

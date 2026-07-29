@@ -191,14 +191,92 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       })
     }
 
+    if (req.method === 'PATCH') {
+      const body = (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) as {
+        username?: string
+        password?: string
+      }
+
+      const rawUsername = body?.username?.trim()
+      if (!rawUsername) {
+        return res.status(400).json({ ok: false, error: "Nom d'utilisateur requis" })
+      }
+
+      let userPassword = body.password?.trim() || generatePassword()
+      if (userPassword.length < 6) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Le mot de passe doit contenir au moins 6 caractères'
+        })
+      }
+
+      const lookupKey = rawUsername.toLowerCase()
+      let profile: { id: string; username: string; role: string } | null = null
+
+      if (lookupKey === 'serveur' || lookupKey === 'admin') {
+        const { data: byRole } = await supabase
+          .from('profiles')
+          .select('id, username, role')
+          .eq('role', 'admin')
+          .limit(1)
+          .maybeSingle()
+        profile = (byRole as typeof profile) ?? null
+
+        if (!profile) {
+          const { data: authUsers } = await supabase.auth.admin.listUsers({ page: 1, perPage: 200 })
+          const bootstrap = authUsers?.users?.find(
+            (u) => u.email?.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL
+          )
+          if (bootstrap) {
+            profile = { id: bootstrap.id, username: 'Serveur', role: 'admin' }
+          }
+        }
+      } else {
+        const { data } = await supabase
+          .from('profiles')
+          .select('id, username, role')
+          .eq('username', rawUsername)
+          .maybeSingle()
+        profile = (data as typeof profile) ?? null
+      }
+
+      if (!profile) {
+        return res.status(404).json({ ok: false, error: 'Utilisateur introuvable' })
+      }
+
+      const { error: updateError } = await supabase.auth.admin.updateUserById(profile.id, {
+        password: userPassword
+      })
+
+      if (updateError) {
+        return res.status(400).json({ ok: false, error: updateError.message })
+      }
+
+      const { data: authUser } = await supabase.auth.admin.getUserById(profile.id)
+      const email = authUser.user?.email ?? `${profile.username.toLowerCase()}@mail.com`
+
+      return res.status(200).json({
+        ok: true,
+        data: {
+          id: profile.id,
+          username: lookupKey === 'serveur' ? 'Serveur' : profile.username,
+          email,
+          password: userPassword,
+          active: true,
+          createdAt: new Date().toISOString(),
+          role: profile.role === 'admin' ? 'admin' : 'operator'
+        }
+      })
+    }
+
     if (req.method === 'DELETE') {
       const username = String(req.query.username ?? '')
       if (!username) return res.status(400).json({ ok: false, error: 'username requis' })
 
-      if (username.toLowerCase() === 'admin') {
+      if (username.toLowerCase() === 'admin' || username.toLowerCase() === 'serveur') {
         return res
           .status(400)
-          .json({ ok: false, error: 'Le compte administrateur ne peut pas être supprimé' })
+          .json({ ok: false, error: 'Le compte Serveur / administrateur ne peut pas être supprimé' })
       }
 
       const { data: profile } = await supabase
