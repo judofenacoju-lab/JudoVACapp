@@ -169,7 +169,7 @@ export function WorkspaceLayout({
           onClick={onLogout}
         >
           <LogOut className="h-4 w-4" />
-          {role === 'server' ? 'Changer de mode' : 'Déconnexion'}
+          Déconnexion
         </Button>
       </div>
     </aside>

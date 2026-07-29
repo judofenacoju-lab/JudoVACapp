@@ -23,8 +23,7 @@ type Col = { key: string; label: string; width: number; value: (j: Judoka, i: nu
 
 const COLS: Col[] = [
   { key: 'n', label: 'N°', width: 28, value: (_j, i) => String(i + 1) },
-  { key: 'id', label: 'ID', width: 70, value: (j) => j.displayId || '—' },
-  { key: 'name', label: 'Nom complet', width: 150, value: (j) => formatJudokaFullName(j) || '—' },
+  { key: 'name', label: 'Nom complet', width: 180, value: (j) => formatJudokaFullName(j) || '—' },
   { key: 'age', label: 'Âge', width: 28, value: (j) => (j.age != null ? String(j.age) : '—') },
   {
     key: 'weight',
