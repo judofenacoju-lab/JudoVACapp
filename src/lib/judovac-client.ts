@@ -9,6 +9,7 @@ import type { UserAccount } from '@shared/types/user-account'
 import { createDefaultBadgeTemplate } from '@shared/types/badge'
 import { createDefaultSettings } from '@shared/types/settings'
 import { computeAge, hasRecordedWeight, isSameJudokaIdentity, resolveJudokaCategory, setActiveCategoryAgeRanges } from '@shared/utils/judoka'
+import { setActiveRegisteredClubs } from '@shared/utils/clubs'
 import { formatCreatorLabel } from '@shared/utils/creator'
 import { judokaFormSchema } from '@shared/validation/judoka'
 import { createId } from './create-id'
@@ -504,6 +505,33 @@ async function queryJudokasPaginated(
     items: (data ?? []).map((r) => rowToJudoka(r as never)),
     total: count ?? 0
   }
+}
+
+/** Noms de clubs distincts déjà présents sur les fiches judokas (admin). */
+async function fetchDistinctJudokaClubNames(): Promise<string[]> {
+  const profile = await requireProfile()
+  if (profile.role !== 'admin') {
+    throw new Error('Réservé au compte Serveur.')
+  }
+  const seen = new Map<string, string>()
+  let offset = 0
+  const pageSize = 1000
+  for (;;) {
+    const { data, error } = await supabase
+      .from('judokas')
+      .select('club')
+      .range(offset, offset + pageSize - 1)
+    if (error) throw new Error(error.message)
+    for (const row of data ?? []) {
+      const name = String((row as { club?: string }).club ?? '').trim()
+      if (!name) continue
+      const key = name.toLowerCase()
+      if (!seen.has(key)) seen.set(key, name)
+    }
+    if ((data?.length ?? 0) < pageSize) break
+    offset += pageSize
+  }
+  return [...seen.values()].sort((a, b) => a.localeCompare(b, 'fr'))
 }
 
 export const judovacClient = {
@@ -1500,6 +1528,7 @@ export const judovacClient = {
     const { data } = await supabase.from('app_settings').select('*').eq('id', 'default').single()
     const settings = mergeSettings((data?.settings ?? null) as Partial<AppSettings> | null)
     setActiveCategoryAgeRanges(settings.categories)
+    setActiveRegisteredClubs(settings.clubs)
     return ok(settings)
   },
 
@@ -1514,6 +1543,7 @@ export const judovacClient = {
       ui: { ...current.data.ui, ...patch.ui },
       network: { ...current.data.network, ...patch.network },
       categories: patch.categories ?? current.data.categories,
+      clubs: patch.clubs ?? current.data.clubs,
       updatedAt: new Date().toISOString()
     }
     const { error } = await supabase.from('app_settings').upsert({
@@ -1523,7 +1553,17 @@ export const judovacClient = {
     })
     if (error) return fail(error.message)
     setActiveCategoryAgeRanges(merged.categories)
+    setActiveRegisteredClubs(merged.clubs)
     return ok(merged)
+  },
+
+  listJudokaClubNames: async (): Promise<IpcResult<{ items: string[] }>> => {
+    try {
+      const items = await fetchDistinctJudokaClubNames()
+      return ok({ items })
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : 'Liste des clubs impossible')
+    }
   },
 
   listPrinters: async (): Promise<IpcResult<{ printers: PrinterInfoLite[] }>> =>

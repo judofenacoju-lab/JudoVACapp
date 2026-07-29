@@ -39,6 +39,8 @@ export class SettingsStore {
       print: { ...current.print, ...(patch.print ?? {}) },
       ui: { ...current.ui, ...(patch.ui ?? {}) },
       network: { ...current.network, ...(patch.network ?? {}) },
+      categories: patch.categories ?? current.categories,
+      clubs: patch.clubs ?? current.clubs,
       updatedAt: new Date().toISOString()
     }
 

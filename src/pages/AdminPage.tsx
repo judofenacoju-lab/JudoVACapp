@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, Copy, Check, RefreshCw, Save, Trash2, Plus, Eraser } from 'lucide-react'
 import type { AppSettings } from '@shared/types/settings'
 import { createDefaultCategoryAgeRanges } from '@shared/types/settings'
+import { mergeRegisteredClubNames } from '@shared/utils/clubs'
 import type { SystemLogEntry } from '@shared/types/dashboard'
 import type { CreatedUserAccount, UserAccount } from '@shared/types/user-account'
 import { Button } from '@/components/ui/button'
@@ -14,7 +15,7 @@ interface Props {
   embedded?: boolean
 }
 
-type Tab = 'event' | 'users' | 'categories' | 'print' | 'colors' | 'network' | 'logs'
+type Tab = 'event' | 'users' | 'clubs' | 'categories' | 'print' | 'colors' | 'network' | 'logs'
 
 interface LocalNetworkInfo {
   addresses: Array<{ address: string; iface: string }>
@@ -45,6 +46,9 @@ export function AdminPage({ onBack, embedded = false }: Props) {
   const [resetPassword, setResetPassword] = useState('')
   const [resetBusy, setResetBusy] = useState(false)
   const [resetError, setResetError] = useState<string | null>(null)
+  const [newClubName, setNewClubName] = useState('')
+  const [clubsImportBusy, setClubsImportBusy] = useState(false)
+  const clubsAutoImportedRef = useRef(false)
 
   async function loadNetwork(): Promise<void> {
     const n = await window.judovac.getLocalNetworkInfo()
@@ -99,7 +103,8 @@ export function AdminPage({ onBack, embedded = false }: Props) {
         return
       }
     }
-    const payload = { ...settings, categories }
+    const clubs = mergeRegisteredClubNames(settings.clubs)
+    const payload = { ...settings, categories, clubs }
     const res = await window.judovac.setSettings(payload)
     setBusy(false)
     if (!res.ok) {
@@ -109,6 +114,54 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     setSettings(res.data)
     setMessage('Paramètres enregistrés.')
   }
+
+  async function importClubsFromJudokas(showMessage = true): Promise<void> {
+    if (!settings) return
+    setClubsImportBusy(true)
+    setError(null)
+    try {
+      const res = await window.judovac.listJudokaClubNames()
+      if (!res.ok) {
+        setError(res.error)
+        return
+      }
+      const before = mergeRegisteredClubNames(settings.clubs).length
+      const merged = mergeRegisteredClubNames(settings.clubs, res.data.items)
+      setSettings({ ...settings, clubs: merged })
+      if (showMessage) {
+        const added = merged.length - before
+        setMessage(
+          added > 0
+            ? `${added} club(s) issu(s) des fiches judokas ajouté(s) à la liste (${merged.length} au total).`
+            : `Liste à jour (${merged.length} club(s)) — aucun nouveau nom détecté.`
+        )
+      }
+    } finally {
+      setClubsImportBusy(false)
+    }
+  }
+
+  function addClubRow(): void {
+    if (!settings) return
+    const name = newClubName.trim()
+    if (!name) {
+      setError('Indiquez un nom de club.')
+      setTab('clubs')
+      return
+    }
+    setError(null)
+    setSettings({
+      ...settings,
+      clubs: mergeRegisteredClubNames([...(settings.clubs ?? []), name])
+    })
+    setNewClubName('')
+  }
+
+  useEffect(() => {
+    if (tab !== 'clubs' || !settings || clubsAutoImportedRef.current) return
+    clubsAutoImportedRef.current = true
+    void importClubsFromJudokas(false)
+  }, [tab, settings])
 
   async function createUser(): Promise<void> {
     setBusy(true)
@@ -243,7 +296,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     <AppShell
       embedded={embedded}
       title="Configuration"
-      subtitle="Événement · Utilisateurs · Catégorie · Impression · Couleurs · Réseau · Journal"
+      subtitle="Événement · Utilisateurs · Clubs · Catégorie · Impression · Couleurs · Réseau · Journal"
       actions={
         !embedded ? (
           <Button variant="outline" onClick={onBack}>
@@ -259,6 +312,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
             [
               ['event', 'Événement'],
               ['users', 'Utilisateurs'],
+              ['clubs', 'Clubs'],
               ['categories', 'Catégorie'],
               ['print', 'Impression'],
               ['colors', 'Couleurs'],
@@ -464,6 +518,82 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                 </li>
               ))}
             </ul>
+          </section>
+        )}
+
+        {tab === 'clubs' && (
+          <section className="space-y-4 rounded-xl border bg-white/75 p-5">
+            <p className="text-sm text-muted-foreground">
+              Clubs proposés à <strong>tous les utilisateurs</strong> lors de l’enregistrement d’un
+              judoka. Les noms déjà saisis sur les fiches existantes sont repris automatiquement à
+              l’ouverture de cet onglet (comme s’ils avaient été créés ici). Cliquez{' '}
+              <strong>Enregistrer</strong> pour publier la liste à tous les utilisateurs.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={clubsImportBusy || busy}
+                onClick={() => void importClubsFromJudokas(true)}
+              >
+                <RefreshCw className={`h-4 w-4 ${clubsImportBusy ? 'animate-spin' : ''}`} />
+                {clubsImportBusy ? 'Synchronisation…' : 'Synchroniser depuis les judokas'}
+              </Button>
+            </div>
+            <ul className="space-y-2">
+              {(settings.clubs ?? []).length === 0 && (
+                <li className="text-sm text-muted-foreground">
+                  Aucun club pour l’instant. Ajoutez-en un ou synchronisez depuis les fiches.
+                </li>
+              )}
+              {(settings.clubs ?? []).map((name, index) => (
+                <li key={`${name}-${index}`} className="flex flex-wrap items-center gap-2">
+                  <Input
+                    className="min-w-[12rem] flex-1"
+                    value={name}
+                    onChange={(e) => {
+                      const clubs = [...(settings.clubs ?? [])]
+                      clubs[index] = e.target.value
+                      setSettings({ ...settings, clubs })
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    title="Retirer de la liste"
+                    onClick={() => {
+                      const clubs = (settings.clubs ?? []).filter((_, i) => i !== index)
+                      setSettings({ ...settings, clubs })
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+            <div className="flex flex-wrap items-end gap-2 border-t border-border/60 pt-4">
+              <div className="min-w-[12rem] flex-1 space-y-2">
+                <Label htmlFor="new-club">Nouveau club</Label>
+                <Input
+                  id="new-club"
+                  placeholder="Ex. Judo Club Kinshasa"
+                  value={newClubName}
+                  onChange={(e) => setNewClubName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      addClubRow()
+                    }
+                  }}
+                />
+              </div>
+              <Button type="button" variant="outline" onClick={() => addClubRow()} disabled={busy}>
+                <Plus className="h-4 w-4" />
+                Ajouter
+              </Button>
+            </div>
           </section>
         )}
 

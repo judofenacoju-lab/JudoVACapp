@@ -46,6 +46,8 @@ export interface AppSettings {
   }
   /** Tranches d'âge pour la catégorisation automatique. */
   categories: CategoryAgeRange[]
+  /** Clubs proposés à tous les utilisateurs lors de l'enregistrement judoka. */
+  clubs: string[]
   updatedAt: string
 }
 
@@ -73,6 +75,7 @@ export function createDefaultSettings(): AppSettings {
       serverPort: 3847
     },
     categories: createDefaultCategoryAgeRanges(),
+    clubs: [],
     updatedAt: new Date().toISOString()
   }
 }

@@ -2,6 +2,7 @@ import type { Judoka } from '@shared/types/judoka'
 import type { BadgeTemplate } from '@shared/types/badge'
 import type { AppSettings } from '@shared/types/settings'
 import { createDefaultSettings } from '@shared/types/settings'
+import { mergeRegisteredClubNames } from '@shared/utils/clubs'
 import type { UserAccount } from '@shared/types/user-account'
 import type { SystemLogEntry } from '@shared/types/dashboard'
 import { computeAge, resolveJudokaCategory } from '@shared/utils/judoka'
@@ -105,12 +106,16 @@ export function mergeSettings(raw: Partial<AppSettings> | null): AppSettings {
           maxAge: Number(r.maxAge)
         })).filter((r) => r.name && Number.isFinite(r.minAge) && Number.isFinite(r.maxAge))
       : defaults.categories
+  const clubs = mergeRegisteredClubNames(
+    Array.isArray(raw.clubs) ? raw.clubs.map((c) => String(c)) : defaults.clubs
+  )
   return {
     event: { ...defaults.event, ...raw.event },
     print: { ...defaults.print, ...raw.print },
     ui: { ...defaults.ui, ...raw.ui },
     network: { ...defaults.network, ...raw.network },
     categories: categories.length > 0 ? categories : defaults.categories,
+    clubs,
     updatedAt: raw.updatedAt ?? defaults.updatedAt
   }
 }
