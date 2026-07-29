@@ -53,22 +53,50 @@ function truncate(
   return `${t}…`
 }
 
-/** Judokas pesés : Garçons puis Filles, chacun trié par poids croissant. */
+function normalizeWeightKey(weightKg: unknown): number {
+  if (weightKg === null || weightKg === undefined) return 0
+  const raw = typeof weightKg === 'string' ? weightKg.trim().replace(',', '.') : weightKg
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return 0
+  return Math.round(n * 10) / 10
+}
+
+/**
+ * Regroupe par poids identique (même kg ensemble), puis nom à l'intérieur du groupe.
+ * L'ordre des groupes de poids suit l'ordre d'apparition (pas de tri croissant global).
+ */
+function sortSectionByIdenticalWeight(list: Judoka[]): Judoka[] {
+  const groups = new Map<number, Judoka[]>()
+  const keyOrder: number[] = []
+
+  for (const j of list) {
+    const key = normalizeWeightKey(j.weightKg)
+    if (!groups.has(key)) {
+      groups.set(key, [])
+      keyOrder.push(key)
+    }
+    groups.get(key)!.push(j)
+  }
+
+  const out: Judoka[] = []
+  for (const key of keyOrder) {
+    const group = groups.get(key)!
+    group.sort((a, b) => formatJudokaFullName(a).localeCompare(formatJudokaFullName(b), 'fr'))
+    out.push(...group)
+  }
+  return out
+}
+
+/** Judokas pesés : Garçons puis Filles, regroupés par poids identique. */
 export function sortWeighedForTriage(judokas: Judoka[]): { boys: Judoka[]; girls: Judoka[] } {
   const weighed = judokas.filter((j) => hasRecordedWeight(j.weightKg))
-  const byWeight = (a: Judoka, b: Judoka) => {
-    const wa = Number(a.weightKg) || 0
-    const wb = Number(b.weightKg) || 0
-    if (wa !== wb) return wa - wb
-    return formatJudokaFullName(a).localeCompare(formatJudokaFullName(b), 'fr')
-  }
-  const boys = weighed.filter((j) => j.sex !== 'F').sort(byWeight)
-  const girls = weighed.filter((j) => j.sex === 'F').sort(byWeight)
+  const boys = sortSectionByIdenticalWeight(weighed.filter((j) => j.sex !== 'F'))
+  const girls = sortSectionByIdenticalWeight(weighed.filter((j) => j.sex === 'F'))
   return { boys, girls }
 }
 
 /**
- * PDF triage : judokas pesés, sections Garçons / Filles, tri par poids.
+ * PDF triage : judokas pesés, sections Garçons / Filles, regroupés par poids identique.
  */
 export async function exportWeighedTriagePdfBytes(judokas: Judoka[]): Promise<Uint8Array> {
   const { boys, girls } = sortWeighedForTriage(judokas)
@@ -103,7 +131,7 @@ export async function exportWeighedTriagePdfBytes(judokas: Judoka[]): Promise<Ui
       color: navy
     })
     y -= TITLE_SIZE + 6
-    const meta = `Export du ${new Date().toLocaleString('fr-FR')} — ${boys.length + girls.length} pesé(s) · ${boys.length} garçon(s) · ${girls.length} fille(s) — trié par sexe puis poids`
+    const meta = `Export du ${new Date().toLocaleString('fr-FR')} — ${boys.length + girls.length} pesé(s) · ${boys.length} garçon(s) · ${girls.length} fille(s) — regroupés par poids identique (sexe puis kg)`
     page.drawText(truncate(font, meta, META_SIZE, pageW - MARGIN * 2), {
       x: MARGIN,
       y: y - META_SIZE,
