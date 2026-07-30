@@ -409,7 +409,11 @@ export function ServerDashboardPage({ onResetMode }: Props) {
       )}
 
       {clubsUser && (
-        <UserClubsModal username={clubsUser} onClose={() => setClubsUser(null)} />
+        <UserClubsModal
+          username={clubsUser}
+          onClose={() => setClubsUser(null)}
+          onTransferred={() => void fetchDashboard().then((data) => setStats(data.stats))}
+        />
       )}
 
       {weighedOpen && <WeighedJudokasModal onClose={() => setWeighedOpen(false)} />}

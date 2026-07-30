@@ -10,7 +10,7 @@ import { createDefaultBadgeTemplate } from '@shared/types/badge'
 import { createDefaultSettings } from '@shared/types/settings'
 import { computeAge, hasRecordedWeight, isSameJudokaIdentity, resolveJudokaCategory, setActiveCategoryAgeRanges } from '@shared/utils/judoka'
 import { setActiveRegisteredClubs } from '@shared/utils/clubs'
-import { formatCreatorLabel } from '@shared/utils/creator'
+import { formatCreatorLabel, matchesCreatorLabel, resolveCreatedByStorageValue } from '@shared/utils/creator'
 import { judokaFormSchema } from '@shared/validation/judoka'
 import { createId } from './create-id'
 import { supabase, type JudokaRow, type ProfileRow } from './supabase'
@@ -932,6 +932,65 @@ export const judovacClient = {
       }
     }
     return ok({ reassigned, deleted })
+  },
+
+  transferUserClubJudokas: async (opts: {
+    fromUsername: string
+    toUsername: string
+    clubName: string
+  }): Promise<
+    IpcResult<{ transferred: number; club: string; from: string; to: string }>
+  > => {
+    try {
+      const profile = await requireProfile()
+      if (profile.role !== 'admin') {
+        return fail('Réservé au compte Serveur.')
+      }
+
+      const fromLabel = formatCreatorLabel(opts.fromUsername)
+      const toLabel = formatCreatorLabel(opts.toUsername)
+      if (fromLabel === toLabel) {
+        return fail('L’utilisateur source et la destination doivent être différents.')
+      }
+
+      const targetClub = opts.clubName.trim() || 'Sans club'
+      const targetCreatedBy = resolveCreatedByStorageValue(opts.toUsername)
+
+      const { items: all } = await fetchAllJudokasForProfile()
+      const ids = all
+        .filter((j) => {
+          if (!matchesCreatorLabel(j.createdBy, fromLabel)) return false
+          const clubKey = j.club.trim() || 'Sans club'
+          return clubKey === targetClub
+        })
+        .map((j) => j.id)
+
+      if (ids.length === 0) {
+        return fail('Aucun judoka à transférer pour ce club.')
+      }
+
+      const { error } = await supabase
+        .from('judokas')
+        .update({ created_by: targetCreatedBy })
+        .in('id', ids)
+      if (error) return fail(error.message)
+
+      await logSystem(
+        'info',
+        'judoka.transfer-club',
+        `${ids.length} judoka(s) du club « ${targetClub} » transférés de ${fromLabel} vers ${toLabel}`,
+        profile.username
+      )
+
+      return ok({
+        transferred: ids.length,
+        club: targetClub,
+        from: fromLabel,
+        to: toLabel
+      })
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : 'Transfert du club impossible')
+    }
   },
 
   resetJudokas: async (opts: {
