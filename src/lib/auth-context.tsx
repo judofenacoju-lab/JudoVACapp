@@ -66,7 +66,7 @@ async function applyModeForProfile(profile: ProfileRow): Promise<void> {
   }
 }
 
-function applyProfile(p: ProfileRow | null, setProfile: (p: ProfileRow | null) => void): void {
+function applyProfile(p: ProfileRow, setProfile: (p: ProfileRow | null) => void): void {
   syncProfileCache(p)
   setProfile(p)
 }
@@ -75,7 +75,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<ProfileRow | null>(null)
   const [loading, setLoading] = useState(true)
+  const sessionRef = useRef<Session | null>(null)
   const profileRef = useRef<ProfileRow | null>(null)
+
+  useEffect(() => {
+    sessionRef.current = session
+  }, [session])
 
   useEffect(() => {
     profileRef.current = profile
@@ -108,15 +113,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .getSession()
       .then(async ({ data: { session: s } }) => {
         if (cancelled) return
-        setSession(s)
-        syncAccessToken(s?.access_token ?? null)
-        if (s?.user) {
-          try {
-            const p = await withTimeout(loadProfile(s.user.id), PROFILE_TIMEOUT_MS, 'Chargement du profil')
-            if (!cancelled && p) applyProfile(p, setProfile)
-          } catch (e) {
-            console.warn('[auth] profil:', e)
+
+        // Sur Mac, getSession peut arriver APRÈS signIn : ne jamais écraser une session active.
+        if (!s) {
+          if (!sessionRef.current) {
+            setSession(null)
+            syncAccessToken(null)
           }
+          if (!cancelled) setLoading(false)
+          return
+        }
+
+        if (
+          sessionRef.current &&
+          sessionRef.current.user?.id === s.user?.id &&
+          sessionRef.current.access_token
+        ) {
+          // Login déjà en place — juste s’assurer du token / profil
+          syncAccessToken(sessionRef.current.access_token)
+          if (!profileRef.current) {
+            try {
+              const p = await withTimeout(loadProfile(s.user.id), PROFILE_TIMEOUT_MS, 'Chargement du profil')
+              if (!cancelled && p) applyProfile(p, setProfile)
+            } catch (e) {
+              console.warn('[auth] profil:', e)
+            }
+          }
+          if (!cancelled) setLoading(false)
+          return
+        }
+
+        setSession(s)
+        syncAccessToken(s.access_token)
+        try {
+          const p = await withTimeout(loadProfile(s.user.id), PROFILE_TIMEOUT_MS, 'Chargement du profil')
+          if (!cancelled && p) applyProfile(p, setProfile)
+        } catch (e) {
+          console.warn('[auth] profil:', e)
         }
         if (!cancelled) setLoading(false)
       })
@@ -132,11 +165,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       data: { subscription }
     } = supabase.auth.onAuthStateChange((event, s) => {
       // Ne jamais await ici : Safari/Mac peut bloquer signInWithPassword.
-      if (event === 'SIGNED_OUT' || !s) {
+
+      // Uniquement une vraie déconnexion — ignorer les sessions null transitoires (refresh).
+      if (event === 'SIGNED_OUT') {
         clearAuthCache()
         setSession(null)
         setProfile(null)
+        sessionRef.current = null
         profileRef.current = null
+        return
+      }
+
+      if (!s?.user) {
+        console.warn('[auth] événement sans session ignoré:', event)
         return
       }
 
@@ -147,8 +188,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         return s
       })
+      sessionRef.current = s
 
-      // TOKEN_REFRESHED : garder le profil actuel, ne pas vider le cache (sinon stats vides)
       if (event === 'TOKEN_REFRESHED' && profileRef.current) {
         return
       }
@@ -163,7 +204,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               'Chargement du profil'
             )
             if (cancelled) return
-            // Ne jamais écraser un profil valide par null (cause du retour login sur Mac)
             if (!p) {
               console.warn('[auth] profil indisponible — conservation de l’état actuel')
               return
@@ -235,8 +275,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       if (!p.active) return { error: 'Compte désactivé — contactez un administrateur.' }
 
+      // Marquer avant setState pour gagner la course contre getSession() de boot
+      sessionRef.current = s
+      profileRef.current = p
       applyProfile(p, setProfile)
       setSession(s)
+      setLoading(false)
       void applyModeForProfile(p)
       return { role: p.role }
     } catch (e) {
@@ -255,6 +299,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setSession(null)
     setProfile(null)
+    sessionRef.current = null
     profileRef.current = null
     try {
       await window.judovac.clearMode()

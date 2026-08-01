@@ -16,11 +16,19 @@ export const isSupabaseConfigured = Boolean(
 )
 
 /**
- * Contourne navigator.locks — sur Safari/Mac un verrou orphelin bloque
- * signInWithPassword / getSession indéfiniment (spinner login).
+ * Mutex process-local : sérialise les ops auth sans navigator.locks
+ * (Safari/Mac laisse des locks orphelins qui bloquent le login).
  */
-const authLock = async <R>(_name: string, _acquireTimeout: number, fn: () => Promise<R>): Promise<R> =>
-  fn()
+let authLockChain: Promise<unknown> = Promise.resolve()
+
+const authLock = async <R>(_name: string, _acquireTimeout: number, fn: () => Promise<R>): Promise<R> => {
+  const run = authLockChain.then(() => fn(), () => fn())
+  authLockChain = run.then(
+    () => undefined,
+    () => undefined
+  )
+  return run
+}
 
 /** Client unique — null si les variables Vercel / .env sont absentes. */
 export const supabase: SupabaseClient = isSupabaseConfigured
@@ -29,6 +37,7 @@ export const supabase: SupabaseClient = isSupabaseConfigured
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
+        storageKey: 'judovac-auth',
         lock: authLock
       }
     })

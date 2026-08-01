@@ -52,7 +52,6 @@ export default function App() {
   // Sync mode — effet séparé, ne bloque pas l'UI
   useEffect(() => {
     if (loading) return
-    // Ne pas clearMode tant qu’une session existe sans profil (hydratation en cours)
     if (session && !profile) return
 
     const cfg = session && profile?.active ? buildModeConfig() : null
@@ -61,7 +60,7 @@ export default function App() {
       : 'none'
     if (key === modeKeyRef.current) return
     modeKeyRef.current = key
-    setMode(cfg)
+    if (cfg) setMode(cfg)
 
     void (async () => {
       try {
@@ -76,7 +75,9 @@ export default function App() {
   if (!isSupabaseConfigured) return <ConfigErrorPage />
   if (loading || !bootReady) return <LoadingScreen />
 
-  const effectiveMode = mode ?? (session && profile?.active ? buildModeConfig() : null)
+  // Toujours dériver du profil actif — ne pas dépendre d’un mode state qui peut être null
+  const effectiveMode =
+    (session && profile?.active ? buildModeConfig() : null) ?? mode
 
   return (
     <div className="min-h-screen w-full">
@@ -95,9 +96,9 @@ export default function App() {
           path="/dashboard"
           element={
             <ProtectedRoute requiredRole="admin">
-              {effectiveMode?.mode === 'server' ? (
+              {profile?.role === 'admin' && effectiveMode ? (
                 <ServerDashboardPage
-                  mode={effectiveMode}
+                  mode={effectiveMode.mode === 'server' ? effectiveMode : { mode: 'server', configuredAt: new Date().toISOString() }}
                   onResetMode={async () => {
                     await signOut()
                     modeKeyRef.current = ''
@@ -105,7 +106,7 @@ export default function App() {
                   }}
                 />
               ) : (
-                <Navigate to="/login" replace />
+                <Navigate to="/app" replace />
               )}
             </ProtectedRoute>
           }
@@ -114,7 +115,9 @@ export default function App() {
           path="/app"
           element={
             <ProtectedRoute>
-              {effectiveMode?.mode === 'client' ? (
+              {profile?.role === 'admin' ? (
+                <Navigate to="/dashboard" replace />
+              ) : effectiveMode?.mode === 'client' ? (
                 <ClientDashboardPage
                   mode={effectiveMode}
                   onResetMode={async () => {
@@ -123,10 +126,8 @@ export default function App() {
                     setMode(null)
                   }}
                 />
-              ) : profile?.role === 'admin' ? (
-                <Navigate to="/dashboard" replace />
               ) : (
-                <Navigate to="/login" replace />
+                <LoadingScreen />
               )}
             </ProtectedRoute>
           }
@@ -136,9 +137,9 @@ export default function App() {
           element={
             <Navigate
               to={
-                !session
+                !session || !profile?.active
                   ? '/login'
-                  : profile?.role === 'admin'
+                  : profile.role === 'admin'
                     ? '/dashboard'
                     : '/app'
               }

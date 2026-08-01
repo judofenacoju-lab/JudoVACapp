@@ -89,19 +89,18 @@ export function syncProfileCache(profile: ProfileRow | null): void {
 async function getAccessToken(): Promise<string | null> {
   if (cachedAccessToken) return cachedAccessToken
 
-  const { data: { session } } = await supabase.auth.getSession()
-  if (session?.access_token) {
-    cachedAccessToken = session.access_token
-    return cachedAccessToken
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session?.access_token) {
+      cachedAccessToken = session.access_token
+      return cachedAccessToken
+    }
+  } catch (e) {
+    console.warn('[judovac] getAccessToken:', e)
   }
 
-  const { data: { session: refreshed } } = await supabase.auth.refreshSession()
-  if (refreshed?.access_token) {
-    cachedAccessToken = refreshed.access_token
-    return cachedAccessToken
-  }
-
-  return null
+  // Pas de refreshSession à froid : sur Safari/Mac cela peut déclencher SIGNED_OUT
+  return cachedAccessToken
 }
 
 async function requireProfile(): Promise<ProfileRow> {
