@@ -42,6 +42,8 @@ const TITLES: Record<ServerNavId, string> = {
 async function fetchDashboard(): Promise<{
   stats: DashboardStats | null
   status: ServerStatus | null
+  statsOk: boolean
+  statusOk: boolean
 }> {
   const [s, st] = await Promise.all([
     window.judovac.getDashboardStats(),
@@ -49,7 +51,9 @@ async function fetchDashboard(): Promise<{
   ])
   return {
     stats: s.ok ? s.data : null,
-    status: st.ok ? st.data : null
+    status: st.ok ? st.data : null,
+    statsOk: s.ok,
+    statusOk: st.ok
   }
 }
 
@@ -97,14 +101,30 @@ export function ServerDashboardPage({ onResetMode }: Props) {
       try {
         const data = await fetchDashboard()
         if (!alive) return
-        setStats(data.stats)
-        setStatus(data.status)
+        // Ne jamais écraser de bonnes stats par un échec transitoire (JWT flash Mac → tout à 0)
+        if (data.statsOk && data.stats) {
+          setStats((prev) => {
+            if (
+              prev &&
+              prev.totalJudokas > 0 &&
+              data.stats!.totalJudokas === 0
+            ) {
+              // Requête « vide » suspecte : garder l’affichage précédent, retenter au prochain tick
+              console.warn('[dashboard] stats vides ignorées (conservation des compteurs)')
+              return prev
+            }
+            return data.stats
+          })
+        }
+        if (data.statusOk && data.status) {
+          setStatus(data.status)
+        }
       } catch (e) {
         console.warn('[dashboard] refresh:', e)
       }
     }
     void tick()
-    const id = setInterval(() => void tick(), 1000)
+    const id = setInterval(() => void tick(), 3000)
     return () => {
       alive = false
       clearInterval(id)

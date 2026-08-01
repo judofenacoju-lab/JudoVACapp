@@ -22,6 +22,7 @@ import {
   templateFromRow,
   logRowToEntry
 } from './mappers'
+import { readDurableSession, saveDurableSession } from './durable-session'
 
 export type IpcResult<T> =
   | { ok: true; data: T }
@@ -52,18 +53,81 @@ async function getProfile(): Promise<ProfileRow | null> {
   if (session?.access_token) cachedAccessToken = session.access_token
 
   if (!userId) {
-    const { data: { user } } = await supabase.auth.getUser()
-    userId = user?.id ?? null
+    const restored = await ensureSupabaseSession()
+    if (restored) {
+      const { data: { session: s2 } } = await supabase.auth.getSession()
+      userId = s2?.user?.id ?? null
+      if (s2?.access_token) cachedAccessToken = s2.access_token
+    }
   }
+
+  if (!userId && cachedProfile) return cachedProfile
   if (!userId) return null
 
   const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single()
   if (error) {
     console.warn('[judovac] getProfile:', error.message)
-    return null
+    return cachedProfile
   }
   cachedProfile = data as ProfileRow | null
   return cachedProfile
+}
+
+/**
+ * Réinjecte le JWT Supabase depuis la session durable si le client l’a perdu
+ * (fréquent sur Chrome Mac → requêtes RLS vides → compteurs à 0).
+ */
+async function ensureSupabaseSession(): Promise<boolean> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session?.access_token) {
+      cachedAccessToken = session.access_token
+      return true
+    }
+
+    const durable = readDurableSession()
+    if (!durable?.refreshToken) return Boolean(cachedAccessToken)
+
+    const { data, error } = await supabase.auth.setSession({
+      access_token: durable.accessToken,
+      refresh_token: durable.refreshToken
+    })
+
+    if (!error && data.session?.access_token) {
+      cachedAccessToken = data.session.access_token
+      syncProfileCache(durable.profile)
+      if (data.session.refresh_token) {
+        saveDurableSession(
+          data.session.access_token,
+          data.session.refresh_token,
+          durable.profile
+        )
+      }
+      return true
+    }
+
+    const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession({
+      refresh_token: durable.refreshToken
+    })
+    if (!refreshErr && refreshed.session?.access_token) {
+      cachedAccessToken = refreshed.session.access_token
+      syncProfileCache(durable.profile)
+      if (refreshed.session.refresh_token) {
+        saveDurableSession(
+          refreshed.session.access_token,
+          refreshed.session.refresh_token,
+          durable.profile
+        )
+      }
+      return true
+    }
+
+    console.warn('[judovac] ensureSession:', error?.message ?? refreshErr?.message)
+    return Boolean(cachedAccessToken)
+  } catch (e) {
+    console.warn('[judovac] ensureSession:', e)
+    return Boolean(cachedAccessToken)
+  }
 }
 
 /** Vide uniquement le profil en mémoire (conserve le token d’accès). */
@@ -90,6 +154,7 @@ async function getAccessToken(): Promise<string | null> {
   if (cachedAccessToken) return cachedAccessToken
 
   try {
+    await ensureSupabaseSession()
     const { data: { session } } = await supabase.auth.getSession()
     if (session?.access_token) {
       cachedAccessToken = session.access_token
@@ -99,13 +164,20 @@ async function getAccessToken(): Promise<string | null> {
     console.warn('[judovac] getAccessToken:', e)
   }
 
-  // Pas de refreshSession à froid : sur Safari/Mac cela peut déclencher SIGNED_OUT
   return cachedAccessToken
 }
 
 async function requireProfile(): Promise<ProfileRow> {
+  await ensureSupabaseSession()
   const p = await getProfile()
-  if (!p?.active) throw new Error('Session invalide ou compte désactivé')
+  if (!p?.active) {
+    const durable = readDurableSession()
+    if (durable?.profile?.active) {
+      syncProfileCache(durable.profile)
+      return durable.profile
+    }
+    throw new Error('Session invalide ou compte désactivé')
+  }
   return p
 }
 
@@ -390,6 +462,9 @@ async function fetchOnlineClients(): Promise<
 async function fetchAllJudokasForDashboard(): Promise<
   Array<{ created_by: string; sex: string; weight_kg: unknown }>
 > {
+  const authed = await ensureSupabaseSession()
+  if (!authed) throw new Error('Session absente — reconnexion du jeton en cours')
+
   const pageSize = 1000
   const rows: Array<{ created_by: string; sex: string; weight_kg: unknown }> = []
   let offset = 0
@@ -399,7 +474,29 @@ async function fetchAllJudokasForDashboard(): Promise<
       .select('created_by, sex, weight_kg')
       .order('created_at', { ascending: true })
       .range(offset, offset + pageSize - 1)
-    if (error) throw new Error(error.message)
+    if (error) {
+      // JWT perdu mid-flight → restaurer et retenter une fois
+      const msg = error.message.toLowerCase()
+      if (msg.includes('jwt') || msg.includes('session') || error.code === 'PGRST301') {
+        const ok = await ensureSupabaseSession()
+        if (ok && offset === 0) {
+          const retry = await supabase
+            .from('judokas')
+            .select('created_by, sex, weight_kg')
+            .order('created_at', { ascending: true })
+            .range(0, pageSize - 1)
+          if (retry.error) throw new Error(retry.error.message)
+          const batch = retry.data ?? []
+          for (const row of batch) {
+            rows.push(row as { created_by: string; sex: string; weight_kg: unknown })
+          }
+          if (batch.length < pageSize) return rows
+          offset = pageSize
+          continue
+        }
+      }
+      throw new Error(error.message)
+    }
     const batch = data ?? []
     for (const row of batch) {
       rows.push(row as { created_by: string; sex: string; weight_kg: unknown })
@@ -407,6 +504,15 @@ async function fetchAllJudokasForDashboard(): Promise<
     if (batch.length < pageSize) break
     offset += pageSize
   }
+
+  // Résultat vide sans session = échec auth, pas une base vraiment vide
+  if (rows.length === 0) {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session?.access_token) {
+      throw new Error('Session absente pendant le chargement des judokas')
+    }
+  }
+
   return rows
 }
 

@@ -44,7 +44,12 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
         window.judovac.getClientStatus(),
         window.judovac.getRegisteredCount()
       ])
-      if (s.ok) setStats(s.data)
+      if (s.ok) {
+        setStats((prev) => {
+          if (prev && prev.totalJudokas > 0 && s.data.totalJudokas === 0) return prev
+          return s.data
+        })
+      }
       if (st.ok) setStatus(st.data)
       if (reg.ok) {
         setRegisteredCount(reg.data.count)
@@ -97,7 +102,12 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
         window.judovac.getRegisteredCount()
       ])
       if (!alive) return
-      if (s.ok) setStats(s.data)
+      if (s.ok) {
+        setStats((prev) => {
+          if (prev && prev.totalJudokas > 0 && s.data.totalJudokas === 0) return prev
+          return s.data
+        })
+      }
       if (st.ok) setStatus(st.data)
       if (reg.ok) setRegisteredCount(reg.data.count)
     }
