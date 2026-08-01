@@ -23,7 +23,7 @@ interface AuthState {
   session: Session | null
   profile: ProfileRow | null
   loading: boolean
-  /** true quand un JWT Supabase utilisable est en place (requis pour les vraies données). */
+  /** true quand un JWT Supabase utilisable est en place. */
   sessionReady: boolean
   signIn: (email: string, password: string) => Promise<SignInResult>
   signOut: () => Promise<void>
@@ -32,8 +32,9 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null)
 
-const PROFILE_TIMEOUT_MS = 12_000
+const PROFILE_TIMEOUT_MS = 10_000
 const SIGN_IN_TIMEOUT_MS = 20_000
+const RESTORE_TIMEOUT_MS = 8_000
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -73,24 +74,13 @@ async function applyModeForProfile(profile: ProfileRow): Promise<void> {
   }
 }
 
-function initialDurableProfile(): ProfileRow | null {
-  const d = readDurableSession()
-  if (d?.profile?.active) {
-    syncProfileCache(d.profile)
-    syncAccessToken(d.accessToken)
-    return d.profile
-  }
-  return null
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const initialProfile = initialDurableProfile()
   const [session, setSession] = useState<Session | null>(null)
-  const [profile, setProfile] = useState<ProfileRow | null>(initialProfile)
+  const [profile, setProfile] = useState<ProfileRow | null>(null)
   const [loading, setLoading] = useState(true)
   const [sessionReady, setSessionReady] = useState(false)
   const sessionRef = useRef<Session | null>(null)
-  const profileRef = useRef<ProfileRow | null>(initialProfile)
+  const profileRef = useRef<ProfileRow | null>(null)
   const userSigningOutRef = useRef(false)
 
   useEffect(() => {
@@ -114,6 +104,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSessionReady(true)
   }
 
+  function clearUiAuth(): void {
+    clearAuthCache()
+    setSession(null)
+    setProfile(null)
+    setSessionReady(false)
+    sessionRef.current = null
+    profileRef.current = null
+  }
+
   async function loadProfile(userId: string): Promise<ProfileRow | null> {
     const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single()
     if (error) {
@@ -123,23 +122,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return data as ProfileRow | null
   }
 
-  /**
-   * Restaure un JWT utilisable après F5 / reload Mac.
-   * refresh_token d'abord (access_token souvent expiré au reload).
-   */
+  /** Restaure un JWT après F5 — avec timeouts pour ne jamais bloquer le splash. */
   async function restoreFromDurable(): Promise<boolean> {
     const durable = readDurableSession()
     if (!durable?.refreshToken || !durable.profile?.active) return false
 
-    syncProfileCache(durable.profile)
-    profileRef.current = durable.profile
-    setProfile(durable.profile)
-
-    // 1) Refresh — plus fiable après rechargement de page
+    // 1) refresh_token (access souvent expiré au reload)
     try {
-      const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession({
-        refresh_token: durable.refreshToken
-      })
+      const { data: refreshed, error: refreshErr } = await withTimeout(
+        supabase.auth.refreshSession({ refresh_token: durable.refreshToken }),
+        RESTORE_TIMEOUT_MS,
+        'Restauration session'
+      )
       if (!refreshErr && refreshed.session?.access_token) {
         commitAuth(refreshed.session, durable.profile)
         return true
@@ -149,12 +143,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.warn('[auth] refresh restore:', e)
     }
 
-    // 2) setSession avec les tokens stockés
+    // 2) setSession
     try {
-      const { data, error } = await supabase.auth.setSession({
-        access_token: durable.accessToken,
-        refresh_token: durable.refreshToken
-      })
+      const { data, error } = await withTimeout(
+        supabase.auth.setSession({
+          access_token: durable.accessToken,
+          refresh_token: durable.refreshToken
+        }),
+        RESTORE_TIMEOUT_MS,
+        'setSession'
+      )
       if (!error && data.session?.access_token) {
         commitAuth(data.session, durable.profile)
         return true
@@ -164,8 +162,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.warn('[auth] setSession restore:', e)
     }
 
-    // Sans JWT valide on ne peut pas charger les vraies données
-    setSessionReady(false)
     return false
   }
 
@@ -178,14 +174,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     const timeout = window.setTimeout(() => {
       if (!cancelled) {
-        console.warn('[auth] Timeout session — affichage login')
+        console.warn('[auth] Timeout boot — sortie du chargement')
+        // Ne jamais rester bloqué : si pas de JWT, renvoyer au login
+        if (!sessionRef.current) {
+          clearUiAuth()
+        }
         setLoading(false)
       }
-    }, 12000)
+    }, 10000)
 
     void (async () => {
       try {
-        // Toujours tenter durable en premier au reload Mac (getSession peut renvoyer null)
+        // 1) Session native Supabase (localStorage sb-*)
+        let s: Session | null = null
+        try {
+          const res = await withTimeout(supabase.auth.getSession(), RESTORE_TIMEOUT_MS, 'getSession')
+          s = res.data.session
+        } catch (e) {
+          console.warn('[auth] getSession boot:', e)
+        }
+        if (cancelled) return
+
+        if (s?.user) {
+          syncAccessToken(s.access_token)
+          let p =
+            profileRef.current?.id === s.user.id
+              ? profileRef.current
+              : await withTimeout(loadProfile(s.user.id), PROFILE_TIMEOUT_MS, 'Chargement du profil').catch(
+                  () => null
+                )
+          if (!p) {
+            const durable = readDurableSession()
+            if (durable?.profile?.id === s.user.id && durable.profile.active) {
+              p = durable.profile
+            }
+          }
+          if (cancelled) return
+          if (p?.active) {
+            commitAuth(s, p)
+            setLoading(false)
+            return
+          }
+        }
+
+        // 2) Session durable (refresh)
         const durableOk = await restoreFromDurable()
         if (cancelled) return
         if (durableOk) {
@@ -193,39 +225,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return
         }
 
-        const { data: { session: s } } = await supabase.auth.getSession()
-        if (cancelled) return
-
-        if (sessionRef.current?.access_token && profileRef.current) {
-          setSessionReady(true)
-          setLoading(false)
-          return
-        }
-
-        if (s?.user) {
-          syncAccessToken(s.access_token)
-          let p = profileRef.current
-          if (!p || p.id !== s.user.id) {
-            p = await withTimeout(loadProfile(s.user.id), PROFILE_TIMEOUT_MS, 'Chargement du profil')
-          }
-          if (cancelled) return
-          if (p?.active) {
-            commitAuth(s, p)
-          } else {
-            setSession(null)
-            setProfile(null)
-            setSessionReady(false)
-          }
-        } else {
-          setSession(null)
-          if (!profileRef.current) setProfile(null)
-          setSessionReady(false)
-        }
+        // Échec → login (pas d’écran de chargement infini)
+        clearUiAuth()
       } catch (e) {
         console.warn('[auth] boot:', e)
-        if (!sessionRef.current) {
-          await restoreFromDurable()
-        }
+        if (!sessionRef.current) clearUiAuth()
       } finally {
         window.clearTimeout(timeout)
         if (!cancelled) setLoading(false)
@@ -234,66 +238,76 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const {
       data: { subscription }
-    } = supabase.auth.onAuthStateChange((event, s) => {
+    } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (event === 'SIGNED_OUT') {
         if (!userSigningOutRef.current) {
-          console.warn('[auth] SIGNED_OUT parasite ignoré — restauration session')
+          console.warn('[auth] SIGNED_OUT parasite ignoré — restauration')
           void (async () => {
             const ok = await restoreFromDurable()
             if (!ok) {
               const { data } = await supabase.auth.getSession()
-              if (data.session?.user && profileRef.current) {
-                commitAuth(data.session, profileRef.current)
+              if (data.session?.user) {
+                const durable = readDurableSession()
+                const p = profileRef.current ?? durable?.profile ?? null
+                if (p?.active) commitAuth(data.session, p)
               }
             }
           })()
           return
         }
-        clearAuthCache()
         clearDurableSession()
-        setSession(null)
-        setProfile(null)
-        setSessionReady(false)
-        sessionRef.current = null
-        profileRef.current = null
+        clearUiAuth()
         return
       }
 
-      if (!s?.user) return
+      if (!nextSession?.user) return
 
-      syncAccessToken(s.access_token)
+      syncAccessToken(nextSession.access_token)
       setSession((prev) => {
-        if (prev?.access_token === s.access_token && prev?.user?.id === s.user?.id) return prev
-        return s
+        if (
+          prev?.access_token === nextSession.access_token &&
+          prev?.user?.id === nextSession.user?.id
+        ) {
+          return prev
+        }
+        return nextSession
       })
-      sessionRef.current = s
+      sessionRef.current = nextSession
       setSessionReady(true)
 
       if (event === 'TOKEN_REFRESHED') {
-        if (profileRef.current && s.refresh_token) {
-          saveDurableSession(s.access_token, s.refresh_token, profileRef.current)
+        if (profileRef.current && nextSession.refresh_token) {
+          saveDurableSession(
+            nextSession.access_token,
+            nextSession.refresh_token,
+            profileRef.current
+          )
         }
         return
       }
 
       window.setTimeout(() => {
-        if (cancelled || !s.user) return
+        if (cancelled || !nextSession.user) return
         void (async () => {
           try {
-            if (profileRef.current?.id === s.user!.id) {
+            if (profileRef.current?.id === nextSession.user!.id) {
               syncProfileCache(profileRef.current)
-              if (s.refresh_token) {
-                saveDurableSession(s.access_token, s.refresh_token, profileRef.current)
+              if (nextSession.refresh_token) {
+                saveDurableSession(
+                  nextSession.access_token,
+                  nextSession.refresh_token,
+                  profileRef.current
+                )
               }
               return
             }
             const p = await withTimeout(
-              loadProfile(s.user!.id),
+              loadProfile(nextSession.user!.id),
               PROFILE_TIMEOUT_MS,
               'Chargement du profil'
             )
             if (cancelled || !p) return
-            commitAuth(s, p)
+            commitAuth(nextSession, p)
           } catch (e) {
             console.warn('[auth] onAuthStateChange profil:', e)
           }
@@ -306,7 +320,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.clearTimeout(timeout)
       subscription.unsubscribe()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- boot once
   }, [])
 
   async function signIn(email: string, password: string): Promise<SignInResult> {
@@ -366,18 +379,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signOut() {
     userSigningOutRef.current = true
-    clearAuthCache()
     clearDurableSession()
+    clearUiAuth()
     try {
       await withTimeout(supabase.auth.signOut(), 10_000, 'Déconnexion')
     } catch (e) {
       console.warn('[auth] signOut:', e)
     }
-    setSession(null)
-    setProfile(null)
-    setSessionReady(false)
-    sessionRef.current = null
-    profileRef.current = null
     try {
       await window.judovac.clearMode()
     } catch (e) {

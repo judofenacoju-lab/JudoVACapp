@@ -17,11 +17,23 @@ function ProtectedRoute({
   requiredRole?: 'admin' | 'operator'
 }) {
   const { profile, loading, sessionReady } = useAuth()
+  const [restoreWaitDone, setRestoreWaitDone] = useState(false)
+
+  // Filet anti-blocage Mac : max 6 s sur « Chargement… » après F5
+  useEffect(() => {
+    if (loading || sessionReady || !profile?.active) {
+      setRestoreWaitDone(false)
+      return
+    }
+    const t = window.setTimeout(() => setRestoreWaitDone(true), 6000)
+    return () => window.clearTimeout(t)
+  }, [loading, sessionReady, profile?.active])
 
   if (loading) return <LoadingScreen />
   if (!profile?.active) return <Navigate to="/login" replace />
-  // Attendre un JWT utilisable avant d’afficher le dashboard (sinon stats à 0 après F5 Mac)
-  if (!sessionReady) return <LoadingScreen />
+  if (!sessionReady && !restoreWaitDone) return <LoadingScreen />
+  // Session JWT non récupérée → login plutôt qu’écran de chargement infini
+  if (!sessionReady && restoreWaitDone) return <Navigate to="/login" replace />
   if (requiredRole && profile.role !== requiredRole && requiredRole === 'admin') {
     return <Navigate to="/app" replace />
   }
