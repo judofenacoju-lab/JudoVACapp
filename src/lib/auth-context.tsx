@@ -5,11 +5,13 @@ import { isSupabaseConfigured, supabase, type ProfileRow } from './supabase'
 import {
   clearAuthCache,
   clearProfileCache,
+  ensureSupabaseSession,
   syncAccessToken,
   syncProfileCache
 } from './judovac-client'
 import {
   clearDurableSession,
+  isAccessTokenExpired,
   readDurableSession,
   saveDurableSession
 } from './durable-session'
@@ -23,7 +25,6 @@ interface AuthState {
   session: Session | null
   profile: ProfileRow | null
   loading: boolean
-  /** true quand un JWT Supabase utilisable est en place. */
   sessionReady: boolean
   signIn: (email: string, password: string) => Promise<SignInResult>
   signOut: () => Promise<void>
@@ -122,12 +123,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return data as ProfileRow | null
   }
 
-  /** Restaure un JWT après F5 — avec timeouts pour ne jamais bloquer le splash. */
+  /** S’assure d’un access_token non expiré (Mac). */
+  async function ensureFreshSession(s: Session): Promise<Session> {
+    if (!isAccessTokenExpired(s.access_token)) return s
+    const { data, error } = await withTimeout(
+      supabase.auth.refreshSession({ refresh_token: s.refresh_token }),
+      RESTORE_TIMEOUT_MS,
+      'Refresh session'
+    )
+    if (!error && data.session) return data.session
+    const ok = await ensureSupabaseSession()
+    if (ok) {
+      const { data: again } = await supabase.auth.getSession()
+      if (again.session) return again.session
+    }
+    return s
+  }
+
   async function restoreFromDurable(): Promise<boolean> {
     const durable = readDurableSession()
     if (!durable?.refreshToken || !durable.profile?.active) return false
 
-    // 1) refresh_token (access souvent expiré au reload)
     try {
       const { data: refreshed, error: refreshErr } = await withTimeout(
         supabase.auth.refreshSession({ refresh_token: durable.refreshToken }),
@@ -143,23 +159,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.warn('[auth] refresh restore:', e)
     }
 
-    // 2) setSession
     try {
-      const { data, error } = await withTimeout(
-        supabase.auth.setSession({
-          access_token: durable.accessToken,
-          refresh_token: durable.refreshToken
-        }),
-        RESTORE_TIMEOUT_MS,
-        'setSession'
-      )
-      if (!error && data.session?.access_token) {
-        commitAuth(data.session, durable.profile)
-        return true
+      const ok = await withTimeout(ensureSupabaseSession(), RESTORE_TIMEOUT_MS, 'ensureSession')
+      if (ok) {
+        const { data } = await supabase.auth.getSession()
+        if (data.session?.user) {
+          commitAuth(data.session, durable.profile)
+          return true
+        }
       }
-      console.warn('[auth] setSession restore:', error?.message)
     } catch (e) {
-      console.warn('[auth] setSession restore:', e)
+      console.warn('[auth] ensure restore:', e)
     }
 
     return false
@@ -174,18 +184,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     const timeout = window.setTimeout(() => {
       if (!cancelled) {
-        console.warn('[auth] Timeout boot — sortie du chargement')
-        // Ne jamais rester bloqué : si pas de JWT, renvoyer au login
-        if (!sessionRef.current) {
-          clearUiAuth()
-        }
+        console.warn('[auth] Timeout boot')
+        if (!sessionRef.current) clearUiAuth()
         setLoading(false)
       }
     }, 10000)
 
     void (async () => {
       try {
-        // 1) Session native Supabase (localStorage sb-*)
         let s: Session | null = null
         try {
           const res = await withTimeout(supabase.auth.getSession(), RESTORE_TIMEOUT_MS, 'getSession')
@@ -196,6 +202,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (cancelled) return
 
         if (s?.user) {
+          s = await ensureFreshSession(s)
+          if (cancelled) return
           syncAccessToken(s.access_token)
           let p =
             profileRef.current?.id === s.user.id
@@ -205,9 +213,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 )
           if (!p) {
             const durable = readDurableSession()
-            if (durable?.profile?.id === s.user.id && durable.profile.active) {
-              p = durable.profile
-            }
+            if (durable?.profile?.id === s.user.id && durable.profile.active) p = durable.profile
           }
           if (cancelled) return
           if (p?.active) {
@@ -217,7 +223,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         }
 
-        // 2) Session durable (refresh)
         const durableOk = await restoreFromDurable()
         if (cancelled) return
         if (durableOk) {
@@ -225,7 +230,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return
         }
 
-        // Échec → login (pas d’écran de chargement infini)
         clearUiAuth()
       } catch (e) {
         console.warn('[auth] boot:', e)
@@ -241,18 +245,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (event === 'SIGNED_OUT') {
         if (!userSigningOutRef.current) {
-          console.warn('[auth] SIGNED_OUT parasite ignoré — restauration')
-          void (async () => {
-            const ok = await restoreFromDurable()
-            if (!ok) {
-              const { data } = await supabase.auth.getSession()
-              if (data.session?.user) {
-                const durable = readDurableSession()
-                const p = profileRef.current ?? durable?.profile ?? null
-                if (p?.active) commitAuth(data.session, p)
-              }
-            }
-          })()
+          console.warn('[auth] SIGNED_OUT parasite — restauration')
+          void restoreFromDurable()
           return
         }
         clearDurableSession()
@@ -315,9 +309,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }, 0)
     })
 
+    // Keep-alive Mac : refresh JWT au focus / toutes les 3 min
+    const keepAlive = () => {
+      if (userSigningOutRef.current) return
+      void ensureSupabaseSession()
+    }
+    const onVis = () => {
+      if (document.visibilityState === 'visible') keepAlive()
+    }
+    window.addEventListener('focus', keepAlive)
+    document.addEventListener('visibilitychange', onVis)
+    const keepAliveId = window.setInterval(keepAlive, 180_000)
+
     return () => {
       cancelled = true
       window.clearTimeout(timeout)
+      window.clearInterval(keepAliveId)
+      window.removeEventListener('focus', keepAlive)
+      document.removeEventListener('visibilitychange', onVis)
       subscription.unsubscribe()
     }
   }, [])

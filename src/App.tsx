@@ -16,24 +16,11 @@ function ProtectedRoute({
   children: ReactNode
   requiredRole?: 'admin' | 'operator'
 }) {
-  const { profile, loading, sessionReady } = useAuth()
-  const [restoreWaitDone, setRestoreWaitDone] = useState(false)
+  const { profile, loading } = useAuth()
 
-  // Filet anti-blocage Mac : max 6 s sur « Chargement… » après F5
-  useEffect(() => {
-    if (loading || sessionReady || !profile?.active) {
-      setRestoreWaitDone(false)
-      return
-    }
-    const t = window.setTimeout(() => setRestoreWaitDone(true), 6000)
-    return () => window.clearTimeout(t)
-  }, [loading, sessionReady, profile?.active])
-
+  // Comme sur Windows : pas de gate sessionReady (évite écran Chargement bloqué sur Mac)
   if (loading) return <LoadingScreen />
   if (!profile?.active) return <Navigate to="/login" replace />
-  if (!sessionReady && !restoreWaitDone) return <LoadingScreen />
-  // Session JWT non récupérée → login plutôt qu’écran de chargement infini
-  if (!sessionReady && restoreWaitDone) return <Navigate to="/login" replace />
   if (requiredRole && profile.role !== requiredRole && requiredRole === 'admin') {
     return <Navigate to="/app" replace />
   }

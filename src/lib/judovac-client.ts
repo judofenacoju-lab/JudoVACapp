@@ -22,7 +22,7 @@ import {
   templateFromRow,
   logRowToEntry
 } from './mappers'
-import { readDurableSession, saveDurableSession } from './durable-session'
+import { readDurableSession, saveDurableSession, isAccessTokenExpired } from './durable-session'
 import { downloadBlob, downloadBytes } from './download-blob'
 
 export type IpcResult<T> =
@@ -44,26 +44,12 @@ let cachedProfile: ProfileRow | null = null
 let cachedMode: ModeConfig | null = null
 let cachedAccessToken: string | null = null
 let pendingBackupJson: Record<string, unknown> | null = null
-
-/** true si le JWT est absent ou expiré (avec marge 60 s). */
-function isAccessTokenExpired(token: string | null | undefined): boolean {
-  if (!token) return true
-  try {
-    const part = token.split('.')[1]
-    if (!part) return true
-    const json = atob(part.replace(/-/g, '+').replace(/_/g, '/'))
-    const payload = JSON.parse(json) as { exp?: number }
-    if (typeof payload.exp !== 'number') return true
-    return payload.exp * 1000 <= Date.now() + 60_000
-  } catch {
-    return true
-  }
-}
+/** Évite les refresh concurrents (Mac ouvre souvent plusieurs requêtes en parallèle). */
+let ensureSessionInFlight: Promise<boolean> | null = null
 
 async function getProfile(): Promise<ProfileRow | null> {
   if (cachedProfile) return cachedProfile
 
-  // getSession() lit le stockage local — plus fiable que getUser() sur Safari/Mac
   const { data: { session } } = await supabase.auth.getSession()
   let userId = session?.user?.id ?? null
   if (session?.access_token && !isAccessTokenExpired(session.access_token)) {
@@ -92,61 +78,60 @@ async function getProfile(): Promise<ProfileRow | null> {
 }
 
 /**
- * Réinjecte le JWT Supabase depuis la session durable si le client l’a perdu
- * ou si le access_token est expiré (fréquent sur Chrome Mac → listes vides).
+ * Garantit un JWT valide avant toute requête (listes, modals, stats).
+ * Critique sur Mac : getSession peut renvoyer un access_token déjà expiré.
  */
-async function ensureSupabaseSession(): Promise<boolean> {
-  try {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (session?.access_token && !isAccessTokenExpired(session.access_token)) {
-      cachedAccessToken = session.access_token
-      return true
-    }
-
-    const durable = readDurableSession()
-    const refreshToken = session?.refresh_token ?? durable?.refreshToken
-    if (!refreshToken) {
-      if (cachedAccessToken && !isAccessTokenExpired(cachedAccessToken)) return true
-      return false
-    }
-
-    const profileForCache = durable?.profile ?? cachedProfile
-
-    const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession({
-      refresh_token: refreshToken
-    })
-    if (!refreshErr && refreshed.session?.access_token) {
-      cachedAccessToken = refreshed.session.access_token
-      if (profileForCache) syncProfileCache(profileForCache)
-      if (refreshed.session.refresh_token && profileForCache) {
-        saveDurableSession(
-          refreshed.session.access_token,
-          refreshed.session.refresh_token,
-          profileForCache
-        )
+export async function ensureSupabaseSession(): Promise<boolean> {
+  if (ensureSessionInFlight) return ensureSessionInFlight
+  ensureSessionInFlight = (async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.access_token && !isAccessTokenExpired(session.access_token)) {
+        cachedAccessToken = session.access_token
+        return true
       }
-      return true
-    }
 
-    if (durable?.accessToken && durable.refreshToken) {
-      const { data, error } = await supabase.auth.setSession({
-        access_token: durable.accessToken,
-        refresh_token: durable.refreshToken
+      const durable = readDurableSession()
+      const refreshToken = session?.refresh_token ?? durable?.refreshToken
+      if (!refreshToken) {
+        return Boolean(cachedAccessToken && !isAccessTokenExpired(cachedAccessToken))
+      }
+
+      const profileForCache = durable?.profile ?? cachedProfile
+
+      const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession({
+        refresh_token: refreshToken
       })
-      if (!error && data.session?.access_token && !isAccessTokenExpired(data.session.access_token)) {
-        cachedAccessToken = data.session.access_token
-        syncProfileCache(durable.profile)
-        if (data.session.refresh_token) {
+      if (!refreshErr && refreshed.session?.access_token) {
+        cachedAccessToken = refreshed.session.access_token
+        if (profileForCache) syncProfileCache(profileForCache)
+        if (refreshed.session.refresh_token && profileForCache) {
           saveDurableSession(
-            data.session.access_token,
-            data.session.refresh_token,
-            durable.profile
+            refreshed.session.access_token,
+            refreshed.session.refresh_token,
+            profileForCache
           )
         }
         return true
       }
-      // setSession a peut-être accepté un access expiré → forcer refresh
-      if (data.session?.refresh_token || durable.refreshToken) {
+
+      if (durable?.refreshToken) {
+        const { data, error } = await supabase.auth.setSession({
+          access_token: durable.accessToken,
+          refresh_token: durable.refreshToken
+        })
+        if (!error && data.session?.access_token && !isAccessTokenExpired(data.session.access_token)) {
+          cachedAccessToken = data.session.access_token
+          syncProfileCache(durable.profile)
+          if (data.session.refresh_token) {
+            saveDurableSession(
+              data.session.access_token,
+              data.session.refresh_token,
+              durable.profile
+            )
+          }
+          return true
+        }
         const again = await supabase.auth.refreshSession({
           refresh_token: data.session?.refresh_token ?? durable.refreshToken
         })
@@ -163,14 +148,17 @@ async function ensureSupabaseSession(): Promise<boolean> {
           return true
         }
       }
-    }
 
-    console.warn('[judovac] ensureSession:', refreshErr?.message)
-    return false
-  } catch (e) {
-    console.warn('[judovac] ensureSession:', e)
-    return false
-  }
+      console.warn('[judovac] ensureSession:', refreshErr?.message)
+      return false
+    } catch (e) {
+      console.warn('[judovac] ensureSession:', e)
+      return false
+    } finally {
+      ensureSessionInFlight = null
+    }
+  })()
+  return ensureSessionInFlight
 }
 
 /** Vide uniquement le profil en mémoire (conserve le token d’accès). */

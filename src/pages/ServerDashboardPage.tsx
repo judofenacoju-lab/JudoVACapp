@@ -22,7 +22,6 @@ import { PdfExportPage } from '@/pages/PdfExportPage'
 import { BackupPage } from '@/pages/BackupPage'
 import { AdminPage } from '@/pages/AdminPage'
 import { PrintPage } from '@/pages/PrintPage'
-import { useAuth } from '@/lib/auth-context'
 
 interface Props {
   mode: ModeConfig
@@ -66,7 +65,6 @@ async function fetchAllJudokas(): Promise<Judoka[]> {
 
 export function ServerDashboardPage({ onResetMode }: Props) {
   const navigate = useNavigate()
-  const { sessionReady } = useAuth()
   const [view, setView] = useState<ServerNavId>('home')
   const [editing, setEditing] = useState<Judoka | null>(null)
   const [stats, setStats] = useState<DashboardStats | null>(null)
@@ -91,8 +89,6 @@ export function ServerDashboardPage({ onResetMode }: Props) {
   const [ownerSearchTotal, setOwnerSearchTotal] = useState(0)
 
   useEffect(() => {
-    if (!sessionReady) return
-
     let alive = true
     let consecutiveFails = 0
     let waitingFirst = true
@@ -137,7 +133,7 @@ export function ServerDashboardPage({ onResetMode }: Props) {
       alive = false
       clearInterval(id)
     }
-  }, [sessionReady])
+  }, [])
 
   useEffect(() => {
     const q = ownerSearchQuery.trim()

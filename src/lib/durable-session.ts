@@ -46,3 +46,18 @@ export function clearDurableSession(): void {
     /* ignore */
   }
 }
+
+/** true si le JWT est absent ou expiré (marge 90 s — Mac/Chrome refresh plus tardif). */
+export function isAccessTokenExpired(token: string | null | undefined): boolean {
+  if (!token) return true
+  try {
+    const part = token.split('.')[1]
+    if (!part) return true
+    const json = atob(part.replace(/-/g, '+').replace(/_/g, '/'))
+    const payload = JSON.parse(json) as { exp?: number }
+    if (typeof payload.exp !== 'number') return true
+    return payload.exp * 1000 <= Date.now() + 90_000
+  } catch {
+    return true
+  }
+}
