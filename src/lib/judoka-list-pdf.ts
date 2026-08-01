@@ -1,6 +1,7 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import type { Judoka } from '@shared/types/judoka'
 import { formatJudokaFullName } from '@shared/utils/judoka'
+import { downloadBytes } from './download-blob'
 
 const MARGIN = 36
 const ROW_H = 16
@@ -174,12 +175,5 @@ export async function exportJudokaListPdfBytes(options: JudokaListPdfOptions): P
 }
 
 export function downloadPdfBytes(bytes: Uint8Array, filename: string): void {
-  const blob = new Blob([new Uint8Array(bytes)], { type: 'application/pdf' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  window.open(url, '_blank', 'noopener,noreferrer')
-  window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  downloadBytes(bytes, filename, 'application/pdf')
 }

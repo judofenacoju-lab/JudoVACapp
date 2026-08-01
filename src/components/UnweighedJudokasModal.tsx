@@ -40,7 +40,7 @@ export function UnweighedJudokasModal({ onClose, onUpdated, onOpenForm }: Props)
           return
         }
         all.push(...res.data.items)
-        if (res.data.items.length < pageSize) break
+        if (all.length >= res.data.total || res.data.items.length < pageSize) break
         offset += pageSize
       }
       const unweighed = all

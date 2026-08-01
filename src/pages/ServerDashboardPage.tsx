@@ -58,17 +58,9 @@ async function fetchDashboard(): Promise<{
 }
 
 async function fetchAllJudokas(): Promise<Judoka[]> {
-  const pageSize = 1000
-  const all: Judoka[] = []
-  let offset = 0
-  for (;;) {
-    const res = await window.judovac.listJudokas({ limit: pageSize, offset })
-    if (!res.ok) throw new Error(res.error)
-    all.push(...res.data.items)
-    if (res.data.items.length < pageSize) break
-    offset += pageSize
-  }
-  return all
+  const res = await window.judovac.listJudokas({ limit: 1_000_000, offset: 0 })
+  if (!res.ok) throw new Error(res.error)
+  return res.data.items
 }
 
 export function ServerDashboardPage({ onResetMode }: Props) {

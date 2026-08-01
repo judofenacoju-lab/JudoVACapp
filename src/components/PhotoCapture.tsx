@@ -57,7 +57,18 @@ async function openMediaStream(facing: FacingMode): Promise<MediaStream> {
     throw new Error('getUserMedia indisponible')
   }
 
-  const attempts: MediaStreamConstraints[] = [
+  const isTouch = 'ontouchstart' in window
+  const attempts: MediaStreamConstraints[] = []
+
+  // Desktop Mac/Windows : facingMode exact échoue souvent sur webcam USB
+  if (!isTouch) {
+    attempts.push({
+      audio: false,
+      video: { width: { ideal: 1280 }, height: { ideal: 720 } }
+    })
+  }
+
+  attempts.push(
     {
       audio: false,
       video: {
@@ -74,7 +85,7 @@ async function openMediaStream(facing: FacingMode): Promise<MediaStream> {
         height: { ideal: 720 }
       }
     }
-  ]
+  )
 
   const deviceId = await resolveDeviceId(facing)
   if (deviceId) {

@@ -23,6 +23,7 @@ import {
   logRowToEntry
 } from './mappers'
 import { readDurableSession, saveDurableSession } from './durable-session'
+import { downloadBlob, downloadBytes } from './download-blob'
 
 export type IpcResult<T> =
   | { ok: true; data: T }
@@ -219,8 +220,8 @@ async function findDuplicates(candidate: {
   club?: string
   excludeId?: string
 }): Promise<DuplicateMatch[]> {
-  const { data } = await supabase.from('judokas').select('*')
-  const items = (data ?? []).map((r) => rowToJudoka(r as never))
+  await ensureSupabaseSession()
+  const { items } = await fetchAllJudokasForProfile()
   const matches: DuplicateMatch[] = []
   for (const j of items) {
     if (candidate.excludeId && j.id === candidate.excludeId) continue
@@ -388,6 +389,14 @@ async function readAnyStorageDataUrl(path: string): Promise<string> {
         ? [BADGE_ASSETS_BUCKET, PHOTOS_BUCKET]
         : [PHOTOS_BUCKET, BADGE_ASSETS_BUCKET]
 
+  // API serveur d'abord — plus fiable sur Safari/Chrome Mac (CORS / RLS storage)
+  try {
+    await ensureSupabaseSession()
+    return await readStorageDataUrlViaApi(objectPath, buckets[0])
+  } catch {
+    /* fallback client */
+  }
+
   let lastError: Error | null = null
   for (const bucket of buckets) {
     try {
@@ -397,7 +406,6 @@ async function readAnyStorageDataUrl(path: string): Promise<string> {
     }
   }
 
-  // Dernier recours : API serveur (contourne RLS / CORS navigateur)
   try {
     return await readStorageDataUrlViaApi(objectPath, buckets[0])
   } catch (e) {
@@ -552,30 +560,65 @@ async function fetchAllJudokasForDashboard(): Promise<
 
 const JUDOKA_FETCH_PAGE = 1000
 
-/** Charge tous les judokas visibles pour le profil (pages Supabase de 1000). */
+/** Charge tous les judokas visibles pour le profil (pages complètes + retry JWT Mac). */
 async function fetchAllJudokasForProfile(): Promise<{ items: Judoka[]; total: number }> {
+  await ensureSupabaseSession()
   const profile = await requireProfile()
+
+  let countQ = supabase.from('judokas').select('id', { count: 'exact', head: true })
+  if (profile.role !== 'admin') {
+    countQ = countQ.eq('created_by', profile.username)
+  }
+  const { count: exactCount, error: countError } = await countQ
+  if (countError) throw new Error(countError.message)
+  const expected = exactCount ?? 0
+  if (expected === 0) return { items: [], total: 0 }
+
   const items: Judoka[] = []
-  let total = 0
   let offset = 0
-  for (;;) {
+  let emptyPageRetries = 0
+
+  while (items.length < expected) {
     let q = supabase
       .from('judokas')
-      .select('*', { count: 'exact' })
+      .select('*')
       .order('created_at', { ascending: false })
       .range(offset, offset + JUDOKA_FETCH_PAGE - 1)
     if (profile.role !== 'admin') {
       q = q.eq('created_by', profile.username)
     }
-    const { data, count, error } = await q
-    if (error) throw new Error(error.message)
-    if (offset === 0) total = count ?? 0
+    const { data, error } = await q
+
+    if (error) {
+      const restored = await ensureSupabaseSession()
+      if (!restored) throw new Error(error.message)
+      emptyPageRetries += 1
+      if (emptyPageRetries > 3) {
+        throw new Error(`Chargement incomplet des judokas (${items.length}/${expected})`)
+      }
+      continue
+    }
+
     const batch = (data ?? []).map((r) => rowToJudoka(r as never))
+    if (batch.length === 0 && items.length < expected) {
+      emptyPageRetries += 1
+      if (emptyPageRetries > 3) {
+        throw new Error(`Chargement incomplet des judokas (${items.length}/${expected})`)
+      }
+      await ensureSupabaseSession()
+      continue
+    }
+    emptyPageRetries = 0
     items.push(...batch)
-    if (batch.length < JUDOKA_FETCH_PAGE) break
-    offset += JUDOKA_FETCH_PAGE
+    if (batch.length === 0) break
+    offset += batch.length
   }
-  return { items, total }
+
+  if (items.length < expected) {
+    throw new Error(`Chargement incomplet des judokas (${items.length}/${expected})`)
+  }
+
+  return { items, total: expected }
 }
 
 function judokaSearchHaystack(j: Judoka): string {
@@ -677,23 +720,48 @@ async function fetchDistinctJudokaClubNames(): Promise<string[]> {
   if (profile.role !== 'admin') {
     throw new Error('Réservé au compte Serveur.')
   }
+  await ensureSupabaseSession()
+
+  const { count: exactCount, error: countError } = await supabase
+    .from('judokas')
+    .select('id', { count: 'exact', head: true })
+  if (countError) throw new Error(countError.message)
+  const expected = exactCount ?? 0
+
   const seen = new Map<string, string>()
   let offset = 0
+  let loaded = 0
   const pageSize = 1000
-  for (;;) {
+  let emptyRetries = 0
+
+  while (loaded < expected) {
     const { data, error } = await supabase
       .from('judokas')
       .select('club')
       .range(offset, offset + pageSize - 1)
-    if (error) throw new Error(error.message)
-    for (const row of data ?? []) {
+    if (error) {
+      await ensureSupabaseSession()
+      emptyRetries += 1
+      if (emptyRetries > 3) throw new Error(error.message)
+      continue
+    }
+    const batch = data ?? []
+    if (batch.length === 0 && loaded < expected) {
+      emptyRetries += 1
+      if (emptyRetries > 3) break
+      await ensureSupabaseSession()
+      continue
+    }
+    emptyRetries = 0
+    for (const row of batch) {
       const name = String((row as { club?: string }).club ?? '').trim()
       if (!name) continue
       const key = name.toLowerCase()
       if (!seen.has(key)) seen.set(key, name)
     }
-    if ((data?.length ?? 0) < pageSize) break
-    offset += pageSize
+    loaded += batch.length
+    if (batch.length === 0) break
+    offset += batch.length
   }
   return [...seen.values()].sort((a, b) => a.localeCompare(b, 'fr'))
 }
@@ -776,9 +844,10 @@ export const judovacClient = {
   },
 
   getClientStatus: async (): Promise<IpcResult<ClientConnectionStatus>> => {
+    await ensureSupabaseSession()
     const { data: { session } } = await supabase.auth.getSession()
     return ok({
-      connected: !!session,
+      connected: !!session || !!cachedAccessToken || !!cachedProfile,
       serverHost: window.location.hostname,
       serverPort: 443,
       lastError: null,
@@ -919,13 +988,19 @@ export const judovacClient = {
   },
 
   getJudoka: async (id: string): Promise<IpcResult<Judoka>> => {
-    const { data, error } = await supabase.from('judokas').select('*').eq('id', id).single()
-    if (error || !data) return fail(error?.message ?? 'Judoka introuvable')
-    return ok(rowToJudoka(data as never))
+    try {
+      await ensureSupabaseSession()
+      const { data, error } = await supabase.from('judokas').select('*').eq('id', id).single()
+      if (error || !data) return fail(error?.message ?? 'Judoka introuvable')
+      return ok(rowToJudoka(data as never))
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e))
+    }
   },
 
   updateJudoka: async (id: string, body: unknown): Promise<IpcResult<unknown>> => {
     try {
+      await ensureSupabaseSession()
       const { data: existing, error: fetchErr } = await supabase.from('judokas').select('*').eq('id', id).single()
       if (fetchErr || !existing) return fail('Judoka introuvable')
 
@@ -991,9 +1066,14 @@ export const judovacClient = {
   },
 
   deleteJudoka: async (id: string): Promise<IpcResult<boolean>> => {
-    const { error } = await supabase.from('judokas').delete().eq('id', id)
-    if (error) return fail(error.message)
-    return ok(true)
+    try {
+      await ensureSupabaseSession()
+      const { error } = await supabase.from('judokas').delete().eq('id', id)
+      if (error) return fail(error.message)
+      return ok(true)
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e))
+    }
   },
 
   listJudokas: async (opts?: { limit?: number; offset?: number }): Promise<
@@ -1071,39 +1151,49 @@ export const judovacClient = {
   },
 
   listJudokaCreators: async (): Promise<IpcResult<{ items: string[] }>> => {
-    const { data } = await supabase.from('judokas').select('created_by')
-    const set = new Set<string>(['Serveur'])
-    for (const j of data ?? []) set.add(formatCreatorLabel(j.created_by as string))
-    const items = [...set].sort((a, b) => {
-      if (a === 'Serveur') return -1
-      if (b === 'Serveur') return 1
-      return a.localeCompare(b, 'fr')
-    })
-    return ok({ items })
+    try {
+      await ensureSupabaseSession()
+      const { items } = await fetchAllJudokasForProfile()
+      const set = new Set<string>(['Serveur'])
+      for (const j of items) set.add(formatCreatorLabel(j.createdBy))
+      const creators = [...set].sort((a, b) => {
+        if (a === 'Serveur') return -1
+        if (b === 'Serveur') return 1
+        return a.localeCompare(b, 'fr')
+      })
+      return ok({ items: creators })
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e))
+    }
   },
 
   deleteJudokaCreator: async (
     username: string,
     keepJudokas: boolean
   ): Promise<IpcResult<{ reassigned: number; deleted: number }>> => {
-    if (formatCreatorLabel(username) === 'Serveur') {
-      return fail('Impossible de supprimer l\'utilisateur Serveur')
-    }
-    const label = formatCreatorLabel(username)
-    const { data } = await supabase.from('judokas').select('*')
-    let reassigned = 0
-    let deleted = 0
-    for (const row of data ?? []) {
-      if (formatCreatorLabel(row.created_by as string) !== label) continue
-      if (keepJudokas) {
-        await supabase.from('judokas').update({ created_by: 'serveur' }).eq('id', row.id)
-        reassigned++
-      } else {
-        await supabase.from('judokas').delete().eq('id', row.id)
-        deleted++
+    try {
+      await ensureSupabaseSession()
+      if (formatCreatorLabel(username) === 'Serveur') {
+        return fail('Impossible de supprimer l\'utilisateur Serveur')
       }
+      const label = formatCreatorLabel(username)
+      const { items } = await fetchAllJudokasForProfile()
+      let reassigned = 0
+      let deleted = 0
+      for (const j of items) {
+        if (formatCreatorLabel(j.createdBy) !== label) continue
+        if (keepJudokas) {
+          const { error } = await supabase.from('judokas').update({ created_by: 'serveur' }).eq('id', j.id)
+          if (!error) reassigned++
+        } else {
+          const { error } = await supabase.from('judokas').delete().eq('id', j.id)
+          if (!error) deleted++
+        }
+      }
+      return ok({ reassigned, deleted })
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e))
     }
-    return ok({ reassigned, deleted })
   },
 
   transferUserClubJudokas: async (opts: {
@@ -1200,13 +1290,18 @@ export const judovacClient = {
     ok({ cleared: 0, queueSize: 0 }),
 
   getLogs: async (limit = 100): Promise<IpcResult<{ items: DashboardStats['recentLogs'] }>> => {
-    const { data, error } = await supabase
-      .from('system_logs')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(limit)
-    if (error) return fail(error.message)
-    return ok({ items: (data ?? []).map((l) => logRowToEntry(l as never)) })
+    try {
+      await ensureSupabaseSession()
+      const { data, error } = await supabase
+        .from('system_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(limit)
+      if (error) return fail(error.message)
+      return ok({ items: (data ?? []).map((l) => logRowToEntry(l as never)) })
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e))
+    }
   },
 
   clearLogs: async (): Promise<IpcResult<boolean>> => {
@@ -1216,9 +1311,11 @@ export const judovacClient = {
   },
 
   listUsers: async (): Promise<IpcResult<{ items: UserAccount[] }>> => {
-    const { data, error } = await supabase.from('profiles').select('*').order('username')
-    if (error) return fail(error.message)
-    let items = (data ?? []).map((p) => profileToUserAccount(p as ProfileRow))
+    try {
+      await ensureSupabaseSession()
+      const { data, error } = await supabase.from('profiles').select('*').order('username')
+      if (error) return fail(error.message)
+      let items = (data ?? []).map((p) => profileToUserAccount(p as ProfileRow))
 
     const adminUser = items.find(
       (u) =>
@@ -1244,6 +1341,9 @@ export const judovacClient = {
     })
 
     return ok({ items })
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e))
+    }
   },
 
   createUser: async (
@@ -1413,10 +1513,15 @@ export const judovacClient = {
   > => ok({ items: [] }),
 
   getBadgeTemplate: async (): Promise<IpcResult<BadgeTemplate>> => {
-    const activeId = await getActiveTemplateId()
-    const { data } = await supabase.from('badge_templates').select('*').eq('id', activeId).maybeSingle()
-    if (data) return ok(templateFromRow(data as never))
-    return ok(await ensureDefaultTemplate())
+    try {
+      await ensureSupabaseSession()
+      const activeId = await getActiveTemplateId()
+      const { data } = await supabase.from('badge_templates').select('*').eq('id', activeId).maybeSingle()
+      if (data) return ok(templateFromRow(data as never))
+      return ok(await ensureDefaultTemplate())
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e))
+    }
   },
 
   setBadgeTemplate: async (template: BadgeTemplate): Promise<IpcResult<BadgeTemplate>> => {
@@ -1610,14 +1715,7 @@ export const judovacClient = {
       })
 
       const filename = `badges-${new Date().toISOString().slice(0, 10)}.pdf`
-      const blob = new Blob([new Uint8Array(bytes)], { type: 'application/pdf' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      a.click()
-      window.open(url, '_blank', 'noopener,noreferrer')
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+      downloadBytes(bytes, filename, 'application/pdf')
       return ok({ path: filename, count: items.length })
     } catch (e) {
       return fail(e instanceof Error ? e.message : 'Export PDF impossible')
@@ -1627,42 +1725,80 @@ export const judovacClient = {
   exportBackup: async (): Promise<
     IpcResult<{ path: string; manifest: { counts: Record<string, number>; checksumSha256: string } }>
   > => {
-    const [judokas, settings, templates, users, logs] = await Promise.all([
-      supabase.from('judokas').select('*'),
-      supabase.from('app_settings').select('*').eq('id', 'default').single(),
-      supabase.from('badge_templates').select('*'),
-      supabase.from('profiles').select('*'),
-      supabase.from('system_logs').select('*').order('created_at', { ascending: false }).limit(500)
-    ])
-    const payload = {
-      version: 2,
-      exportedAt: new Date().toISOString(),
-      judokas: judokas.data ?? [],
-      settings: settings.data?.settings ?? createDefaultSettings(),
-      badgeTemplates: templates.data ?? [],
-      users: users.data ?? [],
-      logs: logs.data ?? []
-    }
-    const json = JSON.stringify(payload, null, 2)
-    const filename = `judovac-backup-${new Date().toISOString().slice(0, 10)}.json`
-    const blob = new Blob([json], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    a.click()
-    URL.revokeObjectURL(url)
-    return ok({
-      path: filename,
-      manifest: {
-        counts: {
-          judokas: (judokas.data ?? []).length,
-          logs: (logs.data ?? []).length,
-          users: (users.data ?? []).length
-        },
-        checksumSha256: 'web-export'
+    try {
+      await ensureSupabaseSession()
+      const profile = await requireProfile()
+
+      const { count: exactCount, error: countError } = await (() => {
+        let q = supabase.from('judokas').select('id', { count: 'exact', head: true })
+        if (profile.role !== 'admin') q = q.eq('created_by', profile.username)
+        return q
+      })()
+      if (countError) return fail(countError.message)
+      const expected = exactCount ?? 0
+
+      const judokaRows: Record<string, unknown>[] = []
+      let offset = 0
+      let emptyRetries = 0
+      while (judokaRows.length < expected) {
+        let q = supabase
+          .from('judokas')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .range(offset, offset + JUDOKA_FETCH_PAGE - 1)
+        if (profile.role !== 'admin') q = q.eq('created_by', profile.username)
+        const { data, error } = await q
+        if (error) {
+          await ensureSupabaseSession()
+          emptyRetries += 1
+          if (emptyRetries > 3) return fail(error.message)
+          continue
+        }
+        const batch = (data ?? []) as Record<string, unknown>[]
+        if (batch.length === 0 && judokaRows.length < expected) {
+          emptyRetries += 1
+          if (emptyRetries > 3) break
+          await ensureSupabaseSession()
+          continue
+        }
+        emptyRetries = 0
+        judokaRows.push(...batch)
+        if (batch.length === 0) break
+        offset += batch.length
       }
-    })
+
+      const [settings, templates, users, logs] = await Promise.all([
+        supabase.from('app_settings').select('*').eq('id', 'default').single(),
+        supabase.from('badge_templates').select('*'),
+        supabase.from('profiles').select('*'),
+        supabase.from('system_logs').select('*').order('created_at', { ascending: false }).limit(500)
+      ])
+      const payload = {
+        version: 2,
+        exportedAt: new Date().toISOString(),
+        judokas: judokaRows,
+        settings: settings.data?.settings ?? createDefaultSettings(),
+        badgeTemplates: templates.data ?? [],
+        users: users.data ?? [],
+        logs: logs.data ?? []
+      }
+      const json = JSON.stringify(payload, null, 2)
+      const filename = `judovac-backup-${new Date().toISOString().slice(0, 10)}.json`
+      downloadBlob(new Blob([json], { type: 'application/json' }), filename)
+      return ok({
+        path: filename,
+        manifest: {
+          counts: {
+            judokas: judokaRows.length,
+            logs: (logs.data ?? []).length,
+            users: (users.data ?? []).length
+          },
+          checksumSha256: 'web-export'
+        }
+      })
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : 'Export sauvegarde impossible')
+    }
   },
 
   pickBackupFile: async (): Promise<
@@ -1756,11 +1892,16 @@ export const judovacClient = {
   },
 
   getSettings: async (): Promise<IpcResult<AppSettings>> => {
-    const { data } = await supabase.from('app_settings').select('*').eq('id', 'default').single()
-    const settings = mergeSettings((data?.settings ?? null) as Partial<AppSettings> | null)
-    setActiveCategoryAgeRanges(settings.categories)
-    setActiveRegisteredClubs(settings.clubs)
-    return ok(settings)
+    try {
+      await ensureSupabaseSession()
+      const { data } = await supabase.from('app_settings').select('*').eq('id', 'default').single()
+      const settings = mergeSettings((data?.settings ?? null) as Partial<AppSettings> | null)
+      setActiveCategoryAgeRanges(settings.categories)
+      setActiveRegisteredClubs(settings.clubs)
+      return ok(settings)
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : 'Paramètres indisponibles')
+    }
   },
 
   setSettings: async (patch: Partial<AppSettings>): Promise<IpcResult<AppSettings>> => {
