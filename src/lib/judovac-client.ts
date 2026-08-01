@@ -585,33 +585,37 @@ export const judovacClient = {
   },
 
   getServerStatus: async (): Promise<IpcResult<ServerStatus>> => {
-    const profile = await requireProfile()
-    const connectedClients = profile.role === 'admin' ? await fetchOnlineClients() : []
+    try {
+      const profile = await requireProfile()
+      const connectedClients = profile.role === 'admin' ? await fetchOnlineClients() : []
 
-    if (profile.role !== 'admin') {
+      if (profile.role !== 'admin') {
+        return ok({
+          running: false,
+          host: 'cloud',
+          port: 443,
+          startedAt: null,
+          connectedClients: [],
+          dbReady: true,
+          dbBackend: 'cloud',
+          localAddresses: [],
+          preferredAddress: null
+        })
+      }
       return ok({
-        running: false,
+        running: true,
         host: 'cloud',
         port: 443,
-        startedAt: null,
-        connectedClients: [],
+        startedAt: new Date().toISOString(),
+        connectedClients,
         dbReady: true,
         dbBackend: 'cloud',
         localAddresses: [],
-        preferredAddress: null
+        preferredAddress: window.location.hostname
       })
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : 'Statut serveur indisponible')
     }
-    return ok({
-      running: true,
-      host: 'cloud',
-      port: 443,
-      startedAt: new Date().toISOString(),
-      connectedClients,
-      dbReady: true,
-      dbBackend: 'cloud',
-      localAddresses: [],
-      preferredAddress: window.location.hostname
-    })
   },
 
   /** Ping de présence (opérateur connecté). */
@@ -644,76 +648,80 @@ export const judovacClient = {
   },
 
   getDashboardStats: async (): Promise<IpcResult<DashboardStats>> => {
-    const profile = await requireProfile()
-    if (profile.role === 'operator') {
-      void judovacClient.heartbeat()
-    }
-
-    let all: Array<{ created_by: string; sex: string; weight_kg: unknown }> = []
     try {
-      all = await fetchAllJudokasForDashboard()
-    } catch (e) {
-      return fail(e instanceof Error ? e.message : 'Impossible de charger les judokas')
-    }
-
-    // Opérateur : stats limitées à ses propres enregistrements
-    if (profile.role === 'operator') {
-      const me = profile.username.trim().toLowerCase()
-      all = all.filter((r) => String(r.created_by ?? '').trim().toLowerCase() === me)
-    }
-
-    let maleJudokas = 0
-    let femaleJudokas = 0
-    let weighedJudokas = 0
-    let maleWeighedJudokas = 0
-    let femaleWeighedJudokas = 0
-    const map = new Map<string, number>()
-    for (const row of all) {
-      const sex = String(row.sex ?? '').toUpperCase()
-      const hasWeight = hasRecordedWeight(row.weight_kg)
-      if (sex === 'F') {
-        femaleJudokas += 1
-        if (hasWeight) femaleWeighedJudokas += 1
-      } else if (sex === 'M') {
-        maleJudokas += 1
-        if (hasWeight) maleWeighedJudokas += 1
+      const profile = await requireProfile()
+      if (profile.role === 'operator') {
+        void judovacClient.heartbeat()
       }
-      if (hasWeight) weighedJudokas += 1
-      const label = formatCreatorLabel(row.created_by)
-      map.set(label, (map.get(label) ?? 0) + 1)
-    }
-    if (profile.role === 'admin' && !map.has('Serveur')) map.set('Serveur', 0)
-    const judokaByUser = [...map.entries()]
-      .map(([username, count]) => ({ username, count }))
-      .sort((a, b) => {
-        if (a.username === 'Serveur') return -1
-        if (b.username === 'Serveur') return 1
-        return a.username.localeCompare(b.username, 'fr')
+
+      let all: Array<{ created_by: string; sex: string; weight_kg: unknown }> = []
+      try {
+        all = await fetchAllJudokasForDashboard()
+      } catch (e) {
+        return fail(e instanceof Error ? e.message : 'Impossible de charger les judokas')
+      }
+
+      // Opérateur : stats limitées à ses propres enregistrements
+      if (profile.role === 'operator') {
+        const me = profile.username.trim().toLowerCase()
+        all = all.filter((r) => String(r.created_by ?? '').trim().toLowerCase() === me)
+      }
+
+      let maleJudokas = 0
+      let femaleJudokas = 0
+      let weighedJudokas = 0
+      let maleWeighedJudokas = 0
+      let femaleWeighedJudokas = 0
+      const map = new Map<string, number>()
+      for (const row of all) {
+        const sex = String(row.sex ?? '').toUpperCase()
+        const hasWeight = hasRecordedWeight(row.weight_kg)
+        if (sex === 'F') {
+          femaleJudokas += 1
+          if (hasWeight) femaleWeighedJudokas += 1
+        } else if (sex === 'M') {
+          maleJudokas += 1
+          if (hasWeight) maleWeighedJudokas += 1
+        }
+        if (hasWeight) weighedJudokas += 1
+        const label = formatCreatorLabel(row.created_by)
+        map.set(label, (map.get(label) ?? 0) + 1)
+      }
+      if (profile.role === 'admin' && !map.has('Serveur')) map.set('Serveur', 0)
+      const judokaByUser = [...map.entries()]
+        .map(([username, count]) => ({ username, count }))
+        .sort((a, b) => {
+          if (a.username === 'Serveur') return -1
+          if (b.username === 'Serveur') return 1
+          return a.username.localeCompare(b.username, 'fr')
+        })
+
+      const { data: logs } = await supabase
+        .from('system_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(20)
+
+      const online = profile.role === 'admin' ? await fetchOnlineClients() : []
+
+      return ok({
+        totalJudokas: all.length,
+        maleJudokas,
+        femaleJudokas,
+        weighedJudokas,
+        maleWeighedJudokas,
+        femaleWeighedJudokas,
+        connectedClients: online.length,
+        networkStatus: 'online',
+        pendingSyncCount: 0,
+        lastSyncAt: new Date().toISOString(),
+        recentLogs: (logs ?? []).map((l) => logRowToEntry(l as never)),
+        userActivity: [],
+        judokaByUser
       })
-
-    const { data: logs } = await supabase
-      .from('system_logs')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(20)
-
-    const online = profile.role === 'admin' ? await fetchOnlineClients() : []
-
-    return ok({
-      totalJudokas: all.length,
-      maleJudokas,
-      femaleJudokas,
-      weighedJudokas,
-      maleWeighedJudokas,
-      femaleWeighedJudokas,
-      connectedClients: online.length,
-      networkStatus: 'online',
-      pendingSyncCount: 0,
-      lastSyncAt: new Date().toISOString(),
-      recentLogs: (logs ?? []).map((l) => logRowToEntry(l as never)),
-      userActivity: [],
-      judokaByUser
-    })
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : 'Impossible de charger les statistiques')
+    }
   },
 
   createJudoka: async (body: unknown): Promise<IpcResult<unknown>> => {

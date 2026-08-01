@@ -16,10 +16,11 @@ function ProtectedRoute({
   children: ReactNode
   requiredRole?: 'admin' | 'operator'
 }) {
-  const { session, profile, loading } = useAuth()
+  const { profile, loading } = useAuth()
 
   if (loading) return <LoadingScreen />
-  if (!session || !profile?.active) return <Navigate to="/login" replace />
+  // Profil actif = source de vérité (un flash session Supabase ne doit pas renvoyer au login)
+  if (!profile?.active) return <Navigate to="/login" replace />
   if (requiredRole && profile.role !== requiredRole && requiredRole === 'admin') {
     return <Navigate to="/app" replace />
   }
@@ -27,7 +28,7 @@ function ProtectedRoute({
 }
 
 export default function App() {
-  const { session, profile, loading, buildModeConfig, signOut } = useAuth()
+  const { profile, loading, buildModeConfig, signOut } = useAuth()
   const [bootReady, setBootReady] = useState(false)
   const [mode, setMode] = useState<ModeConfig | null>(null)
   const modeKeyRef = useRef<string>('')
@@ -52,9 +53,9 @@ export default function App() {
   // Sync mode — effet séparé, ne bloque pas l'UI
   useEffect(() => {
     if (loading) return
-    if (session && !profile) return
+    if (!profile) return
 
-    const cfg = session && profile?.active ? buildModeConfig() : null
+    const cfg = profile.active ? buildModeConfig() : null
     const key = cfg
       ? `${cfg.mode}:${cfg.mode === 'client' ? cfg.username : 'server'}`
       : 'none'
@@ -65,19 +66,18 @@ export default function App() {
     void (async () => {
       try {
         if (cfg) await window.judovac.setMode(cfg)
-        else if (!session) await window.judovac.clearMode()
+        else if (!profile) await window.judovac.clearMode()
       } catch (e) {
         console.warn('[App] mode sync:', e)
       }
     })()
-  }, [loading, session, profile, buildModeConfig])
+  }, [loading, profile, buildModeConfig])
 
   if (!isSupabaseConfigured) return <ConfigErrorPage />
   if (loading || !bootReady) return <LoadingScreen />
 
   // Toujours dériver du profil actif — ne pas dépendre d’un mode state qui peut être null
-  const effectiveMode =
-    (session && profile?.active ? buildModeConfig() : null) ?? mode
+  const effectiveMode = profile?.active ? buildModeConfig() ?? mode : null
 
   return (
     <div className="min-h-screen w-full">
@@ -85,7 +85,7 @@ export default function App() {
         <Route
           path="/login"
           element={
-            session && profile?.active ? (
+            profile?.active ? (
               <Navigate to={profile.role === 'admin' ? '/dashboard' : '/app'} replace />
             ) : (
               <LoginPage />
@@ -96,9 +96,13 @@ export default function App() {
           path="/dashboard"
           element={
             <ProtectedRoute requiredRole="admin">
-              {profile?.role === 'admin' && effectiveMode ? (
+              {profile?.role === 'admin' ? (
                 <ServerDashboardPage
-                  mode={effectiveMode.mode === 'server' ? effectiveMode : { mode: 'server', configuredAt: new Date().toISOString() }}
+                  mode={
+                    effectiveMode?.mode === 'server'
+                      ? effectiveMode
+                      : { mode: 'server', configuredAt: new Date().toISOString() }
+                  }
                   onResetMode={async () => {
                     await signOut()
                     modeKeyRef.current = ''
@@ -137,7 +141,7 @@ export default function App() {
           element={
             <Navigate
               to={
-                !session || !profile?.active
+                !profile?.active
                   ? '/login'
                   : profile.role === 'admin'
                     ? '/dashboard'

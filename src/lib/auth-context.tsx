@@ -8,6 +8,11 @@ import {
   syncAccessToken,
   syncProfileCache
 } from './judovac-client'
+import {
+  clearDurableSession,
+  readDurableSession,
+  saveDurableSession
+} from './durable-session'
 
 interface SignInResult {
   error?: string
@@ -66,17 +71,14 @@ async function applyModeForProfile(profile: ProfileRow): Promise<void> {
   }
 }
 
-function applyProfile(p: ProfileRow, setProfile: (p: ProfileRow | null) => void): void {
-  syncProfileCache(p)
-  setProfile(p)
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<ProfileRow | null>(null)
   const [loading, setLoading] = useState(true)
   const sessionRef = useRef<Session | null>(null)
   const profileRef = useRef<ProfileRow | null>(null)
+  /** true uniquement pendant un clic Déconnexion — ignore les SIGNED_OUT parasites. */
+  const userSigningOutRef = useRef(false)
 
   useEffect(() => {
     sessionRef.current = session
@@ -86,6 +88,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     profileRef.current = profile
   }, [profile])
 
+  function commitAuth(s: Session, p: ProfileRow): void {
+    sessionRef.current = s
+    profileRef.current = p
+    syncAccessToken(s.access_token)
+    syncProfileCache(p)
+    if (s.refresh_token) {
+      saveDurableSession(s.access_token, s.refresh_token, p)
+    }
+    setSession(s)
+    setProfile(p)
+  }
+
   async function loadProfile(userId: string): Promise<ProfileRow | null> {
     const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single()
     if (error) {
@@ -93,6 +107,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return null
     }
     return data as ProfileRow | null
+  }
+
+  async function restoreFromDurable(): Promise<boolean> {
+    const durable = readDurableSession()
+    if (!durable?.refreshToken || !durable.profile?.active) return false
+
+    syncProfileCache(durable.profile)
+    syncAccessToken(durable.accessToken)
+    profileRef.current = durable.profile
+    setProfile(durable.profile)
+
+    try {
+      const { data, error } = await supabase.auth.setSession({
+        access_token: durable.accessToken,
+        refresh_token: durable.refreshToken
+      })
+      if (error || !data.session) {
+        console.warn('[auth] restore setSession:', error?.message)
+        return Boolean(durable.profile.active)
+      }
+      commitAuth(data.session, durable.profile)
+      return true
+    } catch (e) {
+      console.warn('[auth] restore:', e)
+      return Boolean(durable.profile.active)
+    }
   }
 
   useEffect(() => {
@@ -109,66 +149,69 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }, 8000)
 
-    void supabase.auth
-      .getSession()
-      .then(async ({ data: { session: s } }) => {
+    void (async () => {
+      try {
+        const { data: { session: s } } = await supabase.auth.getSession()
         if (cancelled) return
 
-        // Sur Mac, getSession peut arriver APRÈS signIn : ne jamais écraser une session active.
-        if (!s) {
-          if (!sessionRef.current) {
-            setSession(null)
-            syncAccessToken(null)
-          }
-          if (!cancelled) setLoading(false)
+        // Ne jamais écraser un login déjà établi
+        if (sessionRef.current?.access_token && profileRef.current) {
+          setLoading(false)
           return
         }
 
-        if (
-          sessionRef.current &&
-          sessionRef.current.user?.id === s.user?.id &&
-          sessionRef.current.access_token
-        ) {
-          // Login déjà en place — juste s’assurer du token / profil
-          syncAccessToken(sessionRef.current.access_token)
-          if (!profileRef.current) {
-            try {
-              const p = await withTimeout(loadProfile(s.user.id), PROFILE_TIMEOUT_MS, 'Chargement du profil')
-              if (!cancelled && p) applyProfile(p, setProfile)
-            } catch (e) {
-              console.warn('[auth] profil:', e)
+        if (s?.user) {
+          syncAccessToken(s.access_token)
+          let p = profileRef.current
+          if (!p || p.id !== s.user.id) {
+            p = await withTimeout(loadProfile(s.user.id), PROFILE_TIMEOUT_MS, 'Chargement du profil')
+          }
+          if (cancelled) return
+          if (p?.active) {
+            commitAuth(s, p)
+          } else {
+            const restored = await restoreFromDurable()
+            if (!restored && !sessionRef.current) {
+              setSession(null)
             }
           }
-          if (!cancelled) setLoading(false)
-          return
+        } else {
+          const restored = await restoreFromDurable()
+          if (!restored && !sessionRef.current) {
+            setSession(null)
+          }
         }
-
-        setSession(s)
-        syncAccessToken(s.access_token)
-        try {
-          const p = await withTimeout(loadProfile(s.user.id), PROFILE_TIMEOUT_MS, 'Chargement du profil')
-          if (!cancelled && p) applyProfile(p, setProfile)
-        } catch (e) {
-          console.warn('[auth] profil:', e)
+      } catch (e) {
+        console.warn('[auth] boot:', e)
+        if (!sessionRef.current) {
+          await restoreFromDurable()
         }
-        if (!cancelled) setLoading(false)
-      })
-      .catch((e) => {
-        console.warn('[auth] getSession:', e)
-        if (!cancelled) setLoading(false)
-      })
-      .finally(() => {
+      } finally {
         window.clearTimeout(timeout)
-      })
+        if (!cancelled) setLoading(false)
+      }
+    })()
 
     const {
       data: { subscription }
     } = supabase.auth.onAuthStateChange((event, s) => {
-      // Ne jamais await ici : Safari/Mac peut bloquer signInWithPassword.
-
-      // Uniquement une vraie déconnexion — ignorer les sessions null transitoires (refresh).
       if (event === 'SIGNED_OUT') {
+        // Déconnexion UI uniquement si l’utilisateur a cliqué « Déconnexion »
+        if (!userSigningOutRef.current) {
+          console.warn('[auth] SIGNED_OUT parasite ignoré — restauration session')
+          void (async () => {
+            const ok = await restoreFromDurable()
+            if (!ok) {
+              const { data } = await supabase.auth.getSession()
+              if (data.session?.user && profileRef.current) {
+                commitAuth(data.session, profileRef.current)
+              }
+            }
+          })()
+          return
+        }
         clearAuthCache()
+        clearDurableSession()
         setSession(null)
         setProfile(null)
         sessionRef.current = null
@@ -176,21 +219,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return
       }
 
-      if (!s?.user) {
-        console.warn('[auth] événement sans session ignoré:', event)
-        return
-      }
+      if (!s?.user) return
 
       syncAccessToken(s.access_token)
       setSession((prev) => {
-        if (prev?.access_token === s.access_token && prev?.user?.id === s.user?.id) {
-          return prev
-        }
+        if (prev?.access_token === s.access_token && prev?.user?.id === s.user?.id) return prev
         return s
       })
       sessionRef.current = s
 
-      if (event === 'TOKEN_REFRESHED' && profileRef.current) {
+      if (event === 'TOKEN_REFRESHED') {
+        if (profileRef.current && s.refresh_token) {
+          saveDurableSession(s.access_token, s.refresh_token, profileRef.current)
+        }
         return
       }
 
@@ -198,26 +239,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (cancelled || !s.user) return
         void (async () => {
           try {
+            if (profileRef.current?.id === s.user!.id) {
+              syncProfileCache(profileRef.current)
+              if (s.refresh_token) {
+                saveDurableSession(s.access_token, s.refresh_token, profileRef.current)
+              }
+              return
+            }
             const p = await withTimeout(
               loadProfile(s.user!.id),
               PROFILE_TIMEOUT_MS,
               'Chargement du profil'
             )
-            if (cancelled) return
-            if (!p) {
-              console.warn('[auth] profil indisponible — conservation de l’état actuel')
-              return
-            }
-            if (
-              profileRef.current?.id === p.id &&
-              profileRef.current?.role === p.role &&
-              profileRef.current?.active === p.active &&
-              profileRef.current?.username === p.username
-            ) {
-              syncProfileCache(p)
-              return
-            }
-            applyProfile(p, setProfile)
+            if (cancelled || !p) return
+            commitAuth(s, p)
           } catch (e) {
             console.warn('[auth] onAuthStateChange profil:', e)
           }
@@ -234,6 +269,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signIn(email: string, password: string): Promise<SignInResult> {
     try {
+      userSigningOutRef.current = false
       const { data, error } = await withTimeout(
         supabase.auth.signInWithPassword({ email, password }),
         SIGN_IN_TIMEOUT_MS,
@@ -275,11 +311,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       if (!p.active) return { error: 'Compte désactivé — contactez un administrateur.' }
 
-      // Marquer avant setState pour gagner la course contre getSession() de boot
-      sessionRef.current = s
-      profileRef.current = p
-      applyProfile(p, setProfile)
-      setSession(s)
+      commitAuth(s, p)
       setLoading(false)
       void applyModeForProfile(p)
       return { role: p.role }
@@ -291,7 +323,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function signOut() {
+    userSigningOutRef.current = true
     clearAuthCache()
+    clearDurableSession()
     try {
       await withTimeout(supabase.auth.signOut(), 10_000, 'Déconnexion')
     } catch (e) {
@@ -306,6 +340,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       console.warn('[auth] clearMode:', e)
     }
+    // Laisser le flag un court instant pour absorber le SIGNED_OUT async
+    window.setTimeout(() => {
+      userSigningOutRef.current = false
+    }, 2000)
   }
 
   const buildModeConfig = useCallback((): ModeConfig | null => {

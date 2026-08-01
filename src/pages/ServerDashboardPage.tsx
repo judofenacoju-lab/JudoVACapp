@@ -94,10 +94,14 @@ export function ServerDashboardPage({ onResetMode }: Props) {
   useEffect(() => {
     let alive = true
     const tick = async () => {
-      const data = await fetchDashboard()
-      if (!alive) return
-      setStats(data.stats)
-      setStatus(data.status)
+      try {
+        const data = await fetchDashboard()
+        if (!alive) return
+        setStats(data.stats)
+        setStatus(data.status)
+      } catch (e) {
+        console.warn('[dashboard] refresh:', e)
+      }
     }
     void tick()
     const id = setInterval(() => void tick(), 1000)

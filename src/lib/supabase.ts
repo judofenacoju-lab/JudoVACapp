@@ -17,7 +17,7 @@ export const isSupabaseConfigured = Boolean(
 
 /**
  * Mutex process-local : sérialise les ops auth sans navigator.locks
- * (Safari/Mac laisse des locks orphelins qui bloquent le login).
+ * (Chrome/Safari Mac laissent parfois des locks orphelins).
  */
 let authLockChain: Promise<unknown> = Promise.resolve()
 
@@ -36,8 +36,7 @@ export const supabase: SupabaseClient = isSupabaseConfigured
       auth: {
         persistSession: true,
         autoRefreshToken: true,
-        detectSessionInUrl: true,
-        storageKey: 'judovac-auth',
+        detectSessionInUrl: false,
         lock: authLock
       }
     })
