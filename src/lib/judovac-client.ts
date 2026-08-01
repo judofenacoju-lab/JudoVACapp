@@ -45,19 +45,36 @@ let cachedMode: ModeConfig | null = null
 let cachedAccessToken: string | null = null
 let pendingBackupJson: Record<string, unknown> | null = null
 
+/** true si le JWT est absent ou expiré (avec marge 60 s). */
+function isAccessTokenExpired(token: string | null | undefined): boolean {
+  if (!token) return true
+  try {
+    const part = token.split('.')[1]
+    if (!part) return true
+    const json = atob(part.replace(/-/g, '+').replace(/_/g, '/'))
+    const payload = JSON.parse(json) as { exp?: number }
+    if (typeof payload.exp !== 'number') return true
+    return payload.exp * 1000 <= Date.now() + 60_000
+  } catch {
+    return true
+  }
+}
+
 async function getProfile(): Promise<ProfileRow | null> {
   if (cachedProfile) return cachedProfile
 
   // getSession() lit le stockage local — plus fiable que getUser() sur Safari/Mac
   const { data: { session } } = await supabase.auth.getSession()
   let userId = session?.user?.id ?? null
-  if (session?.access_token) cachedAccessToken = session.access_token
+  if (session?.access_token && !isAccessTokenExpired(session.access_token)) {
+    cachedAccessToken = session.access_token
+  }
 
-  if (!userId) {
+  if (!userId || isAccessTokenExpired(session?.access_token)) {
     const restored = await ensureSupabaseSession()
     if (restored) {
       const { data: { session: s2 } } = await supabase.auth.getSession()
-      userId = s2?.user?.id ?? null
+      userId = s2?.user?.id ?? userId
       if (s2?.access_token) cachedAccessToken = s2.access_token
     }
   }
@@ -76,56 +93,79 @@ async function getProfile(): Promise<ProfileRow | null> {
 
 /**
  * Réinjecte le JWT Supabase depuis la session durable si le client l’a perdu
- * (fréquent sur Chrome Mac → requêtes RLS vides → compteurs à 0).
- * Après F5, refresh_token d'abord (access_token souvent expiré).
+ * ou si le access_token est expiré (fréquent sur Chrome Mac → listes vides).
  */
 async function ensureSupabaseSession(): Promise<boolean> {
   try {
     const { data: { session } } = await supabase.auth.getSession()
-    if (session?.access_token) {
+    if (session?.access_token && !isAccessTokenExpired(session.access_token)) {
       cachedAccessToken = session.access_token
       return true
     }
 
     const durable = readDurableSession()
-    if (!durable?.refreshToken) return Boolean(cachedAccessToken)
+    const refreshToken = session?.refresh_token ?? durable?.refreshToken
+    if (!refreshToken) {
+      if (cachedAccessToken && !isAccessTokenExpired(cachedAccessToken)) return true
+      return false
+    }
 
-    // Refresh avant setSession — critique au rechargement de page Mac
+    const profileForCache = durable?.profile ?? cachedProfile
+
     const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession({
-      refresh_token: durable.refreshToken
+      refresh_token: refreshToken
     })
     if (!refreshErr && refreshed.session?.access_token) {
       cachedAccessToken = refreshed.session.access_token
-      syncProfileCache(durable.profile)
-      if (refreshed.session.refresh_token) {
+      if (profileForCache) syncProfileCache(profileForCache)
+      if (refreshed.session.refresh_token && profileForCache) {
         saveDurableSession(
           refreshed.session.access_token,
           refreshed.session.refresh_token,
-          durable.profile
+          profileForCache
         )
       }
       return true
     }
 
-    const { data, error } = await supabase.auth.setSession({
-      access_token: durable.accessToken,
-      refresh_token: durable.refreshToken
-    })
-
-    if (!error && data.session?.access_token) {
-      cachedAccessToken = data.session.access_token
-      syncProfileCache(durable.profile)
-      if (data.session.refresh_token) {
-        saveDurableSession(
-          data.session.access_token,
-          data.session.refresh_token,
-          durable.profile
-        )
+    if (durable?.accessToken && durable.refreshToken) {
+      const { data, error } = await supabase.auth.setSession({
+        access_token: durable.accessToken,
+        refresh_token: durable.refreshToken
+      })
+      if (!error && data.session?.access_token && !isAccessTokenExpired(data.session.access_token)) {
+        cachedAccessToken = data.session.access_token
+        syncProfileCache(durable.profile)
+        if (data.session.refresh_token) {
+          saveDurableSession(
+            data.session.access_token,
+            data.session.refresh_token,
+            durable.profile
+          )
+        }
+        return true
       }
-      return true
+      // setSession a peut-être accepté un access expiré → forcer refresh
+      if (data.session?.refresh_token || durable.refreshToken) {
+        const again = await supabase.auth.refreshSession({
+          refresh_token: data.session?.refresh_token ?? durable.refreshToken
+        })
+        if (!again.error && again.data.session?.access_token) {
+          cachedAccessToken = again.data.session.access_token
+          syncProfileCache(durable.profile)
+          if (again.data.session.refresh_token) {
+            saveDurableSession(
+              again.data.session.access_token,
+              again.data.session.refresh_token,
+              durable.profile
+            )
+          }
+          return true
+        }
+      }
     }
 
-    console.warn('[judovac] ensureSession:', refreshErr?.message ?? error?.message)
+    console.warn('[judovac] ensureSession:', refreshErr?.message)
     return false
   } catch (e) {
     console.warn('[judovac] ensureSession:', e)
@@ -154,12 +194,13 @@ export function syncProfileCache(profile: ProfileRow | null): void {
 }
 
 async function getAccessToken(): Promise<string | null> {
-  if (cachedAccessToken) return cachedAccessToken
+  if (cachedAccessToken && !isAccessTokenExpired(cachedAccessToken)) return cachedAccessToken
+  cachedAccessToken = null
 
   try {
     await ensureSupabaseSession()
     const { data: { session } } = await supabase.auth.getSession()
-    if (session?.access_token) {
+    if (session?.access_token && !isAccessTokenExpired(session.access_token)) {
       cachedAccessToken = session.access_token
       return cachedAccessToken
     }
@@ -575,11 +616,21 @@ async function fetchAllJudokasForProfile(): Promise<{ items: Judoka[]; total: nu
   await ensureSupabaseSession()
   const profile = await requireProfile()
 
-  let countQ = supabase.from('judokas').select('id', { count: 'exact', head: true })
-  if (profile.role !== 'admin') {
-    countQ = countQ.eq('created_by', profile.username)
+  const countOnce = async () => {
+    let countQ = supabase.from('judokas').select('id', { count: 'exact', head: true })
+    if (profile.role !== 'admin') {
+      countQ = countQ.eq('created_by', profile.username)
+    }
+    return countQ
   }
-  const { count: exactCount, error: countError } = await countQ
+
+  let { count: exactCount, error: countError } = await countOnce()
+  if (countError || exactCount === 0) {
+    await ensureSupabaseSession()
+    const retry = await countOnce()
+    exactCount = retry.count
+    countError = retry.error
+  }
   if (countError) throw new Error(countError.message)
   const expected = exactCount ?? 0
   if (expected === 0) return { items: [], total: 0 }
@@ -661,7 +712,8 @@ function filterJudokasBySearch(
     if (filters?.grade && !j.grade.toLowerCase().includes(filters.grade.toLowerCase())) return false
     if (filters?.phone && !j.phone.includes(filters.phone)) return false
     if (filters?.licenseNumber && !j.licenseNumber.includes(filters.licenseNumber)) return false
-    if (filters?.createdBy && formatCreatorLabel(j.createdBy) !== filters.createdBy) return false
+    if (filters?.createdBy && formatCreatorLabel(j.createdBy) !== formatCreatorLabel(filters.createdBy))
+      return false
     return judokaMatchesSearchQuery(j, query)
   })
 }
@@ -678,45 +730,59 @@ async function queryJudokasPaginated(
   limit: number,
   offset: number
 ): Promise<{ items: Judoka[]; total: number }> {
+  await ensureSupabaseSession()
   const profile = await requireProfile()
-  let q = supabase
-    .from('judokas')
-    .select('*', { count: 'exact' })
-    .order('created_at', { ascending: false })
 
-  if (profile.role !== 'admin') {
-    q = q.eq('created_by', profile.username)
-  }
+  const run = async () => {
+    let q = supabase
+      .from('judokas')
+      .select('*', { count: 'exact' })
+      .order('created_at', { ascending: false })
 
-  if (filters?.club) q = q.ilike('club', ilikeFragment(filters.club))
-  if (filters?.province) q = q.ilike('province', ilikeFragment(filters.province))
-  if (filters?.league) q = q.ilike('league', ilikeFragment(filters.league))
-  if (filters?.grade) q = q.ilike('grade', ilikeFragment(filters.grade))
-  if (filters?.createdBy) {
-    if (filters.createdBy === 'Serveur') {
-      q = q.or('created_by.is.null,created_by.eq.,created_by.ilike.serveur')
-    } else {
-      q = q.eq('created_by', filters.createdBy)
+    if (profile.role !== 'admin') {
+      q = q.eq('created_by', profile.username)
     }
+
+    if (filters?.club) q = q.ilike('club', ilikeFragment(filters.club))
+    if (filters?.province) q = q.ilike('province', ilikeFragment(filters.province))
+    if (filters?.league) q = q.ilike('league', ilikeFragment(filters.league))
+    if (filters?.grade) q = q.ilike('grade', ilikeFragment(filters.grade))
+    if (filters?.createdBy) {
+      const label = formatCreatorLabel(filters.createdBy)
+      if (label === 'Serveur') {
+        q = q.or('created_by.is.null,created_by.eq.,created_by.ilike.serveur')
+      } else {
+        q = q.eq('created_by', filters.createdBy)
+      }
+    }
+
+    const tokens = judokaSearchTokens(query)
+    for (const token of tokens) {
+      const pat = ilikeFragment(token)
+      q = q.or(
+        [
+          `last_name.ilike.${pat}`,
+          `middle_name.ilike.${pat}`,
+          `first_name.ilike.${pat}`,
+          `display_id.ilike.${pat}`,
+          `license_number.ilike.${pat}`,
+          `phone.ilike.${pat}`,
+          `club.ilike.${pat}`
+        ].join(',')
+      )
+    }
+
+    return q.range(offset, offset + limit - 1)
   }
 
-  const tokens = judokaSearchTokens(query)
-  for (const token of tokens) {
-    const pat = ilikeFragment(token)
-    q = q.or(
-      [
-        `last_name.ilike.${pat}`,
-        `middle_name.ilike.${pat}`,
-        `first_name.ilike.${pat}`,
-        `display_id.ilike.${pat}`,
-        `license_number.ilike.${pat}`,
-        `phone.ilike.${pat}`,
-        `club.ilike.${pat}`
-      ].join(',')
-    )
+  let { data, count, error } = await run()
+  if (error || (count === 0 && offset === 0 && !query.trim() && !filters?.club)) {
+    await ensureSupabaseSession()
+    const retry = await run()
+    data = retry.data
+    count = retry.count
+    error = retry.error
   }
-
-  const { data, count, error } = await q.range(offset, offset + limit - 1)
   if (error) throw new Error(error.message)
   return {
     items: (data ?? []).map((r) => rowToJudoka(r as never)),
@@ -1104,18 +1170,38 @@ export const judovacClient = {
       }
     }
 
-    const profile = await requireProfile()
-    let q = supabase
-      .from('judokas')
-      .select('*', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1)
-    if (profile.role !== 'admin') {
-      q = q.eq('created_by', profile.username)
+    try {
+      await ensureSupabaseSession()
+      const profile = await requireProfile()
+
+      const run = async () => {
+        let q = supabase
+          .from('judokas')
+          .select('*', { count: 'exact' })
+          .order('created_at', { ascending: false })
+          .range(offset, offset + limit - 1)
+        if (profile.role !== 'admin') {
+          q = q.eq('created_by', profile.username)
+        }
+        return q
+      }
+
+      let { data, count, error } = await run()
+      // JWT expiré → liste vide sans erreur sur certains navigateurs Mac
+      if (error || ((data?.length ?? 0) === 0 && (count ?? 0) === 0 && offset === 0)) {
+        const restored = await ensureSupabaseSession()
+        if (restored || error) {
+          const retry = await run()
+          data = retry.data
+          count = retry.count
+          error = retry.error
+        }
+      }
+      if (error) return fail(error.message)
+      return ok({ items: (data ?? []).map((r) => rowToJudoka(r as never)), total: count ?? 0 })
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : 'Chargement judokas impossible')
     }
-    const { data, count, error } = await q
-    if (error) return fail(error.message)
-    return ok({ items: (data ?? []).map((r) => rowToJudoka(r as never)), total: count ?? 0 })
   },
 
   searchJudokas: async (

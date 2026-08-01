@@ -35,23 +35,15 @@ export function WeighedJudokasModal({ onClose }: Props) {
       setLoading(true)
       setError(null)
       try {
-        const pageSize = 1000
-        const all: Judoka[] = []
-        let offset = 0
-        for (;;) {
-          const res = await window.judovac.listJudokas({ limit: pageSize, offset })
-          if (cancelled) return
-          if (!res.ok) {
-            setError(res.error)
-            setJudokas([])
-            setLoading(false)
-            return
-          }
-          all.push(...res.data.items)
-          if (all.length >= res.data.total || res.data.items.length < pageSize) break
-          offset += pageSize
+        const res = await window.judovac.listJudokas({ limit: 1_000_000, offset: 0 })
+        if (cancelled) return
+        if (!res.ok) {
+          setError(res.error)
+          setJudokas([])
+          setLoading(false)
+          return
         }
-        setJudokas(all.filter((j) => hasRecordedWeight(j.weightKg)))
+        setJudokas(res.data.items.filter((j) => hasRecordedWeight(j.weightKg)))
         setLoading(false)
       } catch (e) {
         if (cancelled) return

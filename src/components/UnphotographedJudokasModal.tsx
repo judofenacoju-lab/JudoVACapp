@@ -134,21 +134,13 @@ export function UnphotographedJudokasModal({ onClose, onUpdated }: Props) {
     setLoading(true)
     setError(null)
     try {
-      const pageSize = 1000
-      const all: Judoka[] = []
-      let offset = 0
-      for (;;) {
-        const res = await window.judovac.listJudokas({ limit: pageSize, offset })
-        if (!res.ok) {
-          setError(res.error)
-          setItems([])
-          return
-        }
-        all.push(...res.data.items)
-        if (all.length >= res.data.total || res.data.items.length < pageSize) break
-        offset += pageSize
+      const res = await window.judovac.listJudokas({ limit: 1_000_000, offset: 0 })
+      if (!res.ok) {
+        setError(res.error)
+        setItems([])
+        return
       }
-      const withoutPhoto = all
+      const withoutPhoto = res.data.items
         .filter((j) => !hasPhoto(j.photoPath))
         .sort((a, b) => formatJudokaFullName(a).localeCompare(formatJudokaFullName(b), 'fr'))
       setItems(withoutPhoto)

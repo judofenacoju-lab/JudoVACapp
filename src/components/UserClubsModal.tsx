@@ -36,6 +36,7 @@ export function UserClubsModal({ username, onClose, onTransferred }: Props) {
   const loadJudokas = useCallback(async (): Promise<void> => {
     setLoading(true)
     setError(null)
+    // Sans opts.limit → chargement complet + filtre créateur (fiable sur Mac)
     const res = await window.judovac.searchJudokas('', { createdBy: username })
     setLoading(false)
     if (!res.ok) {
