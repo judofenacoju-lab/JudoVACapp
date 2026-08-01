@@ -499,7 +499,7 @@ export function ServerDashboardPage({ onResetMode }: Props) {
       {view === 'list' && (
         <JudokaListPage
           embedded
-          autoRefreshMs={1000}
+          autoRefreshMs={5000}
           onBack={() => setView('home')}
           onEdit={(j) => {
             setEditing(j)

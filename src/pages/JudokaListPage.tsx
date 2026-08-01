@@ -52,6 +52,14 @@ export function JudokaListPage({
   /** Total pour la recherche / filtres courants (pagination). */
   const [listTotal, setListTotal] = useState(0)
   const loadSeqRef = useRef(0)
+  const loadInFlightRef = useRef(false)
+  const pageIndexRef = useRef(0)
+  /** Cache local de la liste complète (pagination UI fiable sur Mac). */
+  const allItemsRef = useRef<Judoka[]>([])
+
+  useEffect(() => {
+    pageIndexRef.current = pageIndex
+  }, [pageIndex])
 
   const hasActiveSearch = Boolean(
     query.trim() || club || province || league || grade || createdBy
@@ -70,19 +78,34 @@ export function JudokaListPage({
 
   const reload = useCallback(() => setRefreshKey((k) => k + 1), [])
 
+  const paintPage = useCallback((all: Judoka[], page: number, pending: Judoka[]) => {
+    const start = page * PAGE_SIZE
+    const slice = all.slice(start, start + PAGE_SIZE)
+    if (page === 0 && pending.length > 0) {
+      setItems([...pending, ...slice])
+    } else {
+      setItems(slice)
+    }
+  }, [])
+
   const loadJudokas = useCallback(
     async (silent: boolean): Promise<void> => {
-      const seq = ++loadSeqRef.current
+      // Mac : un refresh/s ne doit pas annuler un chargement lent encore en cours
+      if (silent && loadInFlightRef.current) return
+      if (!silent) {
+        loadSeqRef.current += 1
+      }
+      const seq = loadSeqRef.current
+      loadInFlightRef.current = true
       if (!silent) setLoading(true)
-      setError(null)
-
-      const offset = pageIndex * PAGE_SIZE
+      if (!silent) setError(null)
 
       try {
+        // Chargement complet (même chemin que les modals) — pagination côté client
         const [res, queueRes] = await Promise.all([
           hasActiveSearch
-            ? window.judovac.searchJudokas(query, filters, { limit: PAGE_SIZE, offset })
-            : window.judovac.listJudokas({ limit: PAGE_SIZE, offset }),
+            ? window.judovac.searchJudokas(query, filters)
+            : window.judovac.listJudokas({ limit: 1_000_000, offset: 0 }),
           clientMode ? window.judovac.getSyncQueue() : Promise.resolve(null)
         ])
 
@@ -103,42 +126,48 @@ export function JudokaListPage({
             : pendingRaw
 
         if (!res.ok) {
-          if (pending.length > 0 && pageIndex === 0) {
+          // Refresh silencieux : ne pas vider une liste déjà affichée
+          if (silent && allItemsRef.current.length > 0) return
+          if (pending.length > 0 && pageIndexRef.current === 0) {
             setError(`Serveur injoignable (${res.error}). Éléments en file locale affichés.`)
             setItems(pending)
             setListTotal(pending.length)
-          } else {
+            allItemsRef.current = pending
+          } else if (!silent) {
             setError(res.error)
             setItems([])
             setListTotal(0)
+            allItemsRef.current = []
           }
           return
         }
 
-        if (!clientMode && !hasActiveSearch && typeof res.data.total === 'number') {
-          setSystemTotal(res.data.total)
-        }
-
-        let list = res.data.items
+        let all = res.data.items
         if (clientMode && clientUsername) {
-          list = list.filter(
+          all = all.filter(
             (j) => j.createdBy.trim().toLowerCase() === clientUsername.trim().toLowerCase()
           )
         }
 
-        const total = res.data.total ?? list.length
-        setListTotal(total)
-
-        if (pageIndex === 0 && pending.length > 0) {
-          setItems([...pending, ...list])
-        } else {
-          setItems(list)
+        if (silent && all.length === 0 && allItemsRef.current.length > 0) {
+          return
         }
+
+        if (!clientMode && !hasActiveSearch) {
+          setSystemTotal(typeof res.data.total === 'number' ? res.data.total : all.length)
+        }
+
+        allItemsRef.current = all
+        setListTotal(all.length)
+        paintPage(all, pageIndexRef.current, pending)
       } finally {
-        if (seq === loadSeqRef.current && !silent) setLoading(false)
+        if (seq === loadSeqRef.current) {
+          loadInFlightRef.current = false
+          if (!silent) setLoading(false)
+        }
       }
     },
-    [query, filters, clientMode, clientUsername, pageIndex, hasActiveSearch]
+    [query, filters, clientMode, clientUsername, hasActiveSearch, paintPage]
   )
 
   useEffect(() => {
@@ -176,6 +205,14 @@ export function JudokaListPage({
     setSelected(new Set())
     setPageIndex(0)
   }, [query, club, province, league, grade, createdBy])
+
+  // Changement de page : découpe locale sans recharger la base
+  useEffect(() => {
+    const all = allItemsRef.current
+    if (all.length === 0) return
+    const start = pageIndex * PAGE_SIZE
+    setItems(all.slice(start, start + PAGE_SIZE))
+  }, [pageIndex])
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -355,7 +392,7 @@ export function JudokaListPage({
         clientMode
           ? 'Modification / suppression synchronisées via la file locale'
           : autoRefreshMs
-            ? 'Recherche · actualisation automatique chaque seconde'
+            ? 'Recherche · actualisation automatique en arrière-plan'
             : 'Recherche · sélection · export / impression'
       }
       actions={

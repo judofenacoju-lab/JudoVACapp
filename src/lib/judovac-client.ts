@@ -1185,6 +1185,25 @@ export const judovacClient = {
           error = retry.error
         }
       }
+      // Filet Mac : page vide alors que des judokas existent → chargement complet
+      if (
+        !error &&
+        offset === 0 &&
+        (data?.length ?? 0) === 0 &&
+        (count ?? 0) === 0
+      ) {
+        try {
+          const { items: all, total } = await fetchAllJudokasForProfile()
+          if (total > 0) {
+            return ok({
+              items: all.slice(0, limit),
+              total
+            })
+          }
+        } catch {
+          /* garder le résultat paginé */
+        }
+      }
       if (error) return fail(error.message)
       return ok({ items: (data ?? []).map((r) => rowToJudoka(r as never)), total: count ?? 0 })
     } catch (e) {
@@ -1211,9 +1230,9 @@ export const judovacClient = {
       }
     }
     try {
-      const { items: all, total } = await fetchAllJudokasForProfile()
+      const { items: all } = await fetchAllJudokasForProfile()
       const items = filterJudokasBySearch(all, query, filters)
-      return ok({ items, total })
+      return ok({ items, total: items.length })
     } catch (e) {
       return fail(e instanceof Error ? e.message : 'Recherche impossible')
     }
