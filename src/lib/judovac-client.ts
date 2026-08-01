@@ -77,6 +77,7 @@ async function getProfile(): Promise<ProfileRow | null> {
 /**
  * Réinjecte le JWT Supabase depuis la session durable si le client l’a perdu
  * (fréquent sur Chrome Mac → requêtes RLS vides → compteurs à 0).
+ * Après F5, refresh_token d'abord (access_token souvent expiré).
  */
 async function ensureSupabaseSession(): Promise<boolean> {
   try {
@@ -88,6 +89,23 @@ async function ensureSupabaseSession(): Promise<boolean> {
 
     const durable = readDurableSession()
     if (!durable?.refreshToken) return Boolean(cachedAccessToken)
+
+    // Refresh avant setSession — critique au rechargement de page Mac
+    const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession({
+      refresh_token: durable.refreshToken
+    })
+    if (!refreshErr && refreshed.session?.access_token) {
+      cachedAccessToken = refreshed.session.access_token
+      syncProfileCache(durable.profile)
+      if (refreshed.session.refresh_token) {
+        saveDurableSession(
+          refreshed.session.access_token,
+          refreshed.session.refresh_token,
+          durable.profile
+        )
+      }
+      return true
+    }
 
     const { data, error } = await supabase.auth.setSession({
       access_token: durable.accessToken,
@@ -107,27 +125,11 @@ async function ensureSupabaseSession(): Promise<boolean> {
       return true
     }
 
-    const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession({
-      refresh_token: durable.refreshToken
-    })
-    if (!refreshErr && refreshed.session?.access_token) {
-      cachedAccessToken = refreshed.session.access_token
-      syncProfileCache(durable.profile)
-      if (refreshed.session.refresh_token) {
-        saveDurableSession(
-          refreshed.session.access_token,
-          refreshed.session.refresh_token,
-          durable.profile
-        )
-      }
-      return true
-    }
-
-    console.warn('[judovac] ensureSession:', error?.message ?? refreshErr?.message)
-    return Boolean(cachedAccessToken)
+    console.warn('[judovac] ensureSession:', refreshErr?.message ?? error?.message)
+    return false
   } catch (e) {
     console.warn('[judovac] ensureSession:', e)
-    return Boolean(cachedAccessToken)
+    return false
   }
 }
 
@@ -476,10 +478,18 @@ async function fetchAllJudokasForDashboard(): Promise<
   const pageSize = 1000
 
   // Total exact côté Supabase — évite d’afficher un faux « 1000 » (taille d’une seule page)
-  const { count: exactCount, error: countError } = await supabase
-    .from('judokas')
-    .select('id', { count: 'exact', head: true })
-  if (countError) throw new Error(countError.message)
+  let exactCount: number | null = null
+  {
+    const first = await supabase.from('judokas').select('id', { count: 'exact', head: true })
+    if (first.error) {
+      await ensureSupabaseSession()
+      const second = await supabase.from('judokas').select('id', { count: 'exact', head: true })
+      if (second.error) throw new Error(second.error.message)
+      exactCount = second.count
+    } else {
+      exactCount = first.count
+    }
+  }
   const expected = exactCount ?? 0
   if (expected === 0) {
     const { data: { session } } = await supabase.auth.getSession()

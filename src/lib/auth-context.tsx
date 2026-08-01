@@ -23,6 +23,8 @@ interface AuthState {
   session: Session | null
   profile: ProfileRow | null
   loading: boolean
+  /** true quand un JWT Supabase utilisable est en place (requis pour les vraies données). */
+  sessionReady: boolean
   signIn: (email: string, password: string) => Promise<SignInResult>
   signOut: () => Promise<void>
   buildModeConfig: () => ModeConfig | null
@@ -71,13 +73,24 @@ async function applyModeForProfile(profile: ProfileRow): Promise<void> {
   }
 }
 
+function initialDurableProfile(): ProfileRow | null {
+  const d = readDurableSession()
+  if (d?.profile?.active) {
+    syncProfileCache(d.profile)
+    syncAccessToken(d.accessToken)
+    return d.profile
+  }
+  return null
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const initialProfile = initialDurableProfile()
   const [session, setSession] = useState<Session | null>(null)
-  const [profile, setProfile] = useState<ProfileRow | null>(null)
+  const [profile, setProfile] = useState<ProfileRow | null>(initialProfile)
   const [loading, setLoading] = useState(true)
+  const [sessionReady, setSessionReady] = useState(false)
   const sessionRef = useRef<Session | null>(null)
-  const profileRef = useRef<ProfileRow | null>(null)
-  /** true uniquement pendant un clic Déconnexion — ignore les SIGNED_OUT parasites. */
+  const profileRef = useRef<ProfileRow | null>(initialProfile)
   const userSigningOutRef = useRef(false)
 
   useEffect(() => {
@@ -98,6 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setSession(s)
     setProfile(p)
+    setSessionReady(true)
   }
 
   async function loadProfile(userId: string): Promise<ProfileRow | null> {
@@ -109,30 +123,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return data as ProfileRow | null
   }
 
+  /**
+   * Restaure un JWT utilisable après F5 / reload Mac.
+   * refresh_token d'abord (access_token souvent expiré au reload).
+   */
   async function restoreFromDurable(): Promise<boolean> {
     const durable = readDurableSession()
     if (!durable?.refreshToken || !durable.profile?.active) return false
 
     syncProfileCache(durable.profile)
-    syncAccessToken(durable.accessToken)
     profileRef.current = durable.profile
     setProfile(durable.profile)
 
+    // 1) Refresh — plus fiable après rechargement de page
+    try {
+      const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession({
+        refresh_token: durable.refreshToken
+      })
+      if (!refreshErr && refreshed.session?.access_token) {
+        commitAuth(refreshed.session, durable.profile)
+        return true
+      }
+      console.warn('[auth] refresh restore:', refreshErr?.message)
+    } catch (e) {
+      console.warn('[auth] refresh restore:', e)
+    }
+
+    // 2) setSession avec les tokens stockés
     try {
       const { data, error } = await supabase.auth.setSession({
         access_token: durable.accessToken,
         refresh_token: durable.refreshToken
       })
-      if (error || !data.session) {
-        console.warn('[auth] restore setSession:', error?.message)
-        return Boolean(durable.profile.active)
+      if (!error && data.session?.access_token) {
+        commitAuth(data.session, durable.profile)
+        return true
       }
-      commitAuth(data.session, durable.profile)
-      return true
+      console.warn('[auth] setSession restore:', error?.message)
     } catch (e) {
-      console.warn('[auth] restore:', e)
-      return Boolean(durable.profile.active)
+      console.warn('[auth] setSession restore:', e)
     }
+
+    // Sans JWT valide on ne peut pas charger les vraies données
+    setSessionReady(false)
+    return false
   }
 
   useEffect(() => {
@@ -147,15 +181,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.warn('[auth] Timeout session — affichage login')
         setLoading(false)
       }
-    }, 8000)
+    }, 12000)
 
     void (async () => {
       try {
+        // Toujours tenter durable en premier au reload Mac (getSession peut renvoyer null)
+        const durableOk = await restoreFromDurable()
+        if (cancelled) return
+        if (durableOk) {
+          setLoading(false)
+          return
+        }
+
         const { data: { session: s } } = await supabase.auth.getSession()
         if (cancelled) return
 
-        // Ne jamais écraser un login déjà établi
         if (sessionRef.current?.access_token && profileRef.current) {
+          setSessionReady(true)
           setLoading(false)
           return
         }
@@ -170,16 +212,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (p?.active) {
             commitAuth(s, p)
           } else {
-            const restored = await restoreFromDurable()
-            if (!restored && !sessionRef.current) {
-              setSession(null)
-            }
+            setSession(null)
+            setProfile(null)
+            setSessionReady(false)
           }
         } else {
-          const restored = await restoreFromDurable()
-          if (!restored && !sessionRef.current) {
-            setSession(null)
-          }
+          setSession(null)
+          if (!profileRef.current) setProfile(null)
+          setSessionReady(false)
         }
       } catch (e) {
         console.warn('[auth] boot:', e)
@@ -196,7 +236,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       data: { subscription }
     } = supabase.auth.onAuthStateChange((event, s) => {
       if (event === 'SIGNED_OUT') {
-        // Déconnexion UI uniquement si l’utilisateur a cliqué « Déconnexion »
         if (!userSigningOutRef.current) {
           console.warn('[auth] SIGNED_OUT parasite ignoré — restauration session')
           void (async () => {
@@ -214,6 +253,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clearDurableSession()
         setSession(null)
         setProfile(null)
+        setSessionReady(false)
         sessionRef.current = null
         profileRef.current = null
         return
@@ -227,6 +267,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return s
       })
       sessionRef.current = s
+      setSessionReady(true)
 
       if (event === 'TOKEN_REFRESHED') {
         if (profileRef.current && s.refresh_token) {
@@ -265,6 +306,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.clearTimeout(timeout)
       subscription.unsubscribe()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- boot once
   }, [])
 
   async function signIn(email: string, password: string): Promise<SignInResult> {
@@ -333,6 +375,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setSession(null)
     setProfile(null)
+    setSessionReady(false)
     sessionRef.current = null
     profileRef.current = null
     try {
@@ -340,7 +383,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       console.warn('[auth] clearMode:', e)
     }
-    // Laisser le flag un court instant pour absorber le SIGNED_OUT async
     window.setTimeout(() => {
       userSigningOutRef.current = false
     }, 2000)
@@ -352,7 +394,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [profile])
 
   return (
-    <AuthContext.Provider value={{ session, profile, loading, signIn, signOut, buildModeConfig }}>
+    <AuthContext.Provider
+      value={{ session, profile, loading, sessionReady, signIn, signOut, buildModeConfig }}
+    >
       {children}
     </AuthContext.Provider>
   )

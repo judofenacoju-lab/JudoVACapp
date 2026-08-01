@@ -22,6 +22,7 @@ import { PdfExportPage } from '@/pages/PdfExportPage'
 import { BackupPage } from '@/pages/BackupPage'
 import { AdminPage } from '@/pages/AdminPage'
 import { PrintPage } from '@/pages/PrintPage'
+import { useAuth } from '@/lib/auth-context'
 
 interface Props {
   mode: ModeConfig
@@ -65,10 +66,12 @@ async function fetchAllJudokas(): Promise<Judoka[]> {
 
 export function ServerDashboardPage({ onResetMode }: Props) {
   const navigate = useNavigate()
+  const { sessionReady } = useAuth()
   const [view, setView] = useState<ServerNavId>('home')
   const [editing, setEditing] = useState<Judoka | null>(null)
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [status, setStatus] = useState<ServerStatus | null>(null)
+  const [statsLoading, setStatsLoading] = useState(true)
   const [clubsUser, setClubsUser] = useState<string | null>(null)
   const [weighedOpen, setWeighedOpen] = useState(false)
   const [judokasMenuOpen, setJudokasMenuOpen] = useState(false)
@@ -88,28 +91,44 @@ export function ServerDashboardPage({ onResetMode }: Props) {
   const [ownerSearchTotal, setOwnerSearchTotal] = useState(0)
 
   useEffect(() => {
+    if (!sessionReady) return
+
     let alive = true
+    let consecutiveFails = 0
+    let waitingFirst = true
+
     const tick = async () => {
       try {
         const data = await fetchDashboard()
         if (!alive) return
-        // Ne jamais écraser de bonnes stats par un échec transitoire (JWT flash Mac → tout à 0)
         if (data.statsOk && data.stats) {
-          setStats((prev) => {
-            const next = data.stats!
-            // Échec auth → 0 : ne pas écraser le dernier total réel
-            if (prev && prev.totalJudokas > 0 && next.totalJudokas === 0) {
-              console.warn('[dashboard] total 0 suspect — conservation des compteurs')
-              return prev
-            }
-            return next
-          })
+          consecutiveFails = 0
+          waitingFirst = false
+          setStats(data.stats)
+          setStatsLoading(false)
+        } else {
+          consecutiveFails += 1
+          if (waitingFirst && consecutiveFails < 10) {
+            window.setTimeout(() => {
+              if (alive) void tick()
+            }, 400)
+          } else if (waitingFirst) {
+            setStatsLoading(false)
+          }
         }
         if (data.statusOk && data.status) {
           setStatus(data.status)
         }
       } catch (e) {
         console.warn('[dashboard] refresh:', e)
+        consecutiveFails += 1
+        if (waitingFirst && consecutiveFails < 10) {
+          window.setTimeout(() => {
+            if (alive) void tick()
+          }, 400)
+        } else if (waitingFirst) {
+          setStatsLoading(false)
+        }
       }
     }
     void tick()
@@ -118,7 +137,7 @@ export function ServerDashboardPage({ onResetMode }: Props) {
       alive = false
       clearInterval(id)
     }
-  }, [])
+  }, [sessionReady])
 
   useEffect(() => {
     const q = ownerSearchQuery.trim()
@@ -220,7 +239,7 @@ export function ServerDashboardPage({ onResetMode }: Props) {
             <StatTile
               icon={<Users className="h-5 w-5" />}
               label="Judokas"
-              value={String(stats?.totalJudokas ?? 0)}
+              value={statsLoading && !stats ? '…' : String(stats?.totalJudokas ?? 0)}
               hint={`${stats?.maleJudokas ?? 0} Garçon${(stats?.maleJudokas ?? 0) > 1 ? 's' : ''} · ${stats?.femaleJudokas ?? 0} Fille${(stats?.femaleJudokas ?? 0) > 1 ? 's' : ''}`}
               onValueClick={() => setJudokasMenuOpen(true)}
               valueTitle="Compléter poids ou photo des judokas"
@@ -228,7 +247,7 @@ export function ServerDashboardPage({ onResetMode }: Props) {
             <StatTile
               icon={<Scale className="h-5 w-5" />}
               label="Pesés"
-              value={String(stats?.weighedJudokas ?? 0)}
+              value={statsLoading && !stats ? '…' : String(stats?.weighedJudokas ?? 0)}
               hint={`${stats?.maleWeighedJudokas ?? 0} Garçon${(stats?.maleWeighedJudokas ?? 0) > 1 ? 's' : ''} · ${stats?.femaleWeighedJudokas ?? 0} Fille${(stats?.femaleWeighedJudokas ?? 0) > 1 ? 's' : ''}`}
               onValueClick={() => setWeighedOpen(true)}
               valueTitle="Voir les judokas pesés par équipe"

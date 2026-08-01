@@ -16,11 +16,12 @@ function ProtectedRoute({
   children: ReactNode
   requiredRole?: 'admin' | 'operator'
 }) {
-  const { profile, loading } = useAuth()
+  const { profile, loading, sessionReady } = useAuth()
 
   if (loading) return <LoadingScreen />
-  // Profil actif = source de vérité (un flash session Supabase ne doit pas renvoyer au login)
   if (!profile?.active) return <Navigate to="/login" replace />
+  // Attendre un JWT utilisable avant d’afficher le dashboard (sinon stats à 0 après F5 Mac)
+  if (!sessionReady) return <LoadingScreen />
   if (requiredRole && profile.role !== requiredRole && requiredRole === 'admin') {
     return <Navigate to="/app" replace />
   }
