@@ -45,20 +45,45 @@ let pendingBackupJson: Record<string, unknown> | null = null
 
 async function getProfile(): Promise<ProfileRow | null> {
   if (cachedProfile) return cachedProfile
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return null
-  const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+
+  // getSession() lit le stockage local — plus fiable que getUser() sur Safari/Mac
+  const { data: { session } } = await supabase.auth.getSession()
+  let userId = session?.user?.id ?? null
+  if (session?.access_token) cachedAccessToken = session.access_token
+
+  if (!userId) {
+    const { data: { user } } = await supabase.auth.getUser()
+    userId = user?.id ?? null
+  }
+  if (!userId) return null
+
+  const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single()
+  if (error) {
+    console.warn('[judovac] getProfile:', error.message)
+    return null
+  }
   cachedProfile = data as ProfileRow | null
   return cachedProfile
 }
 
+/** Vide uniquement le profil en mémoire (conserve le token d’accès). */
 export function clearProfileCache(): void {
+  cachedProfile = null
+}
+
+/** Vide profil + token (déconnexion). */
+export function clearAuthCache(): void {
   cachedProfile = null
   cachedAccessToken = null
 }
 
 export function syncAccessToken(token: string | null): void {
   cachedAccessToken = token
+}
+
+/** Alimente le cache profil après login pour éviter un getUser() réseau. */
+export function syncProfileCache(profile: ProfileRow | null): void {
+  cachedProfile = profile
 }
 
 async function getAccessToken(): Promise<string | null> {

@@ -1,8 +1,13 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import type { ModeConfig } from '@shared/types/mode'
 import { isSupabaseConfigured, supabase, type ProfileRow } from './supabase'
-import { clearProfileCache, syncAccessToken } from './judovac-client'
+import {
+  clearAuthCache,
+  clearProfileCache,
+  syncAccessToken,
+  syncProfileCache
+} from './judovac-client'
 
 interface SignInResult {
   error?: string
@@ -61,10 +66,20 @@ async function applyModeForProfile(profile: ProfileRow): Promise<void> {
   }
 }
 
+function applyProfile(p: ProfileRow | null, setProfile: (p: ProfileRow | null) => void): void {
+  syncProfileCache(p)
+  setProfile(p)
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<ProfileRow | null>(null)
   const [loading, setLoading] = useState(true)
+  const profileRef = useRef<ProfileRow | null>(null)
+
+  useEffect(() => {
+    profileRef.current = profile
+  }, [profile])
 
   async function loadProfile(userId: string): Promise<ProfileRow | null> {
     const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single()
@@ -98,7 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (s?.user) {
           try {
             const p = await withTimeout(loadProfile(s.user.id), PROFILE_TIMEOUT_MS, 'Chargement du profil')
-            if (!cancelled) setProfile(p)
+            if (!cancelled && p) applyProfile(p, setProfile)
           } catch (e) {
             console.warn('[auth] profil:', e)
           }
@@ -115,45 +130,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const {
       data: { subscription }
-    } = supabase.auth.onAuthStateChange((_event, s) => {
-      // Ne jamais await ici : Safari/Mac peut bloquer signInWithPassword
-      // tant que le callback async n'a pas fini (deadlock initializePromise).
-      clearProfileCache()
-      syncAccessToken(s?.access_token ?? null)
+    } = supabase.auth.onAuthStateChange((event, s) => {
+      // Ne jamais await ici : Safari/Mac peut bloquer signInWithPassword.
+      if (event === 'SIGNED_OUT' || !s) {
+        clearAuthCache()
+        setSession(null)
+        setProfile(null)
+        profileRef.current = null
+        return
+      }
+
+      syncAccessToken(s.access_token)
       setSession((prev) => {
-        if (prev?.access_token === s?.access_token && prev?.user?.id === s?.user?.id) {
+        if (prev?.access_token === s.access_token && prev?.user?.id === s.user?.id) {
           return prev
         }
         return s
       })
 
+      // TOKEN_REFRESHED : garder le profil actuel, ne pas vider le cache (sinon stats vides)
+      if (event === 'TOKEN_REFRESHED' && profileRef.current) {
+        return
+      }
+
       window.setTimeout(() => {
-        if (cancelled) return
+        if (cancelled || !s.user) return
         void (async () => {
-          if (s?.user) {
-            try {
-              const p = await withTimeout(
-                loadProfile(s.user.id),
-                PROFILE_TIMEOUT_MS,
-                'Chargement du profil'
-              )
-              if (cancelled) return
-              setProfile((prev) => {
-                if (
-                  prev?.id === p?.id &&
-                  prev?.role === p?.role &&
-                  prev?.active === p?.active &&
-                  prev?.username === p?.username
-                ) {
-                  return prev
-                }
-                return p
-              })
-            } catch (e) {
-              console.warn('[auth] onAuthStateChange profil:', e)
+          try {
+            const p = await withTimeout(
+              loadProfile(s.user!.id),
+              PROFILE_TIMEOUT_MS,
+              'Chargement du profil'
+            )
+            if (cancelled) return
+            // Ne jamais écraser un profil valide par null (cause du retour login sur Mac)
+            if (!p) {
+              console.warn('[auth] profil indisponible — conservation de l’état actuel')
+              return
             }
-          } else {
-            setProfile(null)
+            if (
+              profileRef.current?.id === p.id &&
+              profileRef.current?.role === p.role &&
+              profileRef.current?.active === p.active &&
+              profileRef.current?.username === p.username
+            ) {
+              syncProfileCache(p)
+              return
+            }
+            applyProfile(p, setProfile)
+          } catch (e) {
+            console.warn('[auth] onAuthStateChange profil:', e)
           }
         })()
       }, 0)
@@ -175,7 +201,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       )
       if (error) return { error: error.message }
 
-      // Utiliser la session renvoyée — éviter getSession() juste après (deadlock Safari)
       const s = data.session
       if (!s?.user) return { error: 'Session introuvable après connexion' }
 
@@ -210,9 +235,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       if (!p.active) return { error: 'Compte désactivé — contactez un administrateur.' }
 
-      setProfile(p)
+      applyProfile(p, setProfile)
       setSession(s)
-      // Ne pas bloquer la navigation sur setMode
       void applyModeForProfile(p)
       return { role: p.role }
     } catch (e) {
@@ -223,8 +247,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function signOut() {
-    clearProfileCache()
-    syncAccessToken(null)
+    clearAuthCache()
     try {
       await withTimeout(supabase.auth.signOut(), 10_000, 'Déconnexion')
     } catch (e) {
@@ -232,6 +255,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setSession(null)
     setProfile(null)
+    profileRef.current = null
     try {
       await window.judovac.clearMode()
     } catch (e) {

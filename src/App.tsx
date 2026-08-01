@@ -52,6 +52,8 @@ export default function App() {
   // Sync mode — effet séparé, ne bloque pas l'UI
   useEffect(() => {
     if (loading) return
+    // Ne pas clearMode tant qu’une session existe sans profil (hydratation en cours)
+    if (session && !profile) return
 
     const cfg = session && profile?.active ? buildModeConfig() : null
     const key = cfg
@@ -64,7 +66,7 @@ export default function App() {
     void (async () => {
       try {
         if (cfg) await window.judovac.setMode(cfg)
-        else await window.judovac.clearMode()
+        else if (!session) await window.judovac.clearMode()
       } catch (e) {
         console.warn('[App] mode sync:', e)
       }
