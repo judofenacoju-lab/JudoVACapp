@@ -20,6 +20,25 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null)
 
+const PROFILE_TIMEOUT_MS = 12_000
+const SIGN_IN_TIMEOUT_MS = 20_000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = window.setTimeout(() => reject(new Error(`${label} (délai ${ms / 1000}s dépassé)`)), ms)
+    promise.then(
+      (v) => {
+        window.clearTimeout(t)
+        resolve(v)
+      },
+      (e) => {
+        window.clearTimeout(t)
+        reject(e)
+      }
+    )
+  })
+}
+
 function buildModeConfigFromProfile(profile: ProfileRow): ModeConfig {
   if (profile.role === 'admin') {
     return { mode: 'server', configuredAt: new Date().toISOString() }
@@ -35,7 +54,11 @@ function buildModeConfigFromProfile(profile: ProfileRow): ModeConfig {
 }
 
 async function applyModeForProfile(profile: ProfileRow): Promise<void> {
-  await window.judovac.setMode(buildModeConfigFromProfile(profile))
+  try {
+    await window.judovac.setMode(buildModeConfigFromProfile(profile))
+  } catch (e) {
+    console.warn('[auth] setMode:', e)
+  }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -44,7 +67,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   async function loadProfile(userId: string): Promise<ProfileRow | null> {
-    const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
+    const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single()
+    if (error) {
+      console.warn('[auth] profil query:', error.message)
+      return null
+    }
     return data as ProfileRow | null
   }
 
@@ -70,7 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         syncAccessToken(s?.access_token ?? null)
         if (s?.user) {
           try {
-            const p = await loadProfile(s.user.id)
+            const p = await withTimeout(loadProfile(s.user.id), PROFILE_TIMEOUT_MS, 'Chargement du profil')
             if (!cancelled) setProfile(p)
           } catch (e) {
             console.warn('[auth] profil:', e)
@@ -88,36 +115,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const {
       data: { subscription }
-    } = supabase.auth.onAuthStateChange(async (_event, s) => {
+    } = supabase.auth.onAuthStateChange((_event, s) => {
+      // Ne jamais await ici : Safari/Mac peut bloquer signInWithPassword
+      // tant que le callback async n'a pas fini (deadlock initializePromise).
       clearProfileCache()
       syncAccessToken(s?.access_token ?? null)
-      // Évite les re-renders inutiles qui relançaient le splash
       setSession((prev) => {
         if (prev?.access_token === s?.access_token && prev?.user?.id === s?.user?.id) {
           return prev
         }
         return s
       })
-      if (s?.user) {
-        try {
-          const p = await loadProfile(s.user.id)
-          setProfile((prev) => {
-            if (
-              prev?.id === p?.id &&
-              prev?.role === p?.role &&
-              prev?.active === p?.active &&
-              prev?.username === p?.username
-            ) {
-              return prev
+
+      window.setTimeout(() => {
+        if (cancelled) return
+        void (async () => {
+          if (s?.user) {
+            try {
+              const p = await withTimeout(
+                loadProfile(s.user.id),
+                PROFILE_TIMEOUT_MS,
+                'Chargement du profil'
+              )
+              if (cancelled) return
+              setProfile((prev) => {
+                if (
+                  prev?.id === p?.id &&
+                  prev?.role === p?.role &&
+                  prev?.active === p?.active &&
+                  prev?.username === p?.username
+                ) {
+                  return prev
+                }
+                return p
+              })
+            } catch (e) {
+              console.warn('[auth] onAuthStateChange profil:', e)
             }
-            return p
-          })
-        } catch {
-          setProfile(null)
-        }
-      } else {
-        setProfile(null)
-      }
+          } else {
+            setProfile(null)
+          }
+        })()
+      }, 0)
     })
 
     return () => {
@@ -128,50 +167,76 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   async function signIn(email: string, password: string): Promise<SignInResult> {
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) return { error: error.message }
-    clearProfileCache()
-    const { data: { session: s } } = await supabase.auth.getSession()
-    if (!s?.user) return { error: 'Session introuvable après connexion' }
+    try {
+      const { data, error } = await withTimeout(
+        supabase.auth.signInWithPassword({ email, password }),
+        SIGN_IN_TIMEOUT_MS,
+        'Connexion'
+      )
+      if (error) return { error: error.message }
 
-    let p = await loadProfile(s.user.id)
-    if (!p) {
-      const token = s.access_token
-      const bootstrap = await fetch('/api/auth/ensure-profile', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      const json = (await bootstrap.json().catch(() => ({}))) as {
-        ok?: boolean
-        data?: ProfileRow
-        error?: string
-      }
-      if (bootstrap.ok && json.ok && json.data) {
-        p = json.data
-      } else {
-        return {
-          error:
-            json.error ??
-            'Profil absent. Exécutez supabase/migrations/002_fix_profiles_admin.sql dans Supabase → SQL Editor.'
+      // Utiliser la session renvoyée — éviter getSession() juste après (deadlock Safari)
+      const s = data.session
+      if (!s?.user) return { error: 'Session introuvable après connexion' }
+
+      clearProfileCache()
+      syncAccessToken(s.access_token)
+
+      let p = await withTimeout(loadProfile(s.user.id), PROFILE_TIMEOUT_MS, 'Chargement du profil')
+      if (!p) {
+        const token = s.access_token
+        const bootstrap = await withTimeout(
+          fetch('/api/auth/ensure-profile', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` }
+          }),
+          PROFILE_TIMEOUT_MS,
+          'Création du profil'
+        )
+        const json = (await bootstrap.json().catch(() => ({}))) as {
+          ok?: boolean
+          data?: ProfileRow
+          error?: string
+        }
+        if (bootstrap.ok && json.ok && json.data) {
+          p = json.data
+        } else {
+          return {
+            error:
+              json.error ??
+              'Profil absent. Exécutez supabase/migrations/002_fix_profiles_admin.sql dans Supabase → SQL Editor.'
+          }
         }
       }
-    }
-    if (!p.active) return { error: 'Compte désactivé — contactez un administrateur.' }
+      if (!p.active) return { error: 'Compte désactivé — contactez un administrateur.' }
 
-    setProfile(p)
-    setSession(s)
-    syncAccessToken(s.access_token)
-    await applyModeForProfile(p)
-    return { role: p.role }
+      setProfile(p)
+      setSession(s)
+      // Ne pas bloquer la navigation sur setMode
+      void applyModeForProfile(p)
+      return { role: p.role }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Connexion impossible'
+      console.warn('[auth] signIn:', e)
+      return { error: msg }
+    }
   }
 
   async function signOut() {
     clearProfileCache()
     syncAccessToken(null)
-    await supabase.auth.signOut()
+    try {
+      await withTimeout(supabase.auth.signOut(), 10_000, 'Déconnexion')
+    } catch (e) {
+      console.warn('[auth] signOut:', e)
+    }
     setSession(null)
     setProfile(null)
-    await window.judovac.clearMode()
+    try {
+      await window.judovac.clearMode()
+    } catch (e) {
+      console.warn('[auth] clearMode:', e)
+    }
   }
 
   const buildModeConfig = useCallback((): ModeConfig | null => {

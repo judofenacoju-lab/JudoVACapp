@@ -30,15 +30,20 @@ export function LoginPage() {
     e.preventDefault()
     setBusy(true)
     setError(null)
-    const res = await signIn(email.trim(), password)
-    setBusy(false)
-    if (res.error) {
-      setError(res.error)
-      return
+    try {
+      const res = await signIn(email.trim(), password)
+      if (res.error) {
+        setError(res.error)
+        return
+      }
+      setEmail('')
+      setPassword('')
+      navigate(res.role === 'admin' ? '/dashboard' : '/app', { replace: true })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Connexion impossible')
+    } finally {
+      setBusy(false)
     }
-    setEmail('')
-    setPassword('')
-    navigate(res.role === 'admin' ? '/dashboard' : '/app', { replace: true })
   }
 
   return (

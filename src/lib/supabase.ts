@@ -15,12 +15,21 @@ export const isSupabaseConfigured = Boolean(
   supabaseUrl.startsWith('https://') && supabaseAnonKey.length > 20
 )
 
+/**
+ * Contourne navigator.locks — sur Safari/Mac un verrou orphelin bloque
+ * signInWithPassword / getSession indéfiniment (spinner login).
+ */
+const authLock = async <R>(_name: string, _acquireTimeout: number, fn: () => Promise<R>): Promise<R> =>
+  fn()
+
 /** Client unique — null si les variables Vercel / .env sont absentes. */
 export const supabase: SupabaseClient = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
         persistSession: true,
-        autoRefreshToken: true
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        lock: authLock
       }
     })
   : (null as unknown as SupabaseClient)
