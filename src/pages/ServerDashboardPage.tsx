@@ -104,16 +104,13 @@ export function ServerDashboardPage({ onResetMode }: Props) {
         // Ne jamais écraser de bonnes stats par un échec transitoire (JWT flash Mac → tout à 0)
         if (data.statsOk && data.stats) {
           setStats((prev) => {
-            if (
-              prev &&
-              prev.totalJudokas > 0 &&
-              data.stats!.totalJudokas === 0
-            ) {
-              // Requête « vide » suspecte : garder l’affichage précédent, retenter au prochain tick
-              console.warn('[dashboard] stats vides ignorées (conservation des compteurs)')
+            const next = data.stats!
+            // Échec auth → 0 : ne pas écraser le dernier total réel
+            if (prev && prev.totalJudokas > 0 && next.totalJudokas === 0) {
+              console.warn('[dashboard] total 0 suspect — conservation des compteurs')
               return prev
             }
-            return data.stats
+            return next
           })
         }
         if (data.statusOk && data.status) {
@@ -124,7 +121,7 @@ export function ServerDashboardPage({ onResetMode }: Props) {
       }
     }
     void tick()
-    const id = setInterval(() => void tick(), 3000)
+    const id = setInterval(() => void tick(), 2000)
     return () => {
       alive = false
       clearInterval(id)

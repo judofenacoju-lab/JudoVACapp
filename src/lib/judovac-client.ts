@@ -466,51 +466,85 @@ async function fetchAllJudokasForDashboard(): Promise<
   if (!authed) throw new Error('Session absente — reconnexion du jeton en cours')
 
   const pageSize = 1000
+
+  // Total exact côté Supabase — évite d’afficher un faux « 1000 » (taille d’une seule page)
+  const { count: exactCount, error: countError } = await supabase
+    .from('judokas')
+    .select('id', { count: 'exact', head: true })
+  if (countError) throw new Error(countError.message)
+  const expected = exactCount ?? 0
+  if (expected === 0) {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session?.access_token) {
+      throw new Error('Session absente pendant le chargement des judokas')
+    }
+    return []
+  }
+
   const rows: Array<{ created_by: string; sex: string; weight_kg: unknown }> = []
   let offset = 0
-  for (;;) {
+  let emptyPageRetries = 0
+
+  while (rows.length < expected) {
     const { data, error } = await supabase
       .from('judokas')
       .select('created_by, sex, weight_kg')
       .order('created_at', { ascending: true })
       .range(offset, offset + pageSize - 1)
+
     if (error) {
-      // JWT perdu mid-flight → restaurer et retenter une fois
-      const msg = error.message.toLowerCase()
-      if (msg.includes('jwt') || msg.includes('session') || error.code === 'PGRST301') {
-        const ok = await ensureSupabaseSession()
-        if (ok && offset === 0) {
-          const retry = await supabase
-            .from('judokas')
-            .select('created_by, sex, weight_kg')
-            .order('created_at', { ascending: true })
-            .range(0, pageSize - 1)
-          if (retry.error) throw new Error(retry.error.message)
-          const batch = retry.data ?? []
-          for (const row of batch) {
-            rows.push(row as { created_by: string; sex: string; weight_kg: unknown })
-          }
-          if (batch.length < pageSize) return rows
-          offset = pageSize
-          continue
+      const restored = await ensureSupabaseSession()
+      if (!restored) throw new Error(error.message)
+      const retry = await supabase
+        .from('judokas')
+        .select('created_by, sex, weight_kg')
+        .order('created_at', { ascending: true })
+        .range(offset, offset + pageSize - 1)
+      if (retry.error) throw new Error(retry.error.message)
+      const batch = retry.data ?? []
+      if (batch.length === 0 && rows.length < expected) {
+        emptyPageRetries += 1
+        if (emptyPageRetries > 3) {
+          throw new Error(
+            `Chargement incomplet des judokas (${rows.length}/${expected})`
+          )
         }
+        await ensureSupabaseSession()
+        continue
       }
-      throw new Error(error.message)
+      emptyPageRetries = 0
+      for (const row of batch) {
+        rows.push(row as { created_by: string; sex: string; weight_kg: unknown })
+      }
+      offset += batch.length
+      if (batch.length === 0) break
+      continue
     }
+
     const batch = data ?? []
+    // Page pleine puis page vide alors qu’il reste des lignes = JWT/RLS flash (affiche souvent 1000)
+    if (batch.length === 0 && rows.length < expected) {
+      emptyPageRetries += 1
+      if (emptyPageRetries > 3) {
+        throw new Error(
+          `Chargement incomplet des judokas (${rows.length}/${expected})`
+        )
+      }
+      await ensureSupabaseSession()
+      continue
+    }
+    emptyPageRetries = 0
     for (const row of batch) {
       rows.push(row as { created_by: string; sex: string; weight_kg: unknown })
     }
-    if (batch.length < pageSize) break
-    offset += pageSize
+    if (batch.length === 0) break
+    offset += batch.length
   }
 
-  // Résultat vide sans session = échec auth, pas une base vraiment vide
-  if (rows.length === 0) {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session?.access_token) {
-      throw new Error('Session absente pendant le chargement des judokas')
-    }
+  if (rows.length < expected) {
+    throw new Error(
+      `Chargement incomplet des judokas (${rows.length}/${expected}) — nouvel essai`
+    )
   }
 
   return rows
