@@ -6,6 +6,7 @@ import {
   resolveJudokaCategory
 } from '@shared/utils/judoka'
 import { downloadPdfBytes } from '@/lib/judoka-list-pdf'
+import { pdfSafeText } from '@/lib/pdf-winansi-text'
 
 const MARGIN = 36
 const ROW_H = 16
@@ -22,24 +23,29 @@ type WeightGroup = { weight: number; label: string; judokas: Judoka[] }
 type Col = { key: string; label: string; width: number; value: (j: Judoka, i: number) => string }
 
 const COLS: Col[] = [
-  { key: 'n', label: 'N°', width: 28, value: (_j, i) => String(i + 1) },
-  { key: 'name', label: 'Nom complet', width: 180, value: (j) => formatJudokaFullName(j) || '—' },
-  { key: 'age', label: 'Âge', width: 28, value: (j) => (j.age != null ? String(j.age) : '—') },
+  { key: 'n', label: pdfSafeText('N°'), width: 28, value: (_j, i) => String(i + 1) },
+  {
+    key: 'name',
+    label: 'Nom complet',
+    width: 180,
+    value: (j) => pdfSafeText(formatJudokaFullName(j) || '-')
+  },
+  { key: 'age', label: pdfSafeText('Âge'), width: 28, value: (j) => (j.age != null ? String(j.age) : '-') },
   {
     key: 'weight',
     label: 'Poids (kg)',
     width: 55,
-    value: (j) => (j.weightKg != null ? String(j.weightKg) : '—')
+    value: (j) => (j.weightKg != null ? String(j.weightKg) : '-')
   },
-  { key: 'club', label: 'Club', width: 100, value: (j) => j.club || '—' },
-  { key: 'grade', label: 'Grade', width: 50, value: (j) => j.grade || '—' },
+  { key: 'club', label: 'Club', width: 100, value: (j) => pdfSafeText(j.club || '-') },
+  { key: 'grade', label: 'Grade', width: 50, value: (j) => pdfSafeText(j.grade || '-') },
   {
     key: 'cat',
-    label: 'Catégorie',
+    label: pdfSafeText('Catégorie'),
     width: 70,
-    value: (j) => resolveJudokaCategory(j.birthDate, j.category) || '—'
+    value: (j) => pdfSafeText(resolveJudokaCategory(j.birthDate, j.category) || '-')
   },
-  { key: 'license', label: 'Licence', width: 70, value: (j) => j.licenseNumber || '—' }
+  { key: 'license', label: 'Licence', width: 70, value: (j) => pdfSafeText(j.licenseNumber || '-') }
 ]
 
 function truncate(
@@ -48,12 +54,13 @@ function truncate(
   size: number,
   maxW: number
 ): string {
-  if (font.widthOfTextAtSize(text, size) <= maxW) return text
-  let t = text
-  while (t.length > 1 && font.widthOfTextAtSize(`${t}…`, size) > maxW) {
+  const safe = pdfSafeText(text)
+  if (font.widthOfTextAtSize(safe, size) <= maxW) return safe
+  let t = safe
+  while (t.length > 1 && font.widthOfTextAtSize(`${t}...`, size) > maxW) {
     t = t.slice(0, -1)
   }
-  return `${t}…`
+  return `${t}...`
 }
 
 function normalizeWeightKey(weightKg: unknown): number {
@@ -111,7 +118,7 @@ export function sortWeighedForTriage(judokas: Judoka[]): { boys: Judoka[]; girls
  */
 export async function exportWeighedTriagePdfBytes(judokas: Judoka[]): Promise<Uint8Array> {
   const { boys, girls } = sortWeighedForTriage(judokas)
-  const title = 'Triage des judokas pesés — JudoVACapp'
+  const title = pdfSafeText('Triage des judokas pesés - JudoVACapp')
   const pdf = await PDFDocument.create()
   pdf.setTitle(title)
   pdf.setAuthor('JudoVACapp')
@@ -144,7 +151,9 @@ export async function exportWeighedTriagePdfBytes(judokas: Judoka[]): Promise<Ui
       color: navy
     })
     y -= TITLE_SIZE + 6
-    const meta = `Export du ${new Date().toLocaleString('fr-FR')} — ${boys.length + girls.length} pesé(s) · ${boys.length} garçon(s) · ${girls.length} fille(s) — regroupés par poids identique (sexe puis kg)`
+    const meta = pdfSafeText(
+      `Export du ${new Date().toLocaleString('fr-FR')} - ${boys.length + girls.length} pesé(s) · ${boys.length} garçon(s) · ${girls.length} fille(s) - regroupés par poids identique (sexe puis kg)`
+    )
     page.drawText(truncate(font, meta, META_SIZE, pageW - MARGIN * 2), {
       x: MARGIN,
       y: y - META_SIZE,
@@ -165,7 +174,7 @@ export async function exportWeighedTriagePdfBytes(judokas: Judoka[]): Promise<Ui
     })
     let x = tableX
     for (const col of COLS) {
-      page.drawText(col.label, {
+      page.drawText(pdfSafeText(col.label), {
         x: x + 3,
         y: y - HEADER_H + 5,
         size: CELL_SIZE,
@@ -180,7 +189,7 @@ export async function exportWeighedTriagePdfBytes(judokas: Judoka[]): Promise<Ui
   function newPage(): void {
     page = pdf.addPage([pageW, pageH])
     y = pageH - MARGIN
-    page.drawText(`${title} (suite)`, {
+    page.drawText(pdfSafeText(`${title} (suite)`), {
       x: MARGIN,
       y: y - 11,
       size: 11,
@@ -205,7 +214,7 @@ export async function exportWeighedTriagePdfBytes(judokas: Judoka[]): Promise<Ui
       height: SECTION_H,
       color: sectionBg
     })
-    page.drawText(`${label} — ${count} judoka(s)`, {
+    page.drawText(pdfSafeText(`${label} - ${count} judoka(s)`), {
       x: tableX + 8,
       y: y - SECTION_H + 6,
       size: 10,
@@ -227,8 +236,8 @@ export async function exportWeighedTriagePdfBytes(judokas: Judoka[]): Promise<Ui
       borderColor: weightBlockBorder,
       borderWidth: 0.8
     })
-    const title = `Poids ${group.label} — ${group.judokas.length} judoka(s)`
-    page.drawText(title, {
+    const blockTitle = pdfSafeText(`Poids ${group.label} - ${group.judokas.length} judoka(s)`)
+    page.drawText(blockTitle, {
       x: tableX + 8,
       y: y - WEIGHT_BLOCK_H + 4,
       size: 9,
@@ -299,7 +308,7 @@ export async function exportWeighedTriagePdfBytes(judokas: Judoka[]): Promise<Ui
   drawDocHeader()
 
   if (boys.length === 0 && girls.length === 0) {
-    page.drawText('Aucun judoka pesé à trier.', {
+    page.drawText(pdfSafeText('Aucun judoka pesé à trier.'), {
       x: tableX,
       y: y - 24,
       size: 11,
