@@ -9,15 +9,78 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0B1F3A" />
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <link rel="icon" type="image/png" href="./assets/brand-logo.png" />
     <title>JudoVACapp</title>
   </head>
   <body style="margin:0;background:#ffffff">
     <div id="root">
-      <div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:system-ui,sans-serif;color:#0B1F3A">
+      <div
+        id="boot-splash"
+        style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:system-ui,sans-serif;color:#0B1F3A;gap:12px;padding:24px;text-align:center"
+      >
         <p style="margin:0;font-size:14px;font-weight:500">Chargement JudoVACapp…</p>
+        <p id="boot-hint" style="margin:0;font-size:12px;color:#64748b;display:none"></p>
+        <button
+          id="boot-reload"
+          type="button"
+          style="display:none;margin-top:8px;background:#C8102E;color:#fff;border:0;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer"
+        >
+          Recharger
+        </button>
       </div>
     </div>
+    <script>
+      (function () {
+        var shown = false
+        function showBootHelp(msg) {
+          if (shown) return
+          var splash = document.getElementById('boot-splash')
+          if (!splash || !splash.isConnected) return
+          shown = true
+          var hint = document.getElementById('boot-hint')
+          var btn = document.getElementById('boot-reload')
+          if (hint) {
+            hint.style.display = 'block'
+            hint.textContent = msg
+          }
+          if (btn) {
+            btn.style.display = 'inline-block'
+            btn.onclick = function () {
+              try {
+                location.reload(true)
+              } catch (e) {
+                location.reload()
+              }
+            }
+          }
+        }
+        // Safari Mac : bfcache peut restaurer un index obsolète → JS 404 → écran blanc
+        window.addEventListener('pageshow', function (e) {
+          if (e.persisted) location.reload()
+        })
+        window.addEventListener('error', function (e) {
+          var t = e && e.target
+          if (t && t.tagName === 'SCRIPT') {
+            showBootHelp(
+              'Le script de l’application n’a pas pu charger (souvent un cache Safari). Rechargez ou videz le cache (Cmd+Option+E).'
+            )
+          }
+        }, true)
+        window.addEventListener('unhandledrejection', function () {
+          /* géré par React / auth */
+        })
+        setTimeout(function () {
+          var splash = document.getElementById('boot-splash')
+          if (splash && splash.isConnected) {
+            showBootHelp(
+              'Démarrage trop long sur ce navigateur. Sur Mac Safari : Cmd+Option+E puis Recharger.'
+            )
+          }
+        }, 10000)
+      })()
+    </script>
     <script type="module" src="./main.tsx"></script>
   </body>
 </html>

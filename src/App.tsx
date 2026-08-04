@@ -44,11 +44,22 @@ export default function App() {
     setBootReady(true)
   }, [loading])
 
-  // Filet de sécurité tablette : jamais bloqué plus de 2,5 s
+  // Filet de sécurité : jamais bloqué plus de 2,5 s (Mac Safari inclus)
   useEffect(() => {
     const t = window.setTimeout(() => setBootReady(true), 2500)
     return () => window.clearTimeout(t)
   }, [])
+
+  // Si l’auth reste coincée (Safari), forcer la sortie du splash
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      if (loading) {
+        console.warn('[App] auth loading timeout — affichage forcé')
+        setBootReady(true)
+      }
+    }, 6000)
+    return () => window.clearTimeout(t)
+  }, [loading])
 
   // Sync mode — effet séparé, ne bloque pas l'UI
   useEffect(() => {
@@ -74,7 +85,9 @@ export default function App() {
   }, [loading, profile, buildModeConfig])
 
   if (!isSupabaseConfigured) return <ConfigErrorPage />
-  if (loading || !bootReady) return <LoadingScreen />
+  // bootReady : filet anti-blocage ; loading géré aussi par timeout auth
+  if (!bootReady) return <LoadingScreen />
+  if (loading) return <LoadingScreen />
 
   // Toujours dériver du profil actif — ne pas dépendre d’un mode state qui peut être null
   const effectiveMode = profile?.active ? buildModeConfig() ?? mode : null

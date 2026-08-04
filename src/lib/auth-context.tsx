@@ -188,7 +188,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!sessionRef.current) clearUiAuth()
         setLoading(false)
       }
-    }, 10000)
+    }, 5000)
 
     void (async () => {
       try {

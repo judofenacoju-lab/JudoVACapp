@@ -24,7 +24,6 @@ import {
 } from './mappers'
 import { readDurableSession, saveDurableSession, isAccessTokenExpired } from './durable-session'
 import { downloadBlob, downloadBytes } from './download-blob'
-import { exportBadgesPdfBytes } from './badge-pdf-browser'
 
 export type IpcResult<T> =
   | { ok: true; data: T }
@@ -1811,6 +1810,26 @@ export const judovacClient = {
           opts.weighedOnly
             ? 'Aucun judoka pesé ne correspond à ces filtres.'
             : 'Aucun judoka ne correspond à ces filtres.'
+        )
+      }
+
+      let exportBadgesPdfBytes: typeof import('./badge-pdf-browser').exportBadgesPdfBytes
+      try {
+        ;({ exportBadgesPdfBytes } = await import('./badge-pdf-browser'))
+      } catch (chunkErr) {
+        console.warn('[exportBadgesPdf] chunk:', chunkErr)
+        try {
+          const key = 'jv-reload-pdf-chunk'
+          if (typeof sessionStorage !== 'undefined' && !sessionStorage.getItem(key)) {
+            sessionStorage.setItem(key, '1')
+            window.location.reload()
+            return fail('Rechargement pour récupérer le module PDF…')
+          }
+        } catch {
+          /* ignore */
+        }
+        return fail(
+          'Module PDF inaccessible (cache navigateur). Sur Mac Safari : Cmd+Option+E puis rechargez la page.'
         )
       }
 
