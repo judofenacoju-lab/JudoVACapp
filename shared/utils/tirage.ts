@@ -5,16 +5,27 @@ import {
   resolveJudokaCategory
 } from '@shared/utils/judoka'
 
+/** Catégorie de poids configurable pour le tirage (ex. −20 kg → 18–20). */
+export interface TirageWeightClass {
+  id: string
+  /** Libellé affiché (ex. « -20 kg »). */
+  label: string
+  /** Poids mini inclus (kg). */
+  minKg: number
+  /** Poids maxi inclus (kg). */
+  maxKg: number
+}
+
 /** Options de tirage des combats. */
 export interface TirageSettings {
-  /** Tolérance de poids en kg (0 = poids identiques à 0,1 kg près). */
-  weightToleranceKg: number
+  /** Seuils / catégories de poids définis avant le tirage. */
+  weightClasses: TirageWeightClass[]
   /** Si true, évite autant que possible les combats entre judokas du même club. */
   avoidSameClub: boolean
 }
 
 export const DEFAULT_TIRAGE_SETTINGS: TirageSettings = {
-  weightToleranceKg: 0,
+  weightClasses: [],
   avoidSameClub: true
 }
 
@@ -42,6 +53,7 @@ export interface TiragePool {
   sexLabel: string
   category: string
   weightLabel: string
+  weightClassId: string
   weightKey: number
   fights: TirageFight[]
   /** Judokas dans le groupe avant appariement. */
@@ -52,6 +64,8 @@ export interface TirageResult {
   generatedAt: string
   settings: TirageSettings
   weighedCount: number
+  matchedCount: number
+  unmatchedCount: number
   fightCount: number
   byeCount: number
   pools: TiragePool[]
@@ -63,10 +77,6 @@ function normalizeWeightKg(weightKg: unknown): number {
   const n = Number(raw)
   if (!Number.isFinite(n)) return 0
   return Math.round(n * 10) / 10
-}
-
-function formatWeightLabel(weightKg: number): string {
-  return Number.isInteger(weightKg) ? `${weightKg} kg` : `${weightKg.toFixed(1).replace('.', ',')} kg`
 }
 
 function toFighter(j: Judoka): TirageFighter {
@@ -92,24 +102,56 @@ export function shuffleInPlace<T>(items: T[], random: () => number = Math.random
   return items
 }
 
-function weightCompatible(a: TirageFighter, b: TirageFighter, toleranceKg: number): boolean {
-  const diff = Math.abs(a.weightKg - b.weightKg)
-  if (toleranceKg <= 0) return diff < 0.05
-  return diff <= toleranceKg + 1e-9
+export function createWeightClassId(): string {
+  return `wc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+/** Libellé judo classique à partir du max (ex. 20 → « -20 kg »). */
+export function suggestWeightClassLabel(maxKg: number): string {
+  if (!Number.isFinite(maxKg)) return ''
+  const n = Number.isInteger(maxKg) ? String(maxKg) : maxKg.toFixed(1).replace('.', ',')
+  return `-${n} kg`
+}
+
+export function normalizeWeightClasses(classes: TirageWeightClass[]): TirageWeightClass[] {
+  return classes
+    .map((c) => {
+      const minKg = normalizeWeightKg(c.minKg)
+      const maxKg = normalizeWeightKg(c.maxKg)
+      const label = (c.label || '').trim() || suggestWeightClassLabel(maxKg)
+      return {
+        id: c.id || createWeightClassId(),
+        label,
+        minKg: Math.min(minKg, maxKg),
+        maxKg: Math.max(minKg, maxKg)
+      }
+    })
+    .filter((c) => Number.isFinite(c.minKg) && Number.isFinite(c.maxKg) && c.maxKg > 0)
+    .sort((a, b) => a.maxKg - b.maxKg || a.minKg - b.minKg)
+}
+
+/** Première catégorie dont min ≤ poids ≤ max (après tri par max croissant). */
+export function matchWeightClass(
+  weightKg: number,
+  classes: TirageWeightClass[]
+): TirageWeightClass | null {
+  const w = normalizeWeightKg(weightKg)
+  for (const c of classes) {
+    if (w >= c.minKg - 1e-9 && w <= c.maxKg + 1e-9) return c
+  }
+  return null
 }
 
 function pickPartner(
   a: TirageFighter,
   candidates: TirageFighter[],
   used: Set<string>,
-  opts: { toleranceKg: number; avoidSameClub: boolean }
+  avoidSameClub: boolean
 ): TirageFighter | null {
-  const available = candidates.filter(
-    (c) => !used.has(c.id) && c.id !== a.id && weightCompatible(a, c, opts.toleranceKg)
-  )
+  const available = candidates.filter((c) => !used.has(c.id) && c.id !== a.id)
   if (available.length === 0) return null
 
-  if (opts.avoidSameClub && a.club !== 'Sans club') {
+  if (avoidSameClub && a.club !== 'Sans club') {
     const otherClub = available.filter((c) => c.club !== a.club)
     if (otherClub.length > 0) return otherClub[0]!
   }
@@ -117,13 +159,11 @@ function pickPartner(
 }
 
 /**
- * Apparie une liste (même sexe / catégorie) de façon aléatoire,
- * en respectant la tolérance de poids.
+ * Apparie une liste (même sexe / catégorie d’âge / catégorie de poids) aléatoirement.
  */
 export function pairFighters(
   fighters: TirageFighter[],
   opts: {
-    toleranceKg: number
     avoidSameClub: boolean
     fightIdPrefix: string
     startNumber: number
@@ -139,10 +179,7 @@ export function pairFighters(
     if (used.has(a.id)) continue
     used.add(a.id)
 
-    const partner = pickPartner(a, pool, used, {
-      toleranceKg: opts.toleranceKg,
-      avoidSameClub: opts.avoidSameClub
-    })
+    const partner = pickPartner(a, pool, used, opts.avoidSameClub)
 
     if (!partner) {
       fights.push({
@@ -170,44 +207,49 @@ export function pairFighters(
   return { fights, nextNumber: number }
 }
 
-function poolWeightLabel(fights: TirageFight[], fighters: TirageFighter[]): string {
-  const fromFights = fights.flatMap((f) => (f.b ? [f.a, f.b] : [f.a]))
-  const list = fromFights.length > 0 ? fromFights : fighters
-  const weights = list.map((f) => f.weightKg)
-  const min = Math.min(...weights)
-  const max = Math.max(...weights)
-  if (min === max) return formatWeightLabel(min)
-  return `${formatWeightLabel(min).replace(' kg', '')}–${formatWeightLabel(max)}`
-}
-
 /**
  * Tirage aléatoire des combats pour les judokas pesés.
- * Garçons entre eux, filles entre elles ; groupes Sexe × Catégorie, poids compatible.
+ * Garçons / filles séparés ; groupes Sexe × Catégorie d’âge × Catégorie de poids.
  */
 export function generateTirage(
   judokas: Judoka[],
   settings: TirageSettings = DEFAULT_TIRAGE_SETTINGS,
   random: () => number = Math.random
 ): TirageResult {
-  const weighed = judokas.filter((j) => hasRecordedWeight(j.weightKg)).map(toFighter)
-  const tolerance = Math.max(0, Number(settings.weightToleranceKg) || 0)
-
-  type Group = { sex: Sex; category: string; fighters: TirageFighter[] }
-  const groups = new Map<string, Group>()
-
-  for (const f of weighed) {
-    const key = `${f.sex}::${f.category}`
-    let group = groups.get(key)
-    if (!group) {
-      group = { sex: f.sex, category: f.category, fighters: [] }
-      groups.set(key, group)
-    }
-    group.fighters.push(f)
+  const weightClasses = normalizeWeightClasses(settings.weightClasses ?? [])
+  if (weightClasses.length === 0) {
+    throw new Error('Ajoutez au moins une catégorie de poids avant de lancer le tirage.')
   }
 
-  const sortedGroups = [...groups.values()].sort((a, b) => {
+  const weighed = judokas.filter((j) => hasRecordedWeight(j.weightKg)).map(toFighter)
+
+  type Bucket = {
+    sex: Sex
+    category: string
+    weightClass: TirageWeightClass
+    fighters: TirageFighter[]
+  }
+  const buckets = new Map<string, Bucket>()
+  let matchedCount = 0
+
+  for (const f of weighed) {
+    const wc = matchWeightClass(f.weightKg, weightClasses)
+    if (!wc) continue
+    matchedCount += 1
+    const key = `${f.sex}::${f.category}::${wc.id}`
+    let bucket = buckets.get(key)
+    if (!bucket) {
+      bucket = { sex: f.sex, category: f.category, weightClass: wc, fighters: [] }
+      buckets.set(key, bucket)
+    }
+    bucket.fighters.push(f)
+  }
+
+  const sorted = [...buckets.values()].sort((a, b) => {
     if (a.sex !== b.sex) return a.sex === 'M' ? -1 : 1
-    return a.category.localeCompare(b.category, 'fr')
+    const cat = a.category.localeCompare(b.category, 'fr')
+    if (cat !== 0) return cat
+    return a.weightClass.maxKg - b.weightClass.maxKg || a.weightClass.minKg - b.weightClass.minKg
   })
 
   const pools: TiragePool[] = []
@@ -215,52 +257,14 @@ export function generateTirage(
   let fightCount = 0
   let byeCount = 0
 
-  for (const group of sortedGroups) {
-    if (group.fighters.length === 0) continue
-
-    if (tolerance <= 0) {
-      // Sous-groupes à poids identique
-      const byWeight = new Map<number, TirageFighter[]>()
-      for (const f of group.fighters) {
-        const list = byWeight.get(f.weightKg) ?? []
-        list.push(f)
-        byWeight.set(f.weightKg, list)
-      }
-      const weights = [...byWeight.keys()].sort((a, b) => a - b)
-      for (const w of weights) {
-        const fighters = byWeight.get(w)!
-        const { fights, nextNumber } = pairFighters(
-          fighters,
-          {
-            toleranceKg: 0,
-            avoidSameClub: settings.avoidSameClub,
-            fightIdPrefix: `${group.sex}-${group.category}-${w}`,
-            startNumber: fightNumber
-          },
-          random
-        )
-        fightNumber = nextNumber
-        fightCount += fights.filter((f) => !f.bye).length
-        byeCount += fights.filter((f) => f.bye).length
-        pools.push({
-          sex: group.sex,
-          sexLabel: group.sex === 'F' ? 'Filles' : 'Garçons',
-          category: group.category,
-          weightKey: w,
-          weightLabel: formatWeightLabel(w),
-          fights,
-          entrantCount: fighters.length
-        })
-      }
-      continue
-    }
-
+  for (const bucket of sorted) {
+    if (bucket.fighters.length === 0) continue
+    const wc = bucket.weightClass
     const { fights, nextNumber } = pairFighters(
-      group.fighters,
+      bucket.fighters,
       {
-        toleranceKg: tolerance,
         avoidSameClub: settings.avoidSameClub,
-        fightIdPrefix: `${group.sex}-${group.category}`,
+        fightIdPrefix: `${bucket.sex}-${bucket.category}-${wc.id}`,
         startNumber: fightNumber
       },
       random
@@ -268,21 +272,26 @@ export function generateTirage(
     fightNumber = nextNumber
     fightCount += fights.filter((f) => !f.bye).length
     byeCount += fights.filter((f) => f.bye).length
+
+    const rangeLabel = `${wc.minKg}–${wc.maxKg} kg`
     pools.push({
-      sex: group.sex,
-      sexLabel: group.sex === 'F' ? 'Filles' : 'Garçons',
-      category: group.category,
-      weightKey: group.fighters[0]!.weightKg,
-      weightLabel: poolWeightLabel(fights, group.fighters),
+      sex: bucket.sex,
+      sexLabel: bucket.sex === 'F' ? 'Filles' : 'Garçons',
+      category: bucket.category,
+      weightClassId: wc.id,
+      weightKey: wc.maxKg,
+      weightLabel: `${wc.label} (${rangeLabel})`,
       fights,
-      entrantCount: group.fighters.length
+      entrantCount: bucket.fighters.length
     })
   }
 
   return {
     generatedAt: new Date().toISOString(),
-    settings: { ...settings, weightToleranceKg: tolerance },
+    settings: { ...settings, weightClasses },
     weighedCount: weighed.length,
+    matchedCount,
+    unmatchedCount: weighed.length - matchedCount,
     fightCount,
     byeCount,
     pools
