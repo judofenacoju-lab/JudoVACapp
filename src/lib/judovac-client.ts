@@ -24,6 +24,7 @@ import {
 } from './mappers'
 import { readDurableSession, saveDurableSession, isAccessTokenExpired } from './durable-session'
 import { downloadBlob, downloadBytes } from './download-blob'
+import { exportBadgesPdfBytes } from './badge-pdf-browser'
 
 export type IpcResult<T> =
   | { ok: true; data: T }
@@ -1813,7 +1814,6 @@ export const judovacClient = {
         )
       }
 
-      const { exportBadgesPdfBytes } = await import('./badge-pdf-browser')
       const bytes = await exportBadgesPdfBytes({
         template: tmplRes.data,
         judokas: items,
