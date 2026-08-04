@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import {
   Archive,
+  Dices,
   FileDown,
   Home,
   IdCard,
@@ -21,6 +22,7 @@ export type ServerNavId =
   | 'home'
   | 'form'
   | 'list'
+  | 'tirage'
   | 'badge'
   | 'pdf'
   | 'print'
@@ -39,6 +41,7 @@ const SERVER_NAV: NavDef[] = [
   { id: 'home', label: 'Tableau de bord', icon: <Home className="h-4 w-4" /> },
   { id: 'form', label: 'Nouveau judoka', icon: <Plus className="h-4 w-4" /> },
   { id: 'list', label: 'Liste / Recherche', icon: <List className="h-4 w-4" /> },
+  { id: 'tirage', label: 'Tirage', icon: <Dices className="h-4 w-4" /> },
   { id: 'badge', label: 'Badges', icon: <IdCard className="h-4 w-4" /> },
   { id: 'pdf', label: 'Export PDF', icon: <FileDown className="h-4 w-4" /> },
   { id: 'print', label: 'Impression', icon: <Printer className="h-4 w-4" /> },

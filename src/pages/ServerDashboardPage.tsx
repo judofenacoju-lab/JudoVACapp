@@ -19,6 +19,7 @@ import { JudokaFormPage } from '@/pages/JudokaFormPage'
 import { JudokaListPage } from '@/pages/JudokaListPage'
 import { BadgeDesignerPage } from '@/pages/BadgeDesignerPage'
 import { PdfExportPage } from '@/pages/PdfExportPage'
+import { TiragePage } from '@/pages/TiragePage'
 import { BackupPage } from '@/pages/BackupPage'
 import { AdminPage } from '@/pages/AdminPage'
 import { PrintPage } from '@/pages/PrintPage'
@@ -32,6 +33,7 @@ const TITLES: Record<ServerNavId, string> = {
   home: 'Tableau de bord',
   form: 'Judoka',
   list: 'Liste / Recherche',
+  tirage: 'Tirage',
   badge: 'Designer de badge',
   pdf: 'Export PDF',
   print: 'Impression',
@@ -508,6 +510,7 @@ export function ServerDashboardPage({ onResetMode }: Props) {
         />
       )}
 
+      {view === 'tirage' && <TiragePage embedded onBack={() => setView('home')} />}
       {view === 'badge' && <BadgeDesignerPage embedded />}
       {view === 'pdf' && <PdfExportPage embedded onBack={() => setView('home')} />}
       {view === 'backup' && <BackupPage embedded onBack={() => setView('home')} />}
