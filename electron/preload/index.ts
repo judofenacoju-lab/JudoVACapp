@@ -68,6 +68,9 @@ const api = {
   listJudokaCreators: (): Promise<IpcResult<{ items: string[] }>> =>
     ipcRenderer.invoke(IpcChannels.JUDOKA_CREATORS),
 
+  listJudokaClubNames: (): Promise<IpcResult<{ items: string[] }>> =>
+    ipcRenderer.invoke(IpcChannels.JUDOKA_CLUB_NAMES),
+
   deleteJudokaCreator: (
     username: string,
     keepJudokas: boolean
@@ -158,6 +161,8 @@ const api = {
     judokaIds?: string[]
     all?: boolean
     createdBy?: string
+    club?: string
+    weighedOnly?: boolean
     perPage?: 4 | 6 | 8 | 'custom'
     customCols?: number
     customRows?: number

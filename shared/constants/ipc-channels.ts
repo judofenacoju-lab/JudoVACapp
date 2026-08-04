@@ -21,6 +21,7 @@ export const IpcChannels = {
   JUDOKA_SEARCH: 'judoka:search',
   JUDOKA_CREATORS: 'judoka:creators',
   JUDOKA_DELETE_CREATOR: 'judoka:delete-creator',
+  JUDOKA_CLUB_NAMES: 'judoka:club-names',
   JUDOKA_RESET: 'judoka:reset',
   JUDOKA_GET: 'judoka:get',
   JUDOKA_CHECK_DUPLICATE: 'judoka:check-duplicate',

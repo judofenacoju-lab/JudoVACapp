@@ -3,6 +3,7 @@ import { ArrowLeft, FileDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { AppShell } from '@/layouts/AppShell'
+import { mergeRegisteredClubNames } from '@shared/utils/clubs'
 
 interface Props {
   onBack: () => void
@@ -10,13 +11,14 @@ interface Props {
 }
 
 /**
- * Export PDF badges — par utilisateur ou tous, grille 4 / 6 / 8 par page.
+ * Export PDF badges — judokas pesés uniquement, filtrables par utilisateur et par club.
  */
 export function PdfExportPage({ onBack, embedded = false }: Props) {
   const [perPage, setPerPage] = useState<4 | 6 | 8>(4)
   const [creators, setCreators] = useState<string[]>(['Serveur'])
-  const [selectedUser, setSelectedUser] = useState('Serveur')
-  const [userPicked, setUserPicked] = useState(false)
+  const [clubs, setClubs] = useState<string[]>([])
+  const [selectedUser, setSelectedUser] = useState('')
+  const [selectedClub, setSelectedClub] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -24,47 +26,67 @@ export function PdfExportPage({ onBack, embedded = false }: Props) {
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const res = await window.judovac.listJudokaCreators()
-      if (!cancelled && res.ok) {
-        const items = res.data.items.length > 0 ? res.data.items : ['Serveur']
-        setCreators(items)
-        setSelectedUser(items.includes('Serveur') ? 'Serveur' : (items[0] ?? 'Serveur'))
+      const creatorsRes = await window.judovac.listJudokaCreators()
+      const settingsRes = await window.judovac.getSettings()
+      let fromJudokas: string[] = []
+      try {
+        const clubsRes = await window.judovac.listJudokaClubNames()
+        if (clubsRes.ok) fromJudokas = clubsRes.data.items
+      } catch {
+        /* Electron / API absente : on s’appuie sur les paramètres */
       }
+      if (cancelled) return
+
+      if (creatorsRes.ok) {
+        const items = creatorsRes.data.items.length > 0 ? creatorsRes.data.items : ['Serveur']
+        setCreators(items)
+      }
+
+      const fromSettings = settingsRes.ok ? settingsRes.data.clubs : []
+      setClubs(mergeRegisteredClubNames(fromSettings, fromJudokas))
     })()
     return () => {
       cancelled = true
     }
   }, [])
 
-  async function exportAll(): Promise<void> {
+  async function exportBadges(): Promise<void> {
     setBusy(true)
     setError(null)
     setMessage(null)
-    const res = await window.judovac.exportBadgesPdf({ all: true, perPage })
-    setBusy(false)
-    if (!res.ok) {
-      setError(res.error)
-      return
-    }
-    setMessage(`${res.data.count} badge(s) exporté(s) → ${res.data.path}`)
-  }
 
-  async function exportByUser(): Promise<void> {
-    if (!selectedUser) {
-      setError('Sélectionnez un utilisateur.')
-      return
+    const opts: {
+      all?: boolean
+      createdBy?: string
+      club?: string
+      weighedOnly: true
+      perPage: 4 | 6 | 8
+    } = {
+      weighedOnly: true,
+      perPage
     }
-    setBusy(true)
-    setError(null)
-    setMessage(null)
-    const res = await window.judovac.exportBadgesPdf({ createdBy: selectedUser, perPage })
+
+    if (selectedUser) {
+      opts.createdBy = selectedUser
+    } else {
+      opts.all = true
+    }
+    if (selectedClub) {
+      opts.club = selectedClub
+    }
+
+    const res = await window.judovac.exportBadgesPdf(opts)
     setBusy(false)
     if (!res.ok) {
       setError(res.error)
       return
     }
+
+    const scopeParts: string[] = ['pesés']
+    if (selectedUser) scopeParts.push(`utilisateur « ${selectedUser} »`)
+    if (selectedClub) scopeParts.push(`club « ${selectedClub} »`)
     setMessage(
-      `${res.data.count} badge(s) de ${selectedUser} exporté(s) → ${res.data.path}`
+      `${res.data.count} badge(s) (${scopeParts.join(', ')}) exporté(s) → ${res.data.path}`
     )
   }
 
@@ -72,7 +94,7 @@ export function PdfExportPage({ onBack, embedded = false }: Props) {
     <AppShell
       embedded={embedded}
       title="Export PDF"
-      subtitle="Impression Badges par utilisateur ou export complet"
+      subtitle="Badges des judokas pesés — par utilisateur et/ou par club"
       actions={
         !embedded ? (
           <Button variant="outline" onClick={onBack}>
@@ -83,6 +105,10 @@ export function PdfExportPage({ onBack, embedded = false }: Props) {
       }
     >
       <div className="mx-auto max-w-lg space-y-6 animate-fade-in rounded-xl border bg-white/75 p-6">
+        <p className="text-sm text-muted-foreground">
+          Seuls les judokas avec un poids enregistré sont inclus dans l’export.
+        </p>
+
         <div className="space-y-2">
           <Label>Disposition</Label>
           <div className="flex flex-wrap gap-2">
@@ -100,41 +126,55 @@ export function PdfExportPage({ onBack, embedded = false }: Props) {
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="export-user">Exporter pour</Label>
+          <Label htmlFor="export-user">Utilisateur</Label>
           <select
             id="export-user"
             className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             value={selectedUser}
-            onChange={(e) => {
-              setSelectedUser(e.target.value)
-              setUserPicked(true)
-            }}
-            disabled={busy || creators.length === 0}
+            onChange={(e) => setSelectedUser(e.target.value)}
+            disabled={busy}
           >
+            <option value="">Tous les utilisateurs</option>
             {creators.map((user) => (
               <option key={user} value={user}>
                 {user}
               </option>
             ))}
           </select>
-          {userPicked && selectedUser && (
-            <Button
-              variant="secondary"
-              size="lg"
-              className="w-full"
-              disabled={busy}
-              onClick={() => void exportByUser()}
-            >
-              <FileDown className="h-4 w-4" />
-              {busy ? 'Génération…' : `Exporter les badges de ${selectedUser}`}
-            </Button>
-          )}
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="export-club">Club</Label>
+          <select
+            id="export-club"
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            value={selectedClub}
+            onChange={(e) => setSelectedClub(e.target.value)}
+            disabled={busy}
+          >
+            <option value="">Tous les clubs</option>
+            {clubs.map((club) => (
+              <option key={club} value={club}>
+                {club}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="border-t pt-4">
-          <Button variant="accent" size="lg" className="w-full" disabled={busy} onClick={() => void exportAll()}>
+          <Button
+            variant="accent"
+            size="lg"
+            className="w-full"
+            disabled={busy}
+            onClick={() => void exportBadges()}
+          >
             <FileDown className="h-4 w-4" />
-            {busy ? 'Génération…' : 'Exporter tous les badges'}
+            {busy
+              ? 'Génération…'
+              : selectedUser || selectedClub
+                ? 'Exporter les badges filtrés'
+                : 'Exporter tous les badges pesés'}
           </Button>
         </div>
 

@@ -394,6 +394,32 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     }
   })
 
+  ipcMain.handle(IpcChannels.JUDOKA_CLUB_NAMES, async () => {
+    try {
+      const { getContainer } = await import('@server/container')
+      const c = getContainer()
+      if (!c.listJudoka) {
+        return { ok: false as const, error: c.dbError ?? 'Stockage local indisponible' }
+      }
+      const items = await c.listJudoka.execute(50_000, 0)
+      const seen = new Map<string, string>()
+      for (const j of items) {
+        const name = j.club.trim()
+        if (!name) continue
+        const key = name.toLowerCase()
+        if (!seen.has(key)) seen.set(key, name)
+      }
+      return {
+        ok: true as const,
+        data: {
+          items: [...seen.values()].sort((a, b) => a.localeCompare(b, 'fr'))
+        }
+      }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
   ipcMain.handle(
     IpcChannels.JUDOKA_DELETE_CREATOR,
     async (_e, payload: { username: string; keepJudokas: boolean }) => {
@@ -770,6 +796,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         judokaIds?: string[]
         all?: boolean
         createdBy?: string
+        club?: string
+        weighedOnly?: boolean
         perPage?: 4 | 6 | 8 | 'custom'
         customCols?: number
         customRows?: number
@@ -798,7 +826,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
           return { ok: false as const, error: c.dbError ?? 'Stockage local indisponible' }
         }
 
-        let judokas
+        let judokas: Judoka[]
         if (opts.all) {
           judokas = await c.listJudoka.execute(50_000, 0)
         } else if (opts.createdBy) {
@@ -813,6 +841,29 @@ export function registerIpcHandlers(ctx: IpcContext): void {
           judokas = found.filter(Boolean) as NonNullable<(typeof found)[number]>[]
         } else {
           judokas = await c.listJudoka.execute(50_000, 0)
+        }
+
+        const clubFilter = (opts.club ?? '').trim()
+        if (clubFilter) {
+          const clubKey = clubFilter.toLowerCase()
+          judokas = judokas.filter((j) => {
+            const name = j.club.trim() || 'Sans club'
+            return name.toLowerCase() === clubKey
+          })
+        }
+
+        if (opts.weighedOnly) {
+          const { hasRecordedWeight } = await import('@shared/utils/judoka')
+          judokas = judokas.filter((j) => hasRecordedWeight(j.weightKg))
+        }
+
+        if (judokas.length === 0) {
+          return {
+            ok: false as const,
+            error: opts.weighedOnly
+              ? 'Aucun judoka pesé ne correspond à ces filtres.'
+              : 'Aucun judoka ne correspond à ces filtres.'
+          }
         }
 
         const { exportBadgesPdf } = await import('@core/infrastructure/pdf/badge-pdf')

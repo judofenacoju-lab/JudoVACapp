@@ -1764,6 +1764,9 @@ export const judovacClient = {
     judokaIds?: string[]
     all?: boolean
     createdBy?: string
+    club?: string
+    /** Si true, n’exporte que les judokas avec un poids enregistré. */
+    weighedOnly?: boolean
     perPage?: 4 | 6 | 8 | 'custom'
     customCols?: number
     customRows?: number
@@ -1782,17 +1785,32 @@ export const judovacClient = {
       } else if (opts.createdBy) {
         const listed = await judovacClient.listJudokas({ limit: 5000, offset: 0 })
         if (!listed.ok) return fail(listed.error)
-        const label =
-          opts.createdBy.toLowerCase() === 'serveur' || opts.createdBy === 'Serveur'
-            ? 'serveur'
-            : opts.createdBy
-        items = listed.data.items.filter(
-          (j) => j.createdBy.toLowerCase() === label.toLowerCase()
-        )
+        items = listed.data.items.filter((j) => matchesCreatorLabel(j.createdBy, opts.createdBy!))
       } else {
         const listed = await judovacClient.listJudokas({ limit: 5000, offset: 0 })
         if (!listed.ok) return fail(listed.error)
         items = listed.data.items
+      }
+
+      const clubFilter = (opts.club ?? '').trim()
+      if (clubFilter) {
+        const clubKey = clubFilter.toLowerCase()
+        items = items.filter((j) => {
+          const name = j.club.trim() || 'Sans club'
+          return name.toLowerCase() === clubKey
+        })
+      }
+
+      if (opts.weighedOnly) {
+        items = items.filter((j) => hasRecordedWeight(j.weightKg))
+      }
+
+      if (items.length === 0) {
+        return fail(
+          opts.weighedOnly
+            ? 'Aucun judoka pesé ne correspond à ces filtres.'
+            : 'Aucun judoka ne correspond à ces filtres.'
+        )
       }
 
       const { exportBadgesPdfBytes } = await import('./badge-pdf-browser')
