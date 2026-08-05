@@ -97,18 +97,29 @@ function normalizeWeightKg(weightKg: unknown): number {
 
 function toFighter(j: Judoka): TirageFighter {
   const first = j.firstName?.trim() ?? ''
-  const middle = j.middleName?.trim() ?? ''
   const last = j.lastName?.trim() ?? ''
-  const displayName = [first, middle, last].filter(Boolean).join(' ')
+  const displayName =
+    first && last ? `${first}, ${last}` : first || last || formatJudokaFullName(j) || j.displayId
   return {
     id: j.id,
     displayId: j.displayId,
-    name: displayName || formatJudokaFullName(j) || j.displayId,
+    name: displayName,
     sex: j.sex === 'F' ? 'F' : 'M',
-    category: resolveJudokaCategory(j.birthDate, j.category) || j.category || 'Sans catégorie',
+    category: formatTirageCategoryName(
+      resolveJudokaCategory(j.birthDate, j.category) || j.category || 'Sans catégorie'
+    ),
     weightKg: normalizeWeightKg(j.weightKg),
     club: j.club.trim() || 'Sans club'
   }
+}
+
+/** Libellé d’âge sans seuils min/max (ex. « Benjamin (10-11) » → « Benjamin »). */
+export function formatTirageCategoryName(category: string): string {
+  return category
+    .replace(/\s*\(\s*\d+\s*[-–to]+\s*\d+\s*(ans)?\s*\)/gi, '')
+    .replace(/\s+\d+\s*[-–]\s*\d+\s*ans\b/gi, '')
+    .replace(/\s+de\s+\d+\s+à\s+\d+(\s*ans)?/gi, '')
+    .trim() || category.trim()
 }
 
 /** Fisher–Yates. */
@@ -443,10 +454,10 @@ export function generateTirage(
     pools.push({
       sex: bucket.sex,
       sexLabel: bucket.sex === 'F' ? 'Filles' : 'Garçons',
-      category: bucket.category,
+      category: formatTirageCategoryName(bucket.category),
       weightClassId: wc.id,
       weightKey: wc.maxKg,
-      weightLabel: `${wc.label} (${rangeLabel})`,
+      weightLabel: wc.label.trim() || rangeLabel,
       entrantCount: bucket.fighters.length,
       bracket: built.bracket
     })
