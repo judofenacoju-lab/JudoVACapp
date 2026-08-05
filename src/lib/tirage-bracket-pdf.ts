@@ -1,6 +1,7 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
 import {
   formatFighterMeta,
+  formatTirageCategoryName,
   type BracketMatch,
   type BracketTree,
   type TirageFighter,
@@ -9,12 +10,10 @@ import {
 import { downloadBytes } from './download-blob'
 import { pdfSafeText } from './pdf-winansi-text'
 
-/** A4 paysage (mm → pt). */
+/** A4 paysage. */
 const PAGE_W = 841.89
 const PAGE_H = 595.28
-const MARGIN = 28
-const FOOTER_PAD = 12
-const HEADER_GRID_GAP = 8
+const MARGIN = 24
 
 const NAVY = rgb(0.043, 0.122, 0.227)
 const RED = rgb(0.784, 0.063, 0.18)
@@ -64,12 +63,18 @@ function wrapLines(font: PdfFont, text: string, size: number, maxW: number, maxL
   return lines.slice(0, maxLines)
 }
 
-function slotName(fighter: TirageFighter | null | undefined): string {
-  return fighter ? fighter.name : EMPTY_SLOT
-}
-
-function fullyVisible(cy: number, halfH: number, top: number, bottom: number): boolean {
-  return cy + halfH <= top + 0.5 && cy - halfH >= bottom - 0.5
+/** Titre pool sans aucun seuil d’âge min/max. */
+function poolTitleWithoutAgeThresholds(pool: TiragePool): string {
+  const category = formatTirageCategoryName(pool.category)
+    // Filet de sécurité : retirer toute plage numérique type âge encore présente
+    .replace(/\b\d{1,2}\s*[-–/à]\s*\d{1,2}(\s*ans)?\b/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  const weight = (pool.weightLabel || '')
+    .replace(/\(\s*\d+([.,]\d+)?\s*[-–]\s*\d+([.,]\d+)?\s*kg\s*\)/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  return [pool.sexLabel, category || pool.category, weight].filter(Boolean).join(' · ')
 }
 
 interface BracketLayout {
@@ -82,51 +87,58 @@ interface BracketLayout {
   colH: number
 }
 
+/**
+ * Calcule un layout qui tient ENTIÈREMENT dans maxWidth × maxHeight
+ * (aucune case combat hors page).
+ */
 function computeLayout(bracket: BracketTree, maxWidth: number, maxHeight: number): BracketLayout {
   const n0 = Math.max(1, bracket.rounds[0]?.length ?? 1)
   const laterRounds = Math.max(0, bracket.rounds.length - 1)
 
-  // Dimensions de base ; on réduit jusqu’à faire tenir TOUTE la grille (→ vainqueur) sur la page
-  let boxH = 44
-  let gap = 8
-  let boxW = 210
-  let laterW = 110
-  let connectorW = 26
-  const winnerTail = 62
+  let boxH = Math.min(40, maxHeight / Math.max(n0, 1) - 2)
+  let gap = Math.min(6, Math.max(1.5, boxH * 0.12))
+  let boxW = 200
+  let laterW = 100
+  let connectorW = 24
+  let winnerTail = 58
 
   const widthNeeded = () => boxW + laterRounds * (laterW + connectorW) + winnerTail
   const heightNeeded = () => n0 * (boxH + gap) - gap
 
-  while (widthNeeded() > maxWidth && (boxW > 100 || laterW > 48)) {
-    if (boxW > 100) boxW -= 4
-    if (laterW > 48) laterW -= 3
-    if (connectorW > 16) connectorW -= 1
+  // Largeur : toutes les colonnes jusqu’au vainqueur
+  let guard = 0
+  while (widthNeeded() > maxWidth && guard < 80) {
+    guard += 1
+    if (boxW > 90) boxW -= 3
+    else if (laterW > 42) laterW -= 2
+    else if (connectorW > 14) connectorW -= 1
+    else if (winnerTail > 40) winnerTail -= 2
+    else break
   }
 
-  // Forcer la hauteur : une seule page, case Vainqueur toujours visible
-  while (heightNeeded() > maxHeight && (boxH > 12 || gap > 1.5)) {
-    if (boxH > 12) boxH -= 0.5
-    if (gap > 1.5) gap -= 0.25
+  // Hauteur : toutes les lignes du 1er tour
+  guard = 0
+  while (heightNeeded() > maxHeight && guard < 120) {
+    guard += 1
+    if (boxH > 11) boxH -= 0.4
+    if (gap > 1) gap -= 0.15
   }
 
-  // Si encore trop haut (très grand tableau), compresser proportionnellement
   let colH = heightNeeded()
-  if (colH > maxHeight && maxHeight > 40) {
-    const scale = maxHeight / colH
-    boxH = Math.max(10, boxH * scale)
-    gap = Math.max(1, gap * scale)
+  if (colH > maxHeight && maxHeight > 30) {
+    const scale = (maxHeight - 1) / colH
+    boxH = Math.max(9, boxH * scale)
+    gap = Math.max(0.8, gap * scale)
     colH = n0 * (boxH + gap) - gap
   }
 
-  return {
-    boxH,
-    gap,
-    boxW,
-    laterW,
-    connectorW,
-    winnerTail,
-    colH
+  // Garantir que rien ne dépasse la bande utile
+  if (colH > maxHeight) {
+    colH = maxHeight
+    boxH = Math.max(8, (colH + gap) / n0 - gap)
   }
+
+  return { boxH, gap, boxW, laterW, connectorW, winnerTail, colH }
 }
 
 function drawMatchCard(
@@ -137,20 +149,16 @@ function drawMatchCard(
   x: number,
   cy: number,
   boxW: number,
-  boxH: number,
-  visibleTop: number,
-  visibleBottom: number,
-  compact: boolean
+  boxH: number
 ): void {
-  if (!fullyVisible(cy, boxH / 2, visibleTop, visibleBottom)) return
-
   const y0 = cy - boxH / 2
-  const labelW = Math.min(46, Math.max(36, boxW * 0.22))
+  const labelW = Math.min(42, Math.max(32, boxW * 0.2))
   const nameW = boxW - labelW
-  const nameSize = compact ? 5.5 : boxH >= 36 ? 7 : 6
-  const metaSize = compact ? 4.5 : 5.5
-  const labelSize = compact ? 5.5 : 6.5
-  const textMaxW = nameW - 6
+  const compact = boxH < 28
+  const nameSize = compact ? 5 : boxH >= 34 ? 7 : 6
+  const metaSize = 4.5
+  const labelSize = compact ? 5 : 6
+  const textMaxW = Math.max(20, nameW - 5)
 
   page.drawRectangle({
     x,
@@ -158,7 +166,7 @@ function drawMatchCard(
     width: boxW,
     height: boxH,
     borderColor: NAVY,
-    borderWidth: 0.8,
+    borderWidth: 0.7,
     color: WHITE
   })
   page.drawRectangle({
@@ -171,16 +179,15 @@ function drawMatchCard(
   page.drawLine({
     start: { x, y: cy },
     end: { x: x + nameW, y: cy },
-    thickness: 0.55,
+    thickness: 0.5,
     color: NAVY
   })
 
-  const drawSlot = (fighter: TirageFighter | null, slotTop: number, slotBottom: number) => {
-    const mid = (slotTop + slotBottom) / 2
+  const drawSlot = (fighter: TirageFighter | null, slotMid: number) => {
     if (!fighter) {
       page.drawText(EMPTY_SLOT, {
         x: x + 3,
-        y: mid - nameSize / 3,
+        y: slotMid - nameSize / 3,
         size: nameSize,
         font: fontBold,
         color: NAVY
@@ -188,18 +195,18 @@ function drawMatchCard(
       return
     }
 
-    const nameLines = wrapLines(fontBold, slotName(fighter), nameSize, textMaxW, compact ? 1 : 2)
-    const showMeta = !compact && boxH >= 30
+    const nameLines = wrapLines(fontBold, fighter.name, nameSize, textMaxW, compact ? 1 : 2)
+    const showMeta = !compact && boxH >= 28
     const metaLine = showMeta
       ? wrapLines(font, formatFighterMeta(fighter), metaSize, textMaxW, 1)[0]
       : undefined
 
-    const lineGap = 1.2
+    const lineGap = 1
     const blockH =
       nameLines.length * nameSize +
       Math.max(0, nameLines.length - 1) * lineGap +
-      (metaLine ? metaSize + 2 : 0)
-    let y = mid + blockH / 2 - nameSize
+      (metaLine ? metaSize + 1.5 : 0)
+    let y = slotMid + blockH / 2 - nameSize
 
     for (const line of nameLines) {
       page.drawText(line, {
@@ -214,7 +221,7 @@ function drawMatchCard(
     if (metaLine) {
       page.drawText(metaLine, {
         x: x + 3,
-        y: y - 1,
+        y: y - 0.5,
         size: metaSize,
         font,
         color: MUTED
@@ -222,8 +229,8 @@ function drawMatchCard(
     }
   }
 
-  drawSlot(match.top.fighter, cy + boxH / 2, cy)
-  drawSlot(match.bottom.fighter, cy, cy - boxH / 2)
+  drawSlot(match.top.fighter, cy + boxH / 4)
+  drawSlot(match.bottom.fighter, cy - boxH / 4)
 
   const label = pdfSafeText(match.label)
   const lw = fontBold.widthOfTextAtSize(label, labelSize)
@@ -236,27 +243,23 @@ function drawMatchCard(
   })
 }
 
-function drawBracketSlice(
+function drawFullBracket(
   page: ReturnType<PDFDocument['addPage']>,
   font: PdfFont,
   fontBold: PdfFont,
   bracket: BracketTree,
   layout: BracketLayout,
   originX: number,
-  originTop: number,
-  yShift: number,
-  visibleTop: number,
-  visibleBottom: number
+  originTop: number
 ): void {
   const rounds = bracket.rounds
   if (!rounds.length) return
 
   const { boxH, boxW, laterW, connectorW, colH } = layout
-  const compact = boxH < 30
 
   const matchCenterY = (matchIndex: number, count: number): number => {
     const slotH = colH / count
-    return originTop + yShift - matchIndex * slotH - slotH / 2
+    return originTop - matchIndex * slotH - slotH / 2
   }
 
   let x = originX
@@ -267,6 +270,7 @@ function drawBracketSlice(
     const colWidth = r === 0 ? boxW : laterW
 
     for (let i = 0; i < count; i++) {
+      // Toutes les cases sont dessinées (pas de filtrage qui coupe des combats)
       drawMatchCard(
         page,
         font,
@@ -275,10 +279,7 @@ function drawBracketSlice(
         x,
         matchCenterY(i, count),
         colWidth,
-        boxH,
-        visibleTop,
-        visibleBottom,
-        compact
+        boxH
       )
     }
 
@@ -290,103 +291,58 @@ function drawBracketSlice(
         const topCy = matchCenterY(p * 2, count)
         const botCy = matchCenterY(p * 2 + 1, count)
         const midCy = (topCy + botCy) / 2
-        if (
-          !fullyVisible(topCy, 1, visibleTop, visibleBottom) &&
-          !fullyVisible(botCy, 1, visibleTop, visibleBottom)
-        ) {
-          continue
-        }
-        const clipY = (y: number) => Math.min(visibleTop, Math.max(visibleBottom, y))
         const x0 = nextX
         const x1 = nextX + connectorW * 0.42
         const x2 = nextX + connectorW
-        const tY = clipY(topCy)
-        const bY = clipY(botCy)
-        const mY = clipY(midCy)
-        page.drawLine({ start: { x: x0, y: tY }, end: { x: x1, y: tY }, thickness: 1, color: LINE })
-        page.drawLine({ start: { x: x0, y: bY }, end: { x: x1, y: bY }, thickness: 1, color: LINE })
-        page.drawLine({ start: { x: x1, y: tY }, end: { x: x1, y: bY }, thickness: 1, color: LINE })
-        page.drawLine({ start: { x: x1, y: mY }, end: { x: x2, y: mY }, thickness: 1, color: LINE })
+        page.drawLine({ start: { x: x0, y: topCy }, end: { x: x1, y: topCy }, thickness: 0.9, color: LINE })
+        page.drawLine({ start: { x: x0, y: botCy }, end: { x: x1, y: botCy }, thickness: 0.9, color: LINE })
+        page.drawLine({ start: { x: x1, y: topCy }, end: { x: x1, y: botCy }, thickness: 0.9, color: LINE })
+        page.drawLine({ start: { x: x1, y: midCy }, end: { x: x2, y: midCy }, thickness: 0.9, color: LINE })
       }
       x = nextX + connectorW
     } else {
       const cy = matchCenterY(0, count)
-      if (fullyVisible(cy, 10, visibleTop, visibleBottom)) {
-        const x0 = nextX
-        page.drawLine({
-          start: { x: x0, y: cy },
-          end: { x: x0 + 24, y: cy },
-          thickness: 1,
-          color: LINE
-        })
-        page.drawText(pdfSafeText('Vainqueur'), {
-          x: x0 + 28,
-          y: cy - 2.5,
-          size: Math.min(8, Math.max(6, boxH * 0.2)),
-          font: fontBold,
-          color: RED
-        })
-      }
+      const x0 = nextX
+      page.drawLine({
+        start: { x: x0, y: cy },
+        end: { x: x0 + 22, y: cy },
+        thickness: 0.9,
+        color: LINE
+      })
+      page.drawText(pdfSafeText('Vainqueur'), {
+        x: x0 + 26,
+        y: cy - 2.5,
+        size: Math.min(8, Math.max(5.5, boxH * 0.22)),
+        font: fontBold,
+        color: RED
+      })
     }
   }
 }
 
-function measurePoolHeaderHeight(opts: {
-  showDocTitle: boolean
-  showCategoryTitle: boolean
-}): number {
-  let h = HEADER_GRID_GAP
-  if (opts.showDocTitle) h += 26
-  else h += 14
-  h += 14 // trait
-  if (opts.showCategoryTitle) {
-    h += 18 // titre catégorie
-    h += 16 // meta
-  } else {
-    h += 12
-  }
-  return h
-}
-
-function poolCategoryKey(pool: TiragePool): string {
-  return `${pool.sex}::${pool.category}::${pool.weightLabel}`
-}
-
-function drawPageHeader(
+/**
+ * Dessine l’en-tête et renvoie le Y bas de la zone titres (début de la grille).
+ * N’affiche jamais les seuils d’âge min/max.
+ */
+function drawHeaderAndGetGridTop(
   page: ReturnType<PDFDocument['addPage']>,
   font: PdfFont,
   fontBold: PdfFont,
   pool: TiragePool,
-  pageIndex: number,
-  pageCount: number,
-  showDocTitle: boolean,
-  showCategoryTitle: boolean
-): void {
+  showDocTitle: boolean
+): number {
   let y = PAGE_H - MARGIN
 
   if (showDocTitle) {
     page.drawText(pdfSafeText('JudoVACapp - Grille de combats'), {
       x: MARGIN,
-      y: y - 14,
-      size: 16,
+      y: y - 12,
+      size: 14,
       font: fontBold,
       color: NAVY
     })
+    y -= 22
   }
-
-  if (pageCount > 1) {
-    const pageLabel = pdfSafeText(`Page ${pageIndex + 1}/${pageCount}`)
-    const pw = font.widthOfTextAtSize(pageLabel, 9)
-    page.drawText(pageLabel, {
-      x: PAGE_W - MARGIN - pw,
-      y: y - 12,
-      size: 9,
-      font,
-      color: MUTED
-    })
-  }
-
-  y -= showDocTitle ? 26 : 14
 
   page.drawLine({
     start: { x: MARGIN, y },
@@ -396,44 +352,45 @@ function drawPageHeader(
   })
   y -= 14
 
-  if (showCategoryTitle) {
-    // Une seule fois : sexe · catégorie d’âge (sans min/max) · libellé de poids
-    const title = `${pool.sexLabel} · ${pool.category} · ${pool.weightLabel}`
-    const titleLines = wrapLines(fontBold, title, 11, PAGE_W - MARGIN * 2, 2)
-    for (const line of titleLines) {
-      page.drawText(line, {
-        x: MARGIN,
-        y: y - 10,
-        size: 11,
-        font: fontBold,
-        color: NAVY
-      })
-      y -= 13
-    }
-    y -= 2
-    page.drawText(
-      pdfSafeText(`${pool.entrantCount} judoka(s) · tableau ${pool.bracket.size}`),
-      {
-        x: MARGIN,
-        y: y - 8,
-        size: 8,
-        font,
-        color: MUTED
-      }
-    )
-  } else if (pageCount > 1) {
-    page.drawText(pdfSafeText('Suite de la grille'), {
+  const title = poolTitleWithoutAgeThresholds(pool)
+  const titleLines = wrapLines(fontBold, title, 11, PAGE_W - MARGIN * 2, 2)
+  for (const line of titleLines) {
+    page.drawText(line, {
+      x: MARGIN,
+      y: y - 9,
+      size: 11,
+      font: fontBold,
+      color: NAVY
+    })
+    y -= 12
+  }
+
+  page.drawText(
+    pdfSafeText(`${pool.entrantCount} judoka(s) · tableau ${pool.bracket.size}`),
+    {
       x: MARGIN,
       y: y - 8,
-      size: 9,
+      size: 8,
       font,
       color: MUTED
-    })
-  }
+    }
+  )
+  y -= 16
+
+  // Ligne de séparation titres / grille
+  page.drawLine({
+    start: { x: MARGIN, y },
+    end: { x: PAGE_W - MARGIN, y },
+    thickness: 0.5,
+    color: rgb(0.75, 0.8, 0.85)
+  })
+  y -= 8
+
+  return y
 }
 
 /**
- * PDF A4 paysage : 1 page par grille (complète jusqu’au vainqueur) ; sans seuils d’âge.
+ * PDF A4 paysage : grille entière sans coupure ; titres sans seuils d’âge.
  */
 export async function exportTirageBracketPdfBytes(
   pools: TiragePool[],
@@ -455,78 +412,42 @@ export async function exportTirageBracketPdfBytes(
     return doc.save()
   }
 
-  const contentBottom = FOOTER_PAD
-  const maxBracketWidth = PAGE_W - MARGIN * 2
   let isFirstDocPage = true
-  const shownCategoryTitles = new Set<string>()
+  const shownTitles = new Set<string>()
 
   for (const pool of pools) {
-    const categoryKey = poolCategoryKey(pool)
     const page = doc.addPage([PAGE_W, PAGE_H])
-
     const showDocTitle = isFirstDocPage
     isFirstDocPage = false
 
-    const showCategoryTitle = !shownCategoryTitles.has(categoryKey)
-    if (showCategoryTitle) shownCategoryTitles.add(categoryKey)
+    const titleKey = poolTitleWithoutAgeThresholds(pool)
+    const showCategoryBlock = !shownTitles.has(titleKey)
+    if (showCategoryBlock) shownTitles.add(titleKey)
 
-    const headerH = measurePoolHeaderHeight({
-      showDocTitle,
-      showCategoryTitle
-    })
-    const contentTop = PAGE_H - MARGIN - headerH
-    const availableH = Math.max(80, contentTop - contentBottom)
+    // 1) En-tête d’abord (sans seuils d’âge) — mesure réelle de la zone grille
+    let gridTop: number
+    if (showCategoryBlock) {
+      gridTop = drawHeaderAndGetGridTop(page, font, fontBold, pool, showDocTitle)
+    } else if (showDocTitle) {
+      page.drawText(pdfSafeText('JudoVACapp - Grille de combats'), {
+        x: MARGIN,
+        y: PAGE_H - MARGIN - 12,
+        size: 14,
+        font: fontBold,
+        color: NAVY
+      })
+      gridTop = PAGE_H - MARGIN - 28
+    } else {
+      gridTop = PAGE_H - MARGIN - 8
+    }
 
-    // Une seule page : toute la grille redimensionnée pour afficher la case Vainqueur
-    const layout = computeLayout(pool.bracket, maxBracketWidth, availableH)
+    const gridBottom = MARGIN
+    const availableH = Math.max(60, gridTop - gridBottom)
+    const availableW = PAGE_W - MARGIN * 2
 
-    drawBracketSlice(
-      page,
-      font,
-      fontBold,
-      pool.bracket,
-      layout,
-      MARGIN,
-      contentTop,
-      0,
-      contentTop,
-      contentBottom
-    )
-
-    page.drawRectangle({
-      x: 0,
-      y: contentTop,
-      width: PAGE_W,
-      height: PAGE_H - contentTop,
-      color: WHITE,
-      borderWidth: 0
-    })
-    page.drawRectangle({
-      x: 0,
-      y: 0,
-      width: PAGE_W,
-      height: contentBottom,
-      color: WHITE,
-      borderWidth: 0
-    })
-
-    drawPageHeader(
-      page,
-      font,
-      fontBold,
-      pool,
-      0,
-      1,
-      showDocTitle,
-      showCategoryTitle
-    )
-
-    page.drawLine({
-      start: { x: MARGIN, y: contentTop + 2 },
-      end: { x: PAGE_W - MARGIN, y: contentTop + 2 },
-      thickness: 0.5,
-      color: rgb(0.75, 0.8, 0.85)
-    })
+    // 2) Layout qui tient entièrement dans la zone ; toutes les cases dessinées
+    const layout = computeLayout(pool.bracket, availableW, availableH)
+    drawFullBracket(page, font, fontBold, pool.bracket, layout, MARGIN, gridTop)
   }
 
   return doc.save()

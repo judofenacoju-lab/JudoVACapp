@@ -122,6 +122,7 @@ export function formatTirageCategoryName(category: string): string {
     .replace(/\s+de\s+\d+\s+à\s+\d+(\s*ans)?/gi, '')
     .replace(/\s*(âge|age)\s*:?\s*\d+\s*[-–/à]\s*\d+/gi, '')
     .replace(/\s*(min|max)\s*(âge|age)?\s*:?\s*\d+/gi, '')
+    .replace(/\b\d{1,2}\s*[-–/à]\s*\d{1,2}(\s*ans)?\b/gi, '')
     .replace(/\s+\d{1,2}\s*[-–]\s*\d{1,2}\s*$/g, '')
     .replace(/\s{2,}/g, ' ')
     .trim()
