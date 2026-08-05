@@ -198,23 +198,9 @@ export function ServerDashboardPage({ onResetMode }: Props) {
     setTriageError(null)
     setTriageMessage(null)
     try {
-      const [all, settingsRes] = await Promise.all([
-        fetchAllJudokas(),
-        window.judovac.getSettings()
-      ])
-      if (!settingsRes.ok) {
-        setTriageError(settingsRes.error)
-        return
-      }
-      const weightClasses = settingsRes.data.weightClasses ?? []
-      if (weightClasses.length === 0) {
-        setTriageError(
-          'Aucune catégorie de poids. Configurez les libellés dans Tirage (ex. -20 kg = 18 à 20) puis réessayez.'
-        )
-        return
-      }
+      const all = await fetchAllJudokas()
       const { exportAndDownloadWeighedTriagePdf } = await import('@/lib/weighed-triage-pdf')
-      const out = await exportAndDownloadWeighedTriagePdf(all, weightClasses)
+      const out = await exportAndDownloadWeighedTriagePdf(all)
       setTriageMessage(`Triage exporté (${out.count} pesé(s)) → ${out.filename}`)
     } catch (e) {
       setTriageError(e instanceof Error ? e.message : 'Export triage impossible')
@@ -270,7 +256,7 @@ export function ServerDashboardPage({ onResetMode }: Props) {
                   disabled={triageBusy || !(stats?.weighedJudokas)}
                   onClick={() => void exportWeighedTriage()}
                   className="h-7 shrink-0 bg-emerald-600 px-2.5 text-xs text-white hover:bg-emerald-700 hover:text-white"
-                  title="Exporter le triage PDF (club · sexe · libellé de poids)"
+                  title="Exporter le triage PDF des judokas pesés (club · sexe · poids)"
                 >
                   <FileDown className="h-3.5 w-3.5" />
                   {triageBusy ? '…' : 'Triage'}

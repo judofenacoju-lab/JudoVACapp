@@ -1,16 +1,10 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import type { Judoka } from '@shared/types/judoka'
-import type { WeightClassRange } from '@shared/types/settings'
 import {
   formatJudokaFullName,
   hasRecordedWeight,
   resolveJudokaCategory
 } from '@shared/utils/judoka'
-import {
-  matchWeightClass,
-  normalizeWeightClasses,
-  type TirageWeightClass
-} from '@shared/utils/tirage'
 import { downloadPdfBytes } from '@/lib/judoka-list-pdf'
 import { pdfSafeText } from '@/lib/pdf-winansi-text'
 
@@ -71,41 +65,45 @@ function clubName(j: Judoka): string {
   return j.club.trim() || 'Sans club'
 }
 
-type WeightBucket = { weightClass: TirageWeightClass; judokas: Judoka[] }
+function normalizeWeightKey(weightKg: unknown): number {
+  if (weightKg === null || weightKg === undefined) return 0
+  const raw = typeof weightKg === 'string' ? weightKg.trim().replace(',', '.') : weightKg
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return 0
+  return Math.round(n * 10) / 10
+}
+
+function formatWeightLabel(weightKg: number): string {
+  return Number.isInteger(weightKg) ? `${weightKg} kg` : `${weightKg.toFixed(1).replace('.', ',')} kg`
+}
+
+type WeightBucket = { weightKg: number; label: string; judokas: Judoka[] }
 type SexBucket = { sexLabel: string; weights: WeightBucket[] }
 type ClubBucket = { club: string; sexes: SexBucket[] }
 
 /**
- * Pesés → Club → Garçons/Filles → libellé de poids (tranche configurée).
+ * Pesés uniquement → Club → Garçons/Filles → catégorie de poids (kg enregistré).
+ * Indépendant de la configuration Tirage.
  */
-export function buildTriageByClub(
-  judokas: Judoka[],
-  weightClassesInput: WeightClassRange[] | TirageWeightClass[]
-): { clubs: ClubBucket[]; weighedCount: number; matchedCount: number } {
-  const weightClasses = normalizeWeightClasses(weightClassesInput as TirageWeightClass[])
+export function buildTriageByClub(judokas: Judoka[]): {
+  clubs: ClubBucket[]
+  weighedCount: number
+} {
   const weighed = judokas.filter((j) => hasRecordedWeight(j.weightKg))
 
-  type Inner = Map<string, Map<string, Judoka[]>> // sex -> labelKey -> judokas
-  const byClub = new Map<string, Inner>()
-  const wcByLabel = new Map<string, TirageWeightClass>()
-  for (const wc of weightClasses) {
-    wcByLabel.set(wc.label.trim().toLowerCase(), wc)
-  }
+  // club -> sex -> weightKey -> judokas
+  const byClub = new Map<string, Map<string, Map<number, Judoka[]>>>()
 
-  let matchedCount = 0
   for (const j of weighed) {
-    const wc = matchWeightClass(j.weightKg ?? 0, weightClasses)
-    if (!wc) continue
-    matchedCount += 1
     const club = clubName(j)
     const sexKey = j.sex === 'F' ? 'F' : 'M'
-    const labelKey = wc.label.trim().toLowerCase()
+    const wKey = normalizeWeightKey(j.weightKg)
     if (!byClub.has(club)) byClub.set(club, new Map())
     const sexMap = byClub.get(club)!
     if (!sexMap.has(sexKey)) sexMap.set(sexKey, new Map())
     const weightMap = sexMap.get(sexKey)!
-    if (!weightMap.has(labelKey)) weightMap.set(labelKey, [])
-    weightMap.get(labelKey)!.push(j)
+    if (!weightMap.has(wKey)) weightMap.set(wKey, [])
+    weightMap.get(wKey)!.push(j)
   }
 
   const clubs: ClubBucket[] = [...byClub.entries()]
@@ -120,18 +118,14 @@ export function buildTriageByClub(
         .map((sexKey) => {
           const weightMap = sexMap.get(sexKey)!
           const weights: WeightBucket[] = [...weightMap.entries()]
-            .map(([labelKey, list]) => {
-              const wc = wcByLabel.get(labelKey)!
-              const sorted = [...list].sort((a, b) =>
+            .sort((a, b) => a[0] - b[0])
+            .map(([weightKg, list]) => ({
+              weightKg,
+              label: formatWeightLabel(weightKg),
+              judokas: [...list].sort((a, b) =>
                 formatJudokaFullName(a).localeCompare(formatJudokaFullName(b), 'fr')
               )
-              return { weightClass: wc, judokas: sorted }
-            })
-            .sort(
-              (a, b) =>
-                a.weightClass.maxKg - b.weightClass.maxKg ||
-                a.weightClass.minKg - b.weightClass.minKg
-            )
+            }))
           return {
             sexLabel: sexKey === 'F' ? 'Filles' : 'Garçons',
             weights
@@ -140,17 +134,14 @@ export function buildTriageByClub(
       return { club, sexes }
     })
 
-  return { clubs, weighedCount: weighed.length, matchedCount }
+  return { clubs, weighedCount: weighed.length }
 }
 
 /**
- * PDF triage : Club → Garçons / Filles → catégorie de poids (libellé).
+ * PDF triage : Club → Garçons / Filles → poids (kg), judokas déjà pesés uniquement.
  */
-export async function exportWeighedTriagePdfBytes(
-  judokas: Judoka[],
-  weightClasses: WeightClassRange[] | TirageWeightClass[]
-): Promise<Uint8Array> {
-  const { clubs, weighedCount, matchedCount } = buildTriageByClub(judokas, weightClasses)
+export async function exportWeighedTriagePdfBytes(judokas: Judoka[]): Promise<Uint8Array> {
+  const { clubs, weighedCount } = buildTriageByClub(judokas)
   const title = pdfSafeText('Triage des judokas pesés - JudoVACapp')
   const pdf = await PDFDocument.create()
   pdf.setTitle(title)
@@ -186,7 +177,7 @@ export async function exportWeighedTriagePdfBytes(
     })
     y -= TITLE_SIZE + 6
     const meta = pdfSafeText(
-      `Export du ${new Date().toLocaleString('fr-FR')} - ${matchedCount}/${weighedCount} pesé(s) classé(s) · par club, sexe, libellé de poids`
+      `Export du ${new Date().toLocaleString('fr-FR')} - ${weighedCount} pesé(s) · par club, sexe, catégorie de poids`
     )
     page.drawText(truncate(font, meta, META_SIZE, pageW - MARGIN * 2), {
       x: MARGIN,
@@ -281,7 +272,7 @@ export async function exportWeighedTriagePdfBytes(
     drawTableHeader()
   }
 
-  function drawWeightBlockHeader(wc: TirageWeightClass, count: number): void {
+  function drawWeightBlockHeader(label: string, count: number): void {
     ensureSpace(WEIGHT_BLOCK_H + ROW_H)
     page.drawRectangle({
       x: tableX,
@@ -292,14 +283,16 @@ export async function exportWeighedTriagePdfBytes(
       borderColor: weightBlockBorder,
       borderWidth: 0.6
     })
-    const label = pdfSafeText(`${wc.label}  (${wc.minKg}–${wc.maxKg} kg)  · ${count}`)
-    page.drawText(truncate(fontBold, label, 8, tableW - 10), {
-      x: tableX + 5,
-      y: y - WEIGHT_BLOCK_H + 4,
-      size: 8,
-      font: fontBold,
-      color: navy
-    })
+    page.drawText(
+      truncate(fontBold, pdfSafeText(`${label}  · ${count}`), 8, tableW - 10),
+      {
+        x: tableX + 5,
+        y: y - WEIGHT_BLOCK_H + 4,
+        size: 8,
+        font: fontBold,
+        color: navy
+      }
+    )
     y -= WEIGHT_BLOCK_H
   }
 
@@ -337,37 +330,14 @@ export async function exportWeighedTriagePdfBytes(
 
   drawDocHeader()
 
-  if (normalizeWeightClasses(weightClasses as TirageWeightClass[]).length === 0) {
-    page.drawText(
-      pdfSafeText(
-        'Aucune catégorie de poids configurée. Définissez les libellés dans Tirage (ex. -20 kg = 18 à 20).'
-      ),
-      {
-        x: tableX,
-        y: y - 24,
-        size: 11,
-        font,
-        color: text
-      }
-    )
-    return pdf.save()
-  }
-
   if (clubs.length === 0) {
-    page.drawText(
-      pdfSafeText(
-        matchedCount === 0 && weighedCount > 0
-          ? 'Aucun judoka pesé ne correspond aux libellés de poids configurés.'
-          : 'Aucun judoka pesé à trier.'
-      ),
-      {
-        x: tableX,
-        y: y - 24,
-        size: 11,
-        font,
-        color: text
-      }
-    )
+    page.drawText(pdfSafeText('Aucun judoka pesé à trier.'), {
+      x: tableX,
+      y: y - 24,
+      size: 11,
+      font,
+      color: text
+    })
     return pdf.save()
   }
 
@@ -382,7 +352,7 @@ export async function exportWeighedTriagePdfBytes(
       drawSection(sex.sexLabel, sexCount)
       sex.weights.forEach((bucket, idx) => {
         if (idx > 0) y -= WEIGHT_BLOCK_GAP
-        drawWeightBlockHeader(bucket.weightClass, bucket.judokas.length)
+        drawWeightBlockHeader(bucket.label, bucket.judokas.length)
         bucket.judokas.forEach((j, i) => drawRow(j, i))
         page.drawLine({
           start: { x: tableX, y },
@@ -400,16 +370,13 @@ export async function exportWeighedTriagePdfBytes(
   return pdf.save()
 }
 
-export async function exportAndDownloadWeighedTriagePdf(
-  judokas: Judoka[],
-  weightClasses: WeightClassRange[] | TirageWeightClass[]
-): Promise<{
+export async function exportAndDownloadWeighedTriagePdf(judokas: Judoka[]): Promise<{
   filename: string
   count: number
 }> {
-  const { matchedCount } = buildTriageByClub(judokas, weightClasses)
-  const bytes = await exportWeighedTriagePdfBytes(judokas, weightClasses)
+  const { weighedCount } = buildTriageByClub(judokas)
+  const bytes = await exportWeighedTriagePdfBytes(judokas)
   const filename = `triage-peses-${new Date().toISOString().slice(0, 10)}.pdf`
   downloadPdfBytes(bytes, filename)
-  return { filename, count: matchedCount }
+  return { filename, count: weighedCount }
 }

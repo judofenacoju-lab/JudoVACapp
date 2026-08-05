@@ -208,12 +208,6 @@ export function TiragePage({ onBack, embedded = false }: Props) {
     >
       <div className="space-y-6 animate-fade-in">
         <div className="rounded-xl border bg-white/75 p-5 space-y-5 max-w-3xl">
-          <p className="text-sm text-muted-foreground">
-            Les combats regroupent tous les pesés du même <strong>libellé de poids</strong> et de la
-            même <strong>catégorie d’âge</strong> (garçons / filles séparés) — pas seulement un poids
-            kg identique.
-          </p>
-
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-2">
               <Label>Catégories de poids (libellés)</Label>
