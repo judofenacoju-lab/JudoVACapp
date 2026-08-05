@@ -164,9 +164,32 @@ function nextPowerOfTwo(n: number): number {
   return Math.max(2, p)
 }
 
+/** Indices de combats du 1er tour qui reçoivent un bye, espacés dans le tableau. */
+function spacedByeMatchIndices(matchCount: number, byeMatchCount: number): number[] {
+  if (byeMatchCount <= 0 || matchCount <= 0) return []
+  const count = Math.min(byeMatchCount, matchCount)
+  const chosen: number[] = []
+  const used = new Set<number>()
+  for (let i = 0; i < count; i++) {
+    // Centres des intervalles : répartit les byes au lieu de les coller en tête de grille
+    let idx = Math.floor(((2 * i + 1) * matchCount) / (2 * count))
+    idx = Math.min(matchCount - 1, Math.max(0, idx))
+    let guard = 0
+    while (used.has(idx) && guard < matchCount) {
+      idx = (idx + 1) % matchCount
+      guard += 1
+    }
+    used.add(idx)
+    chosen.push(idx)
+  }
+  return chosen.sort((a, b) => a - b)
+}
+
 /**
- * Place les combattants dans un tableau puissance de 2 en espaçant les byes,
- * et en évitant si possible les duels intra-club au 1er tour.
+ * Place les combattants en puissance de 2 :
+ * — jamais deux cases vides dans le même combat (1 judoka = bye, pas de combat fantôme) ;
+ * — byes espacés dans le tableau (évite plusieurs « sans adversaire » collés) ;
+ * — optionnellement évite les duels intra-club au 1er tour.
  */
 function seedSlots(
   fighters: TirageFighter[],
@@ -176,16 +199,25 @@ function seedSlots(
 ): (TirageFighter | null)[] {
   const pool = shuffleInPlace([...fighters], random)
   const slots: (TirageFighter | null)[] = Array.from({ length: size }, () => null)
+  const matchCount = size / 2
+  const byeMatchCount = size - pool.length
+  const byeMatches = new Set(spacedByeMatchIndices(matchCount, byeMatchCount))
 
-  // Répartition espacée (évite de concentrer les byes)
-  const step = size / Math.max(pool.length, 1)
-  for (let i = 0; i < pool.length; i++) {
-    const idx = Math.min(size - 1, Math.floor(i * step))
-    let place = idx
-    while (slots[place]) {
-      place = (place + 1) % size
+  let fi = 0
+  for (let m = 0; m < matchCount; m++) {
+    if (byeMatches.has(m)) {
+      // Un seul judoka dans le combat → l’autre case reste vide (bye)
+      if (random() < 0.5) {
+        slots[m * 2] = pool[fi++] ?? null
+        slots[m * 2 + 1] = null
+      } else {
+        slots[m * 2] = null
+        slots[m * 2 + 1] = pool[fi++] ?? null
+      }
+    } else {
+      slots[m * 2] = pool[fi++] ?? null
+      slots[m * 2 + 1] = pool[fi++] ?? null
     }
-    slots[place] = pool[i]!
   }
 
   if (!avoidSameClub) return slots
@@ -205,6 +237,48 @@ function seedSlots(
     }
   }
   return slots
+}
+
+/** Vainqueur automatique d’un combat (bye) — un seul judoka présent. */
+function automaticWinner(match: BracketMatch): TirageFighter | null {
+  const top = match.top.fighter
+  const bottom = match.bottom.fighter
+  if (top && !bottom) return top
+  if (bottom && !top) return bottom
+  return null
+}
+
+function slotFromFighter(fighter: TirageFighter | null): BracketSlot {
+  return fighter ? { fighter, empty: false } : { fighter: null, empty: true }
+}
+
+/**
+ * Fait avancer automatiquement les judokas sans adversaire vers le tour suivant
+ * (comme s’ils avaient gagné), récursivement jusqu’à la finale.
+ */
+function propagateByeWinners(rounds: BracketMatch[][]): void {
+  for (let r = 0; r < rounds.length - 1; r++) {
+    const current = rounds[r]!
+    const next = rounds[r + 1]!
+    for (let i = 0; i < current.length; i += 2) {
+      const upper = current[i]!
+      const lower = current[i + 1]!
+      const dest = next[Math.floor(i / 2)]!
+      dest.top = slotFromFighter(automaticWinner(upper))
+      dest.bottom = slotFromFighter(automaticWinner(lower))
+      const hasTop = Boolean(dest.top.fighter)
+      const hasBottom = Boolean(dest.bottom.fighter)
+      dest.bye = (hasTop && !hasBottom) || (!hasTop && hasBottom)
+    }
+  }
+}
+
+/** Libellé club + poids sous le nom (affichage grille / PDF). */
+export function formatFighterMeta(fighter: TirageFighter): string {
+  const w = Number.isInteger(fighter.weightKg)
+    ? `${fighter.weightKg} kg`
+    : `${fighter.weightKg.toFixed(1).replace('.', ',')} kg`
+  return `${fighter.club} · ${w}`
 }
 
 function fightLabel(round: number, number: number): string {
@@ -233,8 +307,6 @@ export function buildBracket(
   const slots = seedSlots(fighters, size, opts.avoidSameClub, random)
   const rounds: BracketMatch[][] = []
   let fightNumber = opts.startFightNumber ?? 1
-  let fightCount = 0
-  let byeCount = 0
   const prefix = opts.idPrefix ?? 'm'
 
   const r0: BracketMatch[] = []
@@ -242,8 +314,6 @@ export function buildBracket(
     const topF = slots[i] ?? null
     const bottomF = slots[i + 1] ?? null
     const bye = !topF || !bottomF
-    if (bye) byeCount += 1
-    else fightCount += 1
     const num = fightNumber
     fightNumber += 1
     r0.push({
@@ -265,7 +335,6 @@ export function buildBracket(
     for (let i = 0; i < prevLen; i += 2) {
       const num = fightNumber
       fightNumber += 1
-      fightCount += 1
       round.push({
         id: `${prefix}-r${roundIdx}-${i / 2}`,
         label: fightLabel(roundIdx, num),
@@ -279,6 +348,19 @@ export function buildBracket(
     rounds.push(round)
     prevLen = round.length
     roundIdx += 1
+  }
+
+  // Byes : le judoka seul avance au tour suivant (affichage + attente adversaire)
+  propagateByeWinners(rounds)
+
+  let fightCount = 0
+  let byeCount = 0
+  for (const round of rounds) {
+    for (const m of round) {
+      const n = (m.top.fighter ? 1 : 0) + (m.bottom.fighter ? 1 : 0)
+      if (n === 2) fightCount += 1
+      else if (n === 1) byeCount += 1
+    }
   }
 
   return {

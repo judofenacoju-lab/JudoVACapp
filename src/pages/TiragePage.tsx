@@ -371,7 +371,9 @@ export function TiragePage({ onBack, embedded = false }: Props) {
           {result && result.matchedCount > 0 && (
             <p className="text-sm text-emerald-700">
               {result.matchedCount} pesé(s) classé(s) · {result.fightCount} combat(s)
-              {result.byeCount > 0 ? ` · ${result.byeCount} sans adversaire` : ''}
+              {result.byeCount > 0
+                ? ` · ${result.byeCount} bye(s) (passage auto au tour suivant)`
+                : ''}
               {result.unmatchedCount > 0
                 ? ` · ${result.unmatchedCount} hors catégories de poids`
                 : ''}

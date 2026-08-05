@@ -1,8 +1,37 @@
-import type { BracketMatch, BracketTree, TirageFighter } from '@shared/utils/tirage'
+import {
+  formatFighterMeta,
+  type BracketMatch,
+  type BracketTree,
+  type TirageFighter
+} from '@shared/utils/tirage'
 
-function slotLabel(fighter: TirageFighter | null, _empty: boolean): string {
-  if (fighter) return fighter.name
-  return '...'
+function slotName(fighter: TirageFighter | null): string {
+  return fighter ? fighter.name : '...'
+}
+
+function SlotLines({
+  fighter,
+  borderBottom
+}: {
+  fighter: TirageFighter | null
+  borderBottom?: boolean
+}) {
+  return (
+    <div
+      className={`min-w-0 px-2 py-1 ${borderBottom ? 'border-b border-judo-navy/15' : ''}`}
+    >
+      <div className="truncate text-xs font-medium leading-tight text-judo-navy">
+        {slotName(fighter)}
+      </div>
+      {fighter ? (
+        <div className="truncate text-[9px] leading-tight text-muted-foreground">
+          {formatFighterMeta(fighter)}
+        </div>
+      ) : (
+        <div className="h-[11px]" aria-hidden />
+      )}
+    </div>
+  )
 }
 
 /**
@@ -21,8 +50,8 @@ export function CombatBracket({
   }
 
   const firstRound = bracket.rounds[0]!
-  const matchBlockH = 56
-  const matchGap = 12
+  const matchBlockH = 72
+  const matchGap = 14
   const firstColHeight = firstRound.length * (matchBlockH + matchGap) - matchGap
 
   return (
@@ -39,7 +68,6 @@ export function CombatBracket({
             <RoundColumn
               matches={round}
               roundIdx={roundIdx}
-              totalRounds={bracket.rounds.length}
               firstRoundCount={firstRound.length}
               matchBlockH={matchBlockH}
               matchGap={matchGap}
@@ -56,6 +84,7 @@ export function CombatBracket({
                 firstRoundCount={firstRound.length}
                 matchBlockH={matchBlockH}
                 matchGap={matchGap}
+                finalMatch={round[0]}
               />
             )}
           </div>
@@ -74,51 +103,40 @@ function RoundColumn({
 }: {
   matches: BracketMatch[]
   roundIdx: number
-  totalRounds: number
   firstRoundCount: number
   matchBlockH: number
   matchGap: number
 }) {
   const colH = firstRoundCount * (matchBlockH + matchGap) - matchGap
   const slotH = colH / matches.length
+  const colW = roundIdx === 0 ? 240 : 220
 
   return (
-    <div className="relative flex flex-col justify-around" style={{ height: colH, width: roundIdx === 0 ? 220 : 72 }}>
+    <div className="relative flex flex-col justify-around" style={{ height: colH, width: colW }}>
       {matches.map((m) => (
-        <div
-          key={m.id}
-          className="flex items-center justify-center"
-          style={{ height: slotH }}
-        >
-          {roundIdx === 0 ? <FirstRoundMatch match={m} /> : <LaterRoundBadge match={m} />}
+        <div key={m.id} className="flex items-center justify-center" style={{ height: slotH }}>
+          <MatchCard match={m} wide={roundIdx === 0} />
         </div>
       ))}
     </div>
   )
 }
 
-function FirstRoundMatch({ match }: { match: BracketMatch }) {
+function MatchCard({ match, wide }: { match: BracketMatch; wide?: boolean }) {
   return (
-    <div className="flex w-[210px] overflow-hidden rounded border border-judo-navy/25 bg-white shadow-sm">
+    <div
+      className={`flex overflow-hidden rounded border border-judo-navy/25 bg-white shadow-sm ${
+        wide ? 'w-[230px]' : 'w-[210px]'
+      }`}
+    >
       <div className="min-w-0 flex-1">
-        <div className="border-b border-judo-navy/15 px-2 py-1.5 text-xs font-medium text-judo-navy truncate">
-          {slotLabel(match.top.fighter, match.top.empty)}
-        </div>
-        <div className="px-2 py-1.5 text-xs font-medium text-judo-navy truncate">
-          {slotLabel(match.bottom.fighter, match.bottom.empty)}
-        </div>
+        <SlotLines fighter={match.top.fighter} borderBottom />
+        <SlotLines fighter={match.bottom.fighter} />
       </div>
-      <div className="flex w-[72px] shrink-0 items-center justify-center bg-judo-navy px-1 text-center text-[10px] font-semibold leading-tight text-white">
+      <div className="flex w-[68px] shrink-0 items-center justify-center bg-judo-navy px-1 text-center text-[10px] font-semibold leading-tight text-white">
         {match.label}
+        {match.bye ? <span className="mt-0.5 block text-[8px] font-normal text-white/80">bye</span> : null}
       </div>
-    </div>
-  )
-}
-
-function LaterRoundBadge({ match }: { match: BracketMatch }) {
-  return (
-    <div className="flex h-9 min-w-[52px] items-center justify-center rounded border border-judo-navy/30 bg-judo-mist px-2 text-xs font-semibold text-judo-navy">
-      {match.label}
     </div>
   )
 }
@@ -139,7 +157,7 @@ function ConnectorColumn({
   const pairH = colH / pairs
 
   return (
-    <div className="relative" style={{ width: 88, height: colH }}>
+    <div className="relative" style={{ width: 72, height: colH }}>
       {Array.from({ length: pairs }, (_, i) => {
         const topY = i * pairH + pairH * 0.25
         const botY = i * pairH + pairH * 0.75
@@ -148,12 +166,12 @@ function ConnectorColumn({
           <svg
             key={i}
             className="absolute inset-0 overflow-visible"
-            width={88}
+            width={72}
             height={colH}
             aria-hidden
           >
             <path
-              d={`M 0 ${topY} H 40 V ${botY} H 0 M 40 ${midY} H 88`}
+              d={`M 0 ${topY} H 32 V ${botY} H 0 M 32 ${midY} H 72`}
               fill="none"
               stroke="#0B1F3A"
               strokeWidth={1.25}
@@ -168,29 +186,43 @@ function ConnectorColumn({
 function WinnerTail({
   firstRoundCount,
   matchBlockH,
-  matchGap
+  matchGap,
+  finalMatch
 }: {
   firstRoundCount: number
   matchBlockH: number
   matchGap: number
+  finalMatch?: BracketMatch
 }) {
   const colH = firstRoundCount * (matchBlockH + matchGap) - matchGap
   const midY = colH / 2
+  const winner =
+    finalMatch?.top.fighter && !finalMatch.bottom.fighter
+      ? finalMatch.top.fighter
+      : finalMatch?.bottom.fighter && !finalMatch.top.fighter
+        ? finalMatch.bottom.fighter
+        : null
+
   return (
-    <div className="relative" style={{ width: 100, height: colH }}>
-      <svg width={100} height={colH} className="absolute inset-0" aria-hidden>
+    <div className="relative" style={{ width: 120, height: colH }}>
+      <svg width={120} height={colH} className="absolute inset-0" aria-hidden>
         <path
-          d={`M 0 ${midY} H 70`}
+          d={`M 0 ${midY} H 48`}
           fill="none"
           stroke="#0B1F3A"
           strokeWidth={1.25}
         />
       </svg>
       <div
-        className="absolute left-[72px] -translate-y-1/2 whitespace-nowrap text-xs font-semibold text-judo-red"
+        className="absolute left-[52px] max-w-[68px] -translate-y-1/2"
         style={{ top: midY }}
       >
-        Vainqueur
+        <div className="text-xs font-semibold text-judo-red">Vainqueur</div>
+        {winner ? (
+          <div className="mt-0.5 truncate text-[9px] leading-tight text-judo-navy" title={winner.name}>
+            {winner.name}
+          </div>
+        ) : null}
       </div>
     </div>
   )
