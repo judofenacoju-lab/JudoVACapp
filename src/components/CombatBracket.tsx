@@ -20,7 +20,7 @@ function SlotLines({
     <div
       className={`min-w-0 px-2 py-1 ${borderBottom ? 'border-b border-judo-navy/15' : ''}`}
     >
-      <div className="truncate text-xs font-medium leading-tight text-judo-navy">
+      <div className="truncate text-xs font-bold leading-tight text-judo-navy">
         {slotName(fighter)}
       </div>
       {fighter ? (
@@ -134,7 +134,6 @@ function MatchCard({ match, wide }: { match: BracketMatch; wide?: boolean }) {
       </div>
       <div className="flex w-[68px] shrink-0 items-center justify-center bg-judo-navy px-1 text-center text-[10px] font-semibold leading-tight text-white">
         {match.label}
-        {match.bye ? <span className="mt-0.5 block text-[8px] font-normal text-white/80">bye</span> : null}
       </div>
     </div>
   )

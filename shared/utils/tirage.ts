@@ -417,7 +417,6 @@ export function generateTirage(
   })
 
   const pools: TiragePool[] = []
-  let fightNumber = 1
   let fightCount = 0
   let byeCount = 0
 
@@ -428,12 +427,11 @@ export function generateTirage(
       bucket.fighters,
       {
         avoidSameClub: settings.avoidSameClub,
-        startFightNumber: fightNumber,
+        startFightNumber: 1,
         idPrefix: `${bucket.sex}-${bucket.category}-${wc.id}`
       },
       random
     )
-    fightNumber = built.nextFightNumber
     fightCount += built.fightCount
     byeCount += built.byeCount
 

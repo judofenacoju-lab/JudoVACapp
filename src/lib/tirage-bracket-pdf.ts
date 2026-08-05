@@ -102,11 +102,11 @@ function drawMatchCard(
   })
 
   const drawSlot = (fighter: TirageFighter | null, midY: number) => {
-    page.drawText(truncate(font, slotName(fighter), nameSize, nameW - 8), {
+    page.drawText(truncate(fontBold, slotName(fighter), nameSize, nameW - 8), {
       x: x + 4,
       y: midY + (fighter ? 3 : -nameSize / 3),
       size: nameSize,
-      font,
+      font: fontBold,
       color: NAVY
     })
     if (fighter) {
@@ -127,22 +127,11 @@ function drawMatchCard(
   const lw = fontBold.widthOfTextAtSize(label, labelSize)
   page.drawText(label, {
     x: x + nameW + Math.max(2, (labelW - lw) / 2),
-    y: cy + (match.bye ? 2 : -labelSize / 3),
+    y: cy - labelSize / 3,
     size: labelSize,
     font: fontBold,
     color: WHITE
   })
-  if (match.bye) {
-    const bye = pdfSafeText('bye')
-    const bw = font.widthOfTextAtSize(bye, 5)
-    page.drawText(bye, {
-      x: x + nameW + Math.max(2, (labelW - bw) / 2),
-      y: cy - 8,
-      size: 5,
-      font,
-      color: rgb(0.85, 0.9, 0.95)
-    })
-  }
 }
 
 function measureHeaderHeight(meta?: { filtersLabel?: string }): number {
@@ -276,17 +265,20 @@ function drawPageHeader(
   pool: TiragePool,
   meta: { filtersLabel?: string } | undefined,
   pageIndex: number,
-  pageCount: number
+  pageCount: number,
+  showDocTitle: boolean
 ): void {
   let y = PAGE_H - MARGIN
 
-  page.drawText(pdfSafeText('JudoVACapp - Grille de combats'), {
-    x: MARGIN,
-    y: y - 14,
-    size: 16,
-    font: fontBold,
-    color: NAVY
-  })
+  if (showDocTitle) {
+    page.drawText(pdfSafeText('JudoVACapp - Grille de combats'), {
+      x: MARGIN,
+      y: y - 14,
+      size: 16,
+      font: fontBold,
+      color: NAVY
+    })
+  }
   if (pageCount > 1) {
     const pageLabel = pdfSafeText(`Page ${pageIndex + 1}/${pageCount}`)
     const pw = font.widthOfTextAtSize(pageLabel, 9)
@@ -383,6 +375,7 @@ export async function exportTirageBracketPdfBytes(
   const contentTop = PAGE_H - MARGIN - headerH
   const contentBottom = MARGIN + FOOTER_H
   const availableH = Math.max(80, contentTop - contentBottom)
+  let isFirstDocPage = true
 
   for (const pool of pools) {
     const n0 = pool.bracket.rounds[0]?.length ?? 0
@@ -392,6 +385,8 @@ export async function exportTirageBracketPdfBytes(
     for (let p = 0; p < pageCount; p++) {
       const page = doc.addPage([PAGE_W, PAGE_H])
       const yShift = p * availableH
+      const showDocTitle = isFirstDocPage
+      isFirstDocPage = false
 
       // 1) Grille d’abord (bande utile uniquement)
       drawBracketSlice(
@@ -426,7 +421,7 @@ export async function exportTirageBracketPdfBytes(
       })
 
       // 3) Titres + pied par-dessus les masques
-      drawPageHeader(page, font, fontBold, pool, meta, p, pageCount)
+      drawPageHeader(page, font, fontBold, pool, meta, p, pageCount, showDocTitle)
       drawPageFooter(page, font)
 
       // Trait de séparation titres / grille
