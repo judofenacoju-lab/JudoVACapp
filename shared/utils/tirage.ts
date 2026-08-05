@@ -291,7 +291,8 @@ export function buildBracket(
 
 /**
  * Tirage aléatoire des combats pour les judokas pesés.
- * Garçons / filles séparés ; groupes Sexe × Catégorie d’âge × Catégorie de poids.
+ * Groupes = Sexe × Catégorie d’âge × Libellé de poids (tranche min–max).
+ * Le poids exact (kg) ne sépare pas les combats : tout le libellé combat ensemble.
  */
 export function generateTirage(
   judokas: Judoka[],
@@ -318,7 +319,9 @@ export function generateTirage(
     const wc = matchWeightClass(f.weightKg, weightClasses)
     if (!wc) continue
     matchedCount += 1
-    const key = `${f.sex}::${f.category}::${wc.id}`
+    // Clé = libellé (pas le kg exact) + catégorie d’âge + sexe
+    const labelKey = wc.label.trim().toLowerCase()
+    const key = `${f.sex}::${f.category}::${labelKey}`
     let bucket = buckets.get(key)
     if (!bucket) {
       bucket = { sex: f.sex, category: f.category, weightClass: wc, fighters: [] }

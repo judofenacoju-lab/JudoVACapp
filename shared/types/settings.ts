@@ -9,6 +9,14 @@ export interface CategoryAgeRange {
   maxAge: number
 }
 
+/** Catégorie / libellé de poids (Tirage + Triage), ex. −20 kg = 18–20. */
+export interface WeightClassRange {
+  id: string
+  label: string
+  minKg: number
+  maxKg: number
+}
+
 export function createDefaultCategoryAgeRanges(): CategoryAgeRange[] {
   return [
     { name: 'Eveil', minAge: 3, maxAge: 5 },
@@ -48,6 +56,8 @@ export interface AppSettings {
   categories: CategoryAgeRange[]
   /** Clubs proposés à tous les utilisateurs lors de l'enregistrement judoka. */
   clubs: string[]
+  /** Libellés de poids partagés (Tirage / Triage). */
+  weightClasses: WeightClassRange[]
   updatedAt: string
 }
 
@@ -76,6 +86,7 @@ export function createDefaultSettings(): AppSettings {
     },
     categories: createDefaultCategoryAgeRanges(),
     clubs: [],
+    weightClasses: [],
     updatedAt: new Date().toISOString()
   }
 }

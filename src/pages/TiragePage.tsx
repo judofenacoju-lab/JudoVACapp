@@ -60,6 +60,8 @@ export function TiragePage({ onBack, embedded = false }: Props) {
             ? settingsRes.data.categories.map((c) => c.name)
             : getActiveCategoryNames()
         )
+        const saved = normalizeWeightClasses(settingsRes.data.weightClasses ?? [])
+        if (saved.length > 0) setWeightClasses(saved)
       } else {
         setCategories(getActiveCategoryNames())
       }
@@ -68,6 +70,11 @@ export function TiragePage({ onBack, embedded = false }: Props) {
       cancelled = true
     }
   }, [])
+
+  async function persistWeightClasses(classes: TirageWeightClass[]): Promise<void> {
+    const normalized = normalizeWeightClasses(classes)
+    await window.judovac.setSettings({ weightClasses: normalized })
+  }
 
   const visiblePools = useMemo(() => {
     if (!result) return []
@@ -132,6 +139,7 @@ export function TiragePage({ onBack, embedded = false }: Props) {
         return
       }
       setWeightClasses(normalized)
+      await persistWeightClasses(normalized)
 
       const listed = await window.judovac.listJudokas({ limit: 5000, offset: 0 })
       if (!listed.ok) {
@@ -200,9 +208,15 @@ export function TiragePage({ onBack, embedded = false }: Props) {
     >
       <div className="space-y-6 animate-fade-in">
         <div className="rounded-xl border bg-white/75 p-5 space-y-5 max-w-3xl">
+          <p className="text-sm text-muted-foreground">
+            Les combats regroupent tous les pesés du même <strong>libellé de poids</strong> et de la
+            même <strong>catégorie d’âge</strong> (garçons / filles séparés) — pas seulement un poids
+            kg identique.
+          </p>
+
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-2">
-              <Label>Catégories de poids</Label>
+              <Label>Catégories de poids (libellés)</Label>
               <Button type="button" size="sm" variant="outline" disabled={loading} onClick={addWeightClass}>
                 <Plus className="h-4 w-4" />
                 Ajouter

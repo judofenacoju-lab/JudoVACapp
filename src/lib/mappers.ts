@@ -109,6 +109,22 @@ export function mergeSettings(raw: Partial<AppSettings> | null): AppSettings {
   const clubs = mergeRegisteredClubNames(
     Array.isArray(raw.clubs) ? raw.clubs.map((c) => String(c)) : defaults.clubs
   )
+  const weightClasses = Array.isArray(raw.weightClasses)
+    ? raw.weightClasses
+        .map((c) => ({
+          id: String((c as { id?: string }).id ?? ''),
+          label: String((c as { label?: string }).label ?? '').trim(),
+          minKg: Number((c as { minKg?: number }).minKg),
+          maxKg: Number((c as { maxKg?: number }).maxKg)
+        }))
+        .filter(
+          (c) =>
+            c.label &&
+            Number.isFinite(c.minKg) &&
+            Number.isFinite(c.maxKg) &&
+            c.maxKg > 0
+        )
+    : defaults.weightClasses
   return {
     event: { ...defaults.event, ...raw.event },
     print: { ...defaults.print, ...raw.print },
@@ -116,6 +132,7 @@ export function mergeSettings(raw: Partial<AppSettings> | null): AppSettings {
     network: { ...defaults.network, ...raw.network },
     categories: categories.length > 0 ? categories : defaults.categories,
     clubs,
+    weightClasses,
     updatedAt: raw.updatedAt ?? defaults.updatedAt
   }
 }

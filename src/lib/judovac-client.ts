@@ -2056,6 +2056,7 @@ export const judovacClient = {
       network: { ...current.data.network, ...patch.network },
       categories: patch.categories ?? current.data.categories,
       clubs: patch.clubs ?? current.data.clubs,
+      weightClasses: patch.weightClasses ?? current.data.weightClasses,
       updatedAt: new Date().toISOString()
     }
     const { error } = await supabase.from('app_settings').upsert({
