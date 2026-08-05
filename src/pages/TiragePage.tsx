@@ -8,6 +8,7 @@ import { CombatBracket } from '@/components/CombatBracket'
 import {
   createWeightClassId,
   DEFAULT_TIRAGE_SETTINGS,
+  formatTirageCategoryName,
   generateTirage,
   normalizeWeightClasses,
   suggestWeightClassLabel,
@@ -80,19 +81,12 @@ export function TiragePage({ onBack, embedded = false }: Props) {
     if (!result) return []
     return result.pools.filter((p) => {
       if (sexFilter && p.sex !== sexFilter) return false
-      if (categoryFilter && p.category !== categoryFilter) return false
+      if (categoryFilter && formatTirageCategoryName(p.category) !== formatTirageCategoryName(categoryFilter)) {
+        return false
+      }
       return true
     })
   }, [result, sexFilter, categoryFilter])
-
-  const filtersLabel = useMemo(() => {
-    const parts: string[] = []
-    parts.push(
-      sexFilter === 'M' ? 'Garçons' : sexFilter === 'F' ? 'Filles' : 'Garçons et filles'
-    )
-    parts.push(categoryFilter ? `Catégorie ${categoryFilter}` : 'Toutes catégories d’âge')
-    return `Filtres : ${parts.join(' · ')}`
-  }, [sexFilter, categoryFilter])
 
   function updateWeightClass(id: string, patch: Partial<TirageWeightClass>): void {
     setWeightClasses((rows) =>
@@ -183,7 +177,7 @@ export function TiragePage({ onBack, embedded = false }: Props) {
     setExportMessage(null)
     try {
       const { exportAndDownloadTirageBracketPdf } = await import('@/lib/tirage-bracket-pdf')
-      const out = await exportAndDownloadTirageBracketPdf(visiblePools, { filtersLabel })
+      const out = await exportAndDownloadTirageBracketPdf(visiblePools)
       setExportMessage(`Grille exportée (${out.poolCount} tableau(x)) → ${out.filename}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Export PDF impossible')

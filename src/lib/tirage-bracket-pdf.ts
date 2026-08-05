@@ -86,28 +86,36 @@ function computeLayout(bracket: BracketTree, maxWidth: number, maxHeight: number
   const n0 = Math.max(1, bracket.rounds[0]?.length ?? 1)
   const laterRounds = Math.max(0, bracket.rounds.length - 1)
 
-  // Dimensions de base lisibles ; on réduit pour tenir largeur + hauteur (toute la grille → vainqueur)
+  // Dimensions de base ; on réduit jusqu’à faire tenir TOUTE la grille (→ vainqueur) sur la page
   let boxH = 44
   let gap = 8
   let boxW = 210
-  let laterW = 120
-  let connectorW = 28
-  const winnerTail = 64
+  let laterW = 110
+  let connectorW = 26
+  const winnerTail = 62
 
   const widthNeeded = () => boxW + laterRounds * (laterW + connectorW) + winnerTail
   const heightNeeded = () => n0 * (boxH + gap) - gap
 
-  // Priorité largeur : toutes les colonnes jusqu’au vainqueur visibles
-  while (widthNeeded() > maxWidth && (boxW > 130 || laterW > 56)) {
-    if (boxW > 130) boxW -= 5
-    if (laterW > 56) laterW -= 3
-    if (connectorW > 20) connectorW -= 1
+  while (widthNeeded() > maxWidth && (boxW > 100 || laterW > 48)) {
+    if (boxW > 100) boxW -= 4
+    if (laterW > 48) laterW -= 3
+    if (connectorW > 16) connectorW -= 1
   }
 
-  // Priorité hauteur : une page complète si possible
-  while (heightNeeded() > maxHeight && boxH > 22) {
-    boxH -= 1
-    if (gap > 3) gap -= 0.25
+  // Forcer la hauteur : une seule page, case Vainqueur toujours visible
+  while (heightNeeded() > maxHeight && (boxH > 12 || gap > 1.5)) {
+    if (boxH > 12) boxH -= 0.5
+    if (gap > 1.5) gap -= 0.25
+  }
+
+  // Si encore trop haut (très grand tableau), compresser proportionnellement
+  let colH = heightNeeded()
+  if (colH > maxHeight && maxHeight > 40) {
+    const scale = maxHeight / colH
+    boxH = Math.max(10, boxH * scale)
+    gap = Math.max(1, gap * scale)
+    colH = n0 * (boxH + gap) - gap
   }
 
   return {
@@ -117,7 +125,7 @@ function computeLayout(bracket: BracketTree, maxWidth: number, maxHeight: number
     laterW,
     connectorW,
     winnerTail,
-    colH: heightNeeded()
+    colH
   }
 }
 
@@ -425,7 +433,7 @@ function drawPageHeader(
 }
 
 /**
- * PDF A4 paysage : grille complète jusqu’au vainqueur ; titre catégorie unique ; noms « Prénom, Nom ».
+ * PDF A4 paysage : 1 page par grille (complète jusqu’au vainqueur) ; sans seuils d’âge.
  */
 export async function exportTirageBracketPdfBytes(
   pools: TiragePool[],
@@ -454,105 +462,71 @@ export async function exportTirageBracketPdfBytes(
 
   for (const pool of pools) {
     const categoryKey = poolCategoryKey(pool)
+    const page = doc.addPage([PAGE_W, PAGE_H])
 
-    // Estimer la hauteur d’en-tête (1ʳᵉ page catégorie vs suite)
-    const willShowCategory = !shownCategoryTitles.has(categoryKey)
-    const firstHeaderH = measurePoolHeaderHeight({
-      showDocTitle: isFirstDocPage,
-      showCategoryTitle: willShowCategory
+    const showDocTitle = isFirstDocPage
+    isFirstDocPage = false
+
+    const showCategoryTitle = !shownCategoryTitles.has(categoryKey)
+    if (showCategoryTitle) shownCategoryTitles.add(categoryKey)
+
+    const headerH = measurePoolHeaderHeight({
+      showDocTitle,
+      showCategoryTitle
     })
-    const contHeaderH = measurePoolHeaderHeight({
-      showDocTitle: false,
-      showCategoryTitle: false
+    const contentTop = PAGE_H - MARGIN - headerH
+    const availableH = Math.max(80, contentTop - contentBottom)
+
+    // Une seule page : toute la grille redimensionnée pour afficher la case Vainqueur
+    const layout = computeLayout(pool.bracket, maxBracketWidth, availableH)
+
+    drawBracketSlice(
+      page,
+      font,
+      fontBold,
+      pool.bracket,
+      layout,
+      MARGIN,
+      contentTop,
+      0,
+      contentTop,
+      contentBottom
+    )
+
+    page.drawRectangle({
+      x: 0,
+      y: contentTop,
+      width: PAGE_W,
+      height: PAGE_H - contentTop,
+      color: WHITE,
+      borderWidth: 0
+    })
+    page.drawRectangle({
+      x: 0,
+      y: 0,
+      width: PAGE_W,
+      height: contentBottom,
+      color: WHITE,
+      borderWidth: 0
     })
 
-    const firstAvail = Math.max(100, PAGE_H - MARGIN - firstHeaderH - contentBottom)
-    // Préférer 1 page : caler toute la grille (toutes les cases → vainqueur)
-    const layoutOnePage = computeLayout(pool.bracket, maxBracketWidth, firstAvail)
-    const fitsOnePage = layoutOnePage.colH <= firstAvail + 1
+    drawPageHeader(
+      page,
+      font,
+      fontBold,
+      pool,
+      0,
+      1,
+      showDocTitle,
+      showCategoryTitle
+    )
 
-    const pageCount = fitsOnePage
-      ? 1
-      : 1 +
-        Math.ceil(
-          Math.max(0, layoutOnePage.colH - firstAvail) /
-            Math.max(80, PAGE_H - MARGIN - contHeaderH - contentBottom)
-        )
-
-    let yConsumed = 0
-    for (let p = 0; p < pageCount; p++) {
-      const page = doc.addPage([PAGE_W, PAGE_H])
-      const showDocTitle = isFirstDocPage
-      isFirstDocPage = false
-
-      const showCategoryTitle = p === 0 && !shownCategoryTitles.has(categoryKey)
-      if (showCategoryTitle) shownCategoryTitles.add(categoryKey)
-
-      const headerH = measurePoolHeaderHeight({
-        showDocTitle,
-        showCategoryTitle
-      })
-      const contentTop = PAGE_H - MARGIN - headerH
-      const availableH = Math.max(80, contentTop - contentBottom)
-
-      const layout = computeLayout(
-        pool.bracket,
-        maxBracketWidth,
-        fitsOnePage ? availableH : Math.max(availableH, layoutOnePage.colH)
-      )
-
-      const yShift = fitsOnePage ? 0 : yConsumed
-
-      drawBracketSlice(
-        page,
-        font,
-        fontBold,
-        pool.bracket,
-        layout,
-        MARGIN,
-        contentTop,
-        yShift,
-        contentTop,
-        contentBottom
-      )
-
-      page.drawRectangle({
-        x: 0,
-        y: contentTop,
-        width: PAGE_W,
-        height: PAGE_H - contentTop,
-        color: WHITE,
-        borderWidth: 0
-      })
-      page.drawRectangle({
-        x: 0,
-        y: 0,
-        width: PAGE_W,
-        height: contentBottom,
-        color: WHITE,
-        borderWidth: 0
-      })
-
-      drawPageHeader(
-        page,
-        font,
-        fontBold,
-        pool,
-        p,
-        pageCount,
-        showDocTitle,
-        showCategoryTitle
-      )
-
-      page.drawLine({
-        start: { x: MARGIN, y: contentTop + 2 },
-        end: { x: PAGE_W - MARGIN, y: contentTop + 2 },
-        thickness: 0.5,
-        color: rgb(0.75, 0.8, 0.85)
-      })
-
-      yConsumed += availableH
-    }
+    page.drawLine({
+      start: { x: MARGIN, y: contentTop + 2 },
+      end: { x: PAGE_W - MARGIN, y: contentTop + 2 },
+      thickness: 0.5,
+      color: rgb(0.75, 0.8, 0.85)
+    })
   }
 
   return doc.save()

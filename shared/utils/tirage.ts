@@ -115,11 +115,17 @@ function toFighter(j: Judoka): TirageFighter {
 
 /** Libellé d’âge sans seuils min/max (ex. « Benjamin (10-11) » → « Benjamin »). */
 export function formatTirageCategoryName(category: string): string {
-  return category
-    .replace(/\s*\(\s*\d+\s*[-–to]+\s*\d+\s*(ans)?\s*\)/gi, '')
-    .replace(/\s+\d+\s*[-–]\s*\d+\s*ans\b/gi, '')
+  const cleaned = category
+    .replace(/\s*\(\s*\d+\s*[-–/àto]+\s*\d+\s*(ans)?\s*\)/gi, '')
+    .replace(/\s*\[\s*\d+\s*[-–/à]+\s*\d+\s*(ans)?\s*\]/gi, '')
+    .replace(/\s+\d+\s*[-–/]\s*\d+\s*ans\b/gi, '')
     .replace(/\s+de\s+\d+\s+à\s+\d+(\s*ans)?/gi, '')
-    .trim() || category.trim()
+    .replace(/\s*(âge|age)\s*:?\s*\d+\s*[-–/à]\s*\d+/gi, '')
+    .replace(/\s*(min|max)\s*(âge|age)?\s*:?\s*\d+/gi, '')
+    .replace(/\s+\d{1,2}\s*[-–]\s*\d{1,2}\s*$/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  return cleaned || category.trim()
 }
 
 /** Fisher–Yates. */
@@ -450,14 +456,13 @@ export function generateTirage(
     fightCount += built.fightCount
     byeCount += built.byeCount
 
-    const rangeLabel = `${wc.minKg}–${wc.maxKg} kg`
     pools.push({
       sex: bucket.sex,
       sexLabel: bucket.sex === 'F' ? 'Filles' : 'Garçons',
       category: formatTirageCategoryName(bucket.category),
       weightClassId: wc.id,
       weightKey: wc.maxKg,
-      weightLabel: wc.label.trim() || rangeLabel,
+      weightLabel: (wc.label || '').trim() || suggestWeightClassLabel(wc.maxKg),
       entrantCount: bucket.fighters.length,
       bracket: built.bracket
     })
