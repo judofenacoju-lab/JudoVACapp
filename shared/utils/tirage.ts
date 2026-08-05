@@ -96,10 +96,14 @@ function normalizeWeightKg(weightKg: unknown): number {
 }
 
 function toFighter(j: Judoka): TirageFighter {
+  const first = j.firstName?.trim() ?? ''
+  const middle = j.middleName?.trim() ?? ''
+  const last = j.lastName?.trim() ?? ''
+  const displayName = [first, middle, last].filter(Boolean).join(' ')
   return {
     id: j.id,
     displayId: j.displayId,
-    name: formatJudokaFullName(j) || j.displayId,
+    name: displayName || formatJudokaFullName(j) || j.displayId,
     sex: j.sex === 'F' ? 'F' : 'M',
     category: resolveJudokaCategory(j.birthDate, j.category) || j.category || 'Sans catégorie',
     weightKg: normalizeWeightKg(j.weightKg),

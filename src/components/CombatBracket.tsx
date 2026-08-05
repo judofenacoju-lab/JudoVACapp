@@ -20,11 +20,11 @@ function SlotLines({
     <div
       className={`min-w-0 px-2 py-1 ${borderBottom ? 'border-b border-judo-navy/15' : ''}`}
     >
-      <div className="truncate text-xs font-bold leading-tight text-judo-navy">
+      <div className="text-[11px] font-bold leading-snug text-judo-navy break-words">
         {slotName(fighter)}
       </div>
       {fighter ? (
-        <div className="truncate text-[9px] leading-tight text-muted-foreground">
+        <div className="mt-0.5 text-[9px] leading-tight text-muted-foreground break-words">
           {formatFighterMeta(fighter)}
         </div>
       ) : (
@@ -50,7 +50,7 @@ export function CombatBracket({
   }
 
   const firstRound = bracket.rounds[0]!
-  const matchBlockH = 72
+  const matchBlockH = 84
   const matchGap = 14
   const firstColHeight = firstRound.length * (matchBlockH + matchGap) - matchGap
 
@@ -108,7 +108,7 @@ function RoundColumn({
 }) {
   const colH = firstRoundCount * (matchBlockH + matchGap) - matchGap
   const slotH = colH / matches.length
-  const colW = roundIdx === 0 ? 240 : 220
+  const colW = roundIdx === 0 ? 260 : 240
 
   return (
     <div className="relative flex flex-col justify-around" style={{ height: colH, width: colW }}>
@@ -125,7 +125,7 @@ function MatchCard({ match, wide }: { match: BracketMatch; wide?: boolean }) {
   return (
     <div
       className={`flex overflow-hidden rounded border border-judo-navy/25 bg-white shadow-sm ${
-        wide ? 'w-[230px]' : 'w-[210px]'
+        wide ? 'w-[250px]' : 'w-[230px]'
       }`}
     >
       <div className="min-w-0 flex-1">
