@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Dices, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { ArrowLeft, Dices, FileDown, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { AppShell } from '@/layouts/AppShell'
+import { CombatBracket } from '@/components/CombatBracket'
 import {
   createWeightClassId,
   DEFAULT_TIRAGE_SETTINGS,
@@ -32,8 +33,7 @@ function emptyWeightClass(partial?: Partial<TirageWeightClass>): TirageWeightCla
 }
 
 /**
- * Tirage des combats — judokas pesés, catégories de poids configurables,
- * séparés garçons / filles, appariés aléatoirement.
+ * Tirage des combats — catégories de poids configurables, grilles à élimination directe.
  */
 export function TiragePage({ onBack, embedded = false }: Props) {
   const [weightClasses, setWeightClasses] = useState<TirageWeightClass[]>([
@@ -44,8 +44,10 @@ export function TiragePage({ onBack, embedded = false }: Props) {
   const [sexFilter, setSexFilter] = useState<'' | 'M' | 'F'>('')
   const [categories, setCategories] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
+  const [exportBusy, setExportBusy] = useState(false)
   const [result, setResult] = useState<TirageResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [exportMessage, setExportMessage] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -76,12 +78,20 @@ export function TiragePage({ onBack, embedded = false }: Props) {
     })
   }, [result, sexFilter, categoryFilter])
 
+  const filtersLabel = useMemo(() => {
+    const parts: string[] = []
+    parts.push(
+      sexFilter === 'M' ? 'Garçons' : sexFilter === 'F' ? 'Filles' : 'Garçons et filles'
+    )
+    parts.push(categoryFilter ? `Catégorie ${categoryFilter}` : 'Toutes catégories d’âge')
+    return `Filtres : ${parts.join(' · ')}`
+  }, [sexFilter, categoryFilter])
+
   function updateWeightClass(id: string, patch: Partial<TirageWeightClass>): void {
     setWeightClasses((rows) =>
       rows.map((row) => {
         if (row.id !== id) return row
         const next = { ...row, ...patch }
-        // Si le max change et le libellé était auto « -X kg », le resynchroniser
         if (patch.maxKg != null && /^-\s*[\d.,]+\s*kg$/i.test(row.label.trim())) {
           next.label = suggestWeightClassLabel(Number(patch.maxKg) || 0)
         }
@@ -113,6 +123,7 @@ export function TiragePage({ onBack, embedded = false }: Props) {
   async function runTirage(): Promise<void> {
     setLoading(true)
     setError(null)
+    setExportMessage(null)
     try {
       const normalized = normalizeWeightClasses(weightClasses)
       if (normalized.length === 0) {
@@ -120,7 +131,6 @@ export function TiragePage({ onBack, embedded = false }: Props) {
         setResult(null)
         return
       }
-      // Afficher les valeurs normalisées dans le formulaire
       setWeightClasses(normalized)
 
       const listed = await window.judovac.listJudokas({ limit: 5000, offset: 0 })
@@ -154,11 +164,31 @@ export function TiragePage({ onBack, embedded = false }: Props) {
     }
   }
 
+  async function exportGrille(): Promise<void> {
+    if (visiblePools.length === 0) {
+      setExportMessage(null)
+      setError('Aucune grille visible à exporter pour ces filtres.')
+      return
+    }
+    setExportBusy(true)
+    setError(null)
+    setExportMessage(null)
+    try {
+      const { exportAndDownloadTirageBracketPdf } = await import('@/lib/tirage-bracket-pdf')
+      const out = await exportAndDownloadTirageBracketPdf(visiblePools, { filtersLabel })
+      setExportMessage(`Grille exportée (${out.poolCount} tableau(x)) → ${out.filename}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Export PDF impossible')
+    } finally {
+      setExportBusy(false)
+    }
+  }
+
   return (
     <AppShell
       embedded={embedded}
       title="Tirage"
-      subtitle="Classement aléatoire des combats — sexe, catégorie d’âge, catégories de poids"
+      subtitle="Classement aléatoire des combats par sexe, catégorie d’âge, catégories de poids."
       actions={
         !embedded ? (
           <Button variant="outline" onClick={onBack}>
@@ -170,12 +200,6 @@ export function TiragePage({ onBack, embedded = false }: Props) {
     >
       <div className="space-y-6 animate-fade-in">
         <div className="rounded-xl border bg-white/75 p-5 space-y-5 max-w-3xl">
-          <p className="text-sm text-muted-foreground">
-            Les garçons combattent entre eux, les filles entre elles. Seuls les judokas pesés dont le
-            poids entre dans une catégorie définie ci-dessous sont inclus. Définissez les seuils
-            (ex. −20 kg = 18 à 20 kg) puis lancez le tirage.
-          </p>
-
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-2">
               <Label>Catégories de poids</Label>
@@ -256,9 +280,6 @@ export function TiragePage({ onBack, embedded = false }: Props) {
                 </div>
               ))}
             </div>
-            <p className="text-xs text-muted-foreground">
-              Exemple : libellé « -20 kg », min 18, max 20 → tous les pesés de 18 à 20 kg inclus.
-            </p>
           </div>
 
           <div className="space-y-2">
@@ -324,6 +345,7 @@ export function TiragePage({ onBack, embedded = false }: Props) {
           </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
+          {exportMessage && <p className="text-sm text-emerald-700 break-all">{exportMessage}</p>}
           {result && result.matchedCount > 0 && (
             <p className="text-sm text-emerald-700">
               {result.matchedCount} pesé(s) classé(s) · {result.fightCount} combat(s) ·{' '}
@@ -352,72 +374,31 @@ export function TiragePage({ onBack, embedded = false }: Props) {
                   {pool.sexLabel} · {pool.category} · {pool.weightLabel}
                 </h3>
                 <p className="text-xs text-white/70">
-                  {pool.entrantCount} judoka{pool.entrantCount > 1 ? 's' : ''} · {pool.fights.length}{' '}
-                  match{pool.fights.length > 1 ? 's' : ''}
+                  {pool.entrantCount} judoka{pool.entrantCount > 1 ? 's' : ''} · tableau{' '}
+                  {pool.bracket.size}
                 </p>
               </div>
             </header>
-            <ul className="divide-y">
-              {pool.fights.map((fight) => (
-                <li
-                  key={fight.id}
-                  className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm sm:gap-4"
-                >
-                  <span className="w-10 shrink-0 font-mono text-xs text-muted-foreground">
-                    #{fight.number}
-                  </span>
-                  <div className="min-w-0 flex-1 grid gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
-                    <FighterCard
-                      name={fight.a.name}
-                      club={fight.a.club}
-                      weight={fight.a.weightKg}
-                      side="A"
-                    />
-                    <span className="text-center text-xs font-semibold uppercase tracking-wide text-judo-red">
-                      {fight.bye ? 'Exempt' : 'vs'}
-                    </span>
-                    {fight.b ? (
-                      <FighterCard
-                        name={fight.b.name}
-                        club={fight.b.club}
-                        weight={fight.b.weightKg}
-                        side="B"
-                      />
-                    ) : (
-                      <p className="rounded-md border border-dashed px-3 py-2 text-muted-foreground">
-                        Pas d’adversaire (nombre impair)
-                      </p>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <div className="bg-slate-50/50 p-2">
+              <CombatBracket bracket={pool.bracket} />
+            </div>
           </section>
         ))}
+
+        {visiblePools.length > 0 && (
+          <div className="flex justify-center border-t pt-4 pb-2">
+            <Button
+              variant="accent"
+              size="lg"
+              disabled={exportBusy}
+              onClick={() => void exportGrille()}
+            >
+              <FileDown className="h-4 w-4" />
+              {exportBusy ? 'Export…' : 'Exporter Grille'}
+            </Button>
+          </div>
+        )}
       </div>
     </AppShell>
-  )
-}
-
-function FighterCard({
-  name,
-  club,
-  weight,
-  side
-}: {
-  name: string
-  club: string
-  weight: number
-  side: 'A' | 'B'
-}) {
-  return (
-    <div
-      className={`rounded-md border bg-slate-50/90 px-3 py-2 ${side === 'B' ? 'sm:text-right' : ''}`}
-    >
-      <p className="font-medium text-judo-navy truncate">{name}</p>
-      <p className="text-xs text-muted-foreground truncate">
-        {club} · {Number.isInteger(weight) ? weight : weight.toFixed(1).replace('.', ',')} kg
-      </p>
-    </div>
   )
 }
