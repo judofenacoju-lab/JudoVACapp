@@ -342,14 +342,28 @@ export function TiragePage({ onBack, embedded = false }: Props) {
               {result ? <RefreshCw className="h-4 w-4" /> : <Dices className="h-4 w-4" />}
               {loading ? 'Tirage…' : result ? 'Relancer le tirage' : 'Lancer le tirage'}
             </Button>
+            {result && (
+              <Button
+                variant="outline"
+                size="lg"
+                disabled={loading || exportBusy}
+                onClick={() => {
+                  setResult(null)
+                  setError(null)
+                  setExportMessage(null)
+                }}
+              >
+                Effacer
+              </Button>
+            )}
           </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
           {exportMessage && <p className="text-sm text-emerald-700 break-all">{exportMessage}</p>}
           {result && result.matchedCount > 0 && (
             <p className="text-sm text-emerald-700">
-              {result.matchedCount} pesé(s) classé(s) · {result.fightCount} combat(s) ·{' '}
-              {result.byeCount} exempt(s)
+              {result.matchedCount} pesé(s) classé(s) · {result.fightCount} combat(s)
+              {result.byeCount > 0 ? ` · ${result.byeCount} sans adversaire` : ''}
               {result.unmatchedCount > 0
                 ? ` · ${result.unmatchedCount} hors catégories de poids`
                 : ''}

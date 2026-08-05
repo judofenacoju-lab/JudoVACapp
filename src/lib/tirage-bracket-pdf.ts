@@ -3,10 +3,18 @@ import type { BracketMatch, BracketTree, TiragePool } from '@shared/utils/tirage
 import { downloadBytes } from './download-blob'
 import { pdfSafeText } from './pdf-winansi-text'
 
+/** A4 paysage (mm → pt) — idéal pour une grille de combats. */
+const PAGE_W = 841.89
+const PAGE_H = 595.28
+const MARGIN = 36
+
 const NAVY = rgb(0.043, 0.122, 0.227)
 const RED = rgb(0.784, 0.063, 0.18)
 const LINE = rgb(0.043, 0.122, 0.227)
 const MIST = rgb(0.91, 0.933, 0.961)
+const MUTED = rgb(0.35, 0.4, 0.45)
+
+const EMPTY_SLOT = '...'
 
 function truncate(
   font: Awaited<ReturnType<PDFDocument['embedFont']>>,
@@ -23,6 +31,12 @@ function truncate(
   return `${t}...`
 }
 
+function slotName(fighterName: string | undefined | null, empty: boolean): string {
+  if (fighterName) return fighterName
+  if (empty) return EMPTY_SLOT
+  return EMPTY_SLOT
+}
+
 function drawFirstMatch(
   page: ReturnType<PDFDocument['addPage']>,
   font: Awaited<ReturnType<PDFDocument['embedFont']>>,
@@ -33,10 +47,11 @@ function drawFirstMatch(
   boxW: number,
   boxH: number
 ): void {
-  const top = cy + boxH / 2
-  const y0 = top - boxH
-  const labelW = 52
+  const y0 = cy - boxH / 2
+  const labelW = Math.max(44, Math.min(58, boxW * 0.32))
   const nameW = boxW - labelW
+  const nameSize = boxH >= 26 ? 8 : 7
+  const labelSize = boxH >= 26 ? 7 : 6
 
   page.drawRectangle({
     x,
@@ -44,7 +59,7 @@ function drawFirstMatch(
     width: boxW,
     height: boxH,
     borderColor: NAVY,
-    borderWidth: 0.8,
+    borderWidth: 0.9,
     color: rgb(1, 1, 1)
   })
   page.drawRectangle({
@@ -57,35 +72,34 @@ function drawFirstMatch(
   page.drawLine({
     start: { x, y: cy },
     end: { x: x + nameW, y: cy },
-    thickness: 0.5,
+    thickness: 0.6,
     color: NAVY
   })
 
-  const topName = match.top.fighter?.name ?? '—'
-  const bottomName =
-    match.bye && match.bottom.empty ? 'Exempt' : (match.bottom.fighter?.name ?? '—')
+  const topName = slotName(match.top.fighter?.name, match.top.empty)
+  const bottomName = slotName(match.bottom.fighter?.name, match.bottom.empty)
 
-  page.drawText(truncate(font, topName, 7, nameW - 6), {
-    x: x + 3,
-    y: cy + boxH / 4 - 2,
-    size: 7,
+  page.drawText(truncate(font, topName, nameSize, nameW - 8), {
+    x: x + 4,
+    y: cy + boxH / 4 - nameSize / 3,
+    size: nameSize,
     font,
     color: NAVY
   })
-  page.drawText(truncate(font, bottomName, 7, nameW - 6), {
-    x: x + 3,
-    y: cy - boxH / 4 - 2,
-    size: 7,
+  page.drawText(truncate(font, bottomName, nameSize, nameW - 8), {
+    x: x + 4,
+    y: cy - boxH / 4 - nameSize / 3,
+    size: nameSize,
     font,
     color: NAVY
   })
 
   const label = pdfSafeText(match.label)
-  const lw = fontBold.widthOfTextAtSize(label, 6)
+  const lw = fontBold.widthOfTextAtSize(label, labelSize)
   page.drawText(label, {
-    x: x + nameW + (labelW - lw) / 2,
-    y: cy - 2,
-    size: 6,
+    x: x + nameW + Math.max(2, (labelW - lw) / 2),
+    y: cy - labelSize / 3,
+    size: labelSize,
     font: fontBold,
     color: rgb(1, 1, 1)
   })
@@ -96,30 +110,34 @@ function drawLaterBadge(
   fontBold: Awaited<ReturnType<PDFDocument['embedFont']>>,
   match: BracketMatch,
   x: number,
-  cy: number
+  cy: number,
+  badgeW: number,
+  badgeH: number
 ): void {
-  const w = 36
-  const h = 16
   page.drawRectangle({
-    x: x - w / 2,
-    y: cy - h / 2,
-    width: w,
-    height: h,
+    x: x - badgeW / 2,
+    y: cy - badgeH / 2,
+    width: badgeW,
+    height: badgeH,
     borderColor: NAVY,
-    borderWidth: 0.7,
+    borderWidth: 0.8,
     color: MIST
   })
   const label = pdfSafeText(match.label)
-  const lw = fontBold.widthOfTextAtSize(label, 7)
+  const size = 7
+  const lw = fontBold.widthOfTextAtSize(label, size)
   page.drawText(label, {
     x: x - lw / 2,
-    y: cy - 2.5,
-    size: 7,
+    y: cy - size / 3,
+    size,
     font: fontBold,
     color: NAVY
   })
 }
 
+/**
+ * Dessine la grille en l’adaptant à la zone A4 disponible (marges comprises).
+ */
 function drawBracketOnPage(
   page: ReturnType<PDFDocument['addPage']>,
   font: Awaited<ReturnType<PDFDocument['embedFont']>>,
@@ -135,14 +153,22 @@ function drawBracketOnPage(
 
   const first = rounds[0]!
   const n0 = first.length
-  const boxH = Math.min(28, Math.max(18, (maxHeight - 20) / n0 - 4))
-  const gap = Math.max(4, (maxHeight - n0 * boxH) / Math.max(n0, 1))
-  const colH = n0 * (boxH + gap) - gap
-  const boxW = Math.min(150, maxWidth * 0.28)
-  const connectorW = Math.min(55, maxWidth * 0.1)
-  const laterW = 40
+  const roundCount = rounds.length
 
-  const matchCenterY = (_roundIdx: number, matchIndex: number, count: number): number => {
+  // Dimensions proportionnelles pour tenir sur A4 paysage
+  const usableH = Math.max(120, maxHeight - 8)
+  const boxH = Math.min(32, Math.max(16, usableH / n0 - 3))
+  const gap = Math.max(2, (usableH - n0 * boxH) / Math.max(n0, 1))
+  const colH = n0 * (boxH + gap) - gap
+
+  const connectorW = Math.min(48, maxWidth * 0.08)
+  const laterW = 38
+  const winnerTail = 70
+  const laterRounds = Math.max(0, roundCount - 1)
+  const reserved = laterRounds * (laterW + connectorW) + winnerTail + 8
+  const boxW = Math.min(168, Math.max(110, maxWidth - reserved))
+
+  const matchCenterY = (matchIndex: number, count: number): number => {
     const slotH = colH / count
     return originTop - matchIndex * slotH - slotH / 2
   }
@@ -154,11 +180,11 @@ function drawBracketOnPage(
     const count = round.length
 
     for (let i = 0; i < count; i++) {
-      const cy = matchCenterY(r, i, count)
+      const cy = matchCenterY(i, count)
       if (r === 0) {
         drawFirstMatch(page, font, fontBold, round[i]!, x, cy, boxW, boxH)
       } else {
-        drawLaterBadge(page, fontBold, round[i]!, x + laterW / 2, cy)
+        drawLaterBadge(page, fontBold, round[i]!, x + laterW / 2, cy, laterW - 4, Math.min(18, boxH * 0.7))
       }
     }
 
@@ -168,11 +194,11 @@ function drawBracketOnPage(
     if (r < rounds.length - 1) {
       const pairs = count / 2
       for (let p = 0; p < pairs; p++) {
-        const topCy = matchCenterY(r, p * 2, count)
-        const botCy = matchCenterY(r, p * 2 + 1, count)
+        const topCy = matchCenterY(p * 2, count)
+        const botCy = matchCenterY(p * 2 + 1, count)
         const midCy = (topCy + botCy) / 2
         const x0 = nextX
-        const x1 = nextX + connectorW * 0.45
+        const x1 = nextX + connectorW * 0.42
         const x2 = nextX + connectorW
         page.drawLine({ start: { x: x0, y: topCy }, end: { x: x1, y: topCy }, thickness: 1, color: LINE })
         page.drawLine({ start: { x: x0, y: botCy }, end: { x: x1, y: botCy }, thickness: 1, color: LINE })
@@ -181,18 +207,18 @@ function drawBracketOnPage(
       }
       x = nextX + connectorW
     } else {
-      const cy = matchCenterY(r, 0, count)
+      const cy = matchCenterY(0, count)
       const x0 = nextX
       page.drawLine({
         start: { x: x0, y: cy },
-        end: { x: x0 + 40, y: cy },
+        end: { x: x0 + 36, y: cy },
         thickness: 1,
         color: LINE
       })
       page.drawText(pdfSafeText('Vainqueur'), {
-        x: x0 + 44,
-        y: cy - 2,
-        size: 8,
+        x: x0 + 40,
+        y: cy - 2.5,
+        size: 9,
         font: fontBold,
         color: RED
       })
@@ -201,7 +227,7 @@ function drawBracketOnPage(
 }
 
 /**
- * PDF paysage : une page (ou plus) par groupe visible de la grille de combats.
+ * PDF A4 paysage : une page bien cadrée par groupe de la grille.
  */
 export async function exportTirageBracketPdfBytes(
   pools: TiragePool[],
@@ -212,10 +238,10 @@ export async function exportTirageBracketPdfBytes(
   const fontBold = await doc.embedFont(StandardFonts.HelveticaBold)
 
   if (pools.length === 0) {
-    const page = doc.addPage([842, 595])
+    const page = doc.addPage([PAGE_W, PAGE_H])
     page.drawText(pdfSafeText('Aucune grille a exporter pour les filtres choisis.'), {
-      x: 40,
-      y: 300,
+      x: MARGIN,
+      y: PAGE_H / 2,
       size: 12,
       font,
       color: NAVY
@@ -224,64 +250,83 @@ export async function exportTirageBracketPdfBytes(
   }
 
   for (const pool of pools) {
-    const page = doc.addPage([842, 595]) // A4 paysage
-    const margin = 28
-    let y = 595 - margin
+    const page = doc.addPage([PAGE_W, PAGE_H])
+    let y = PAGE_H - MARGIN
 
-    page.drawText(pdfSafeText('JudoVACapp — Grille de combats'), {
-      x: margin,
-      y: y - 12,
-      size: 14,
+    // En-tête
+    page.drawText(pdfSafeText('JudoVACapp - Grille de combats'), {
+      x: MARGIN,
+      y: y - 14,
+      size: 16,
       font: fontBold,
       color: NAVY
     })
-    y -= 28
+    y -= 26
+
+    page.drawLine({
+      start: { x: MARGIN, y },
+      end: { x: PAGE_W - MARGIN, y },
+      thickness: 1,
+      color: NAVY
+    })
+    y -= 16
 
     const title = `${pool.sexLabel} · ${pool.category} · ${pool.weightLabel}`
-    page.drawText(truncate(fontBold, title, 11, 780), {
-      x: margin,
+    page.drawText(truncate(fontBold, title, 12, PAGE_W - MARGIN * 2), {
+      x: MARGIN,
       y: y - 10,
-      size: 11,
+      size: 12,
       font: fontBold,
       color: NAVY
     })
-    y -= 22
+    y -= 20
 
     if (meta?.filtersLabel) {
-      page.drawText(truncate(font, meta.filtersLabel, 8, 780), {
-        x: margin,
+      page.drawText(truncate(font, meta.filtersLabel, 9, PAGE_W - MARGIN * 2), {
+        x: MARGIN,
         y: y - 8,
-        size: 8,
+        size: 9,
         font,
-        color: rgb(0.35, 0.4, 0.45)
+        color: MUTED
       })
-      y -= 16
+      y -= 14
     }
 
     page.drawText(
       pdfSafeText(
-        `${pool.entrantCount} judoka(s) · tableau ${pool.bracket.size} · export ${new Date().toLocaleString('fr-FR')}`
+        `${pool.entrantCount} judoka(s) · tableau ${pool.bracket.size} · ${new Date().toLocaleString('fr-FR')}`
       ),
       {
-        x: margin,
+        x: MARGIN,
         y: y - 8,
         size: 8,
         font,
-        color: rgb(0.35, 0.4, 0.45)
+        color: MUTED
       }
     )
-    y -= 20
+    y -= 18
 
+    // Zone utile pour la grille (reste de la page A4)
+    const bottom = MARGIN + 12
     drawBracketOnPage(
       page,
       font,
       fontBold,
       pool.bracket,
-      margin,
+      MARGIN,
       y,
-      842 - margin * 2,
-      y - margin
+      PAGE_W - MARGIN * 2,
+      y - bottom
     )
+
+    // Pied de page
+    page.drawText(pdfSafeText('Format A4 paysage - JudoVACapp'), {
+      x: MARGIN,
+      y: 14,
+      size: 7,
+      font,
+      color: MUTED
+    })
   }
 
   return doc.save()

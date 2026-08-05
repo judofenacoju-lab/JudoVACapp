@@ -1,9 +1,8 @@
 import type { BracketMatch, BracketTree, TirageFighter } from '@shared/utils/tirage'
 
-function slotLabel(fighter: TirageFighter | null, empty: boolean): string {
+function slotLabel(fighter: TirageFighter | null, _empty: boolean): string {
   if (fighter) return fighter.name
-  if (empty) return '—'
-  return '—'
+  return '...'
 }
 
 /**
@@ -106,9 +105,7 @@ function FirstRoundMatch({ match }: { match: BracketMatch }) {
           {slotLabel(match.top.fighter, match.top.empty)}
         </div>
         <div className="px-2 py-1.5 text-xs font-medium text-judo-navy truncate">
-          {match.bye && match.bottom.empty
-            ? 'Exempt'
-            : slotLabel(match.bottom.fighter, match.bottom.empty)}
+          {slotLabel(match.bottom.fighter, match.bottom.empty)}
         </div>
       </div>
       <div className="flex w-[72px] shrink-0 items-center justify-center bg-judo-navy px-1 text-center text-[10px] font-semibold leading-tight text-white">
