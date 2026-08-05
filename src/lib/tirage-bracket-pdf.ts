@@ -13,15 +13,19 @@ import { pdfSafeText } from './pdf-winansi-text'
 const PAGE_W = 841.89
 const PAGE_H = 595.28
 const MARGIN = 36
+const FOOTER_H = 28
+/** Espace réservé entre la fin des titres et le début de la grille. */
+const HEADER_GRID_GAP = 10
 
 const NAVY = rgb(0.043, 0.122, 0.227)
 const RED = rgb(0.784, 0.063, 0.18)
 const LINE = rgb(0.043, 0.122, 0.227)
 const MUTED = rgb(0.35, 0.4, 0.45)
+const WHITE = rgb(1, 1, 1)
 
 const EMPTY_SLOT = '...'
 
-/** Hauteur lisible d’une case combat (nom + club/poids) — pas de compression agressive. */
+/** Hauteur lisible d’une case combat (nom + club/poids). */
 const BOX_H = 38
 const BOX_GAP = 10
 const BOX_W = 168
@@ -48,8 +52,9 @@ function slotName(fighter: TirageFighter | null | undefined): string {
   return fighter ? fighter.name : EMPTY_SLOT
 }
 
-function inVisibleRange(cy: number, halfH: number, top: number, bottom: number): boolean {
-  return cy + halfH >= bottom && cy - halfH <= top
+/** Case entièrement dans la bande grille (évite de chevaucher titres / pied). */
+function fullyVisible(cy: number, halfH: number, top: number, bottom: number): boolean {
+  return cy + halfH <= top + 0.5 && cy - halfH >= bottom - 0.5
 }
 
 function drawMatchCard(
@@ -64,7 +69,7 @@ function drawMatchCard(
   visibleTop: number,
   visibleBottom: number
 ): void {
-  if (!inVisibleRange(cy, boxH / 2, visibleTop, visibleBottom)) return
+  if (!fullyVisible(cy, boxH / 2, visibleTop, visibleBottom)) return
 
   const y0 = cy - boxH / 2
   const labelW = 48
@@ -80,7 +85,7 @@ function drawMatchCard(
     height: boxH,
     borderColor: NAVY,
     borderWidth: 0.9,
-    color: rgb(1, 1, 1)
+    color: WHITE
   })
   page.drawRectangle({
     x: x + nameW,
@@ -125,7 +130,7 @@ function drawMatchCard(
     y: cy + (match.bye ? 2 : -labelSize / 3),
     size: labelSize,
     font: fontBold,
-    color: rgb(1, 1, 1)
+    color: WHITE
   })
   if (match.bye) {
     const bye = pdfSafeText('bye')
@@ -140,8 +145,16 @@ function drawMatchCard(
   }
 }
 
+function measureHeaderHeight(meta?: { filtersLabel?: string }): number {
+  // Titre app + trait + titre pool + (filtres) + meta + gap
+  let h = 14 + 12 + 16 + 12 + 10 + 8 + 10 + HEADER_GRID_GAP
+  if (meta?.filtersLabel) h += 14
+  return h
+}
+
 /**
- * Dessine la grille à taille lisible fixe. `yShift` décale le contenu pour la pagination verticale.
+ * Dessine la grille dans la bande [visibleBottom, visibleTop].
+ * `yShift` décale pour la pagination verticale.
  */
 function drawBracketSlice(
   page: ReturnType<PDFDocument['addPage']>,
@@ -211,21 +224,29 @@ function drawBracketSlice(
         const topCy = matchCenterY(p * 2, count)
         const botCy = matchCenterY(p * 2 + 1, count)
         const midCy = (topCy + botCy) / 2
-        if (!inVisibleRange(midCy, Math.abs(topCy - botCy) / 2 + 4, visibleTop, visibleBottom)) {
+        // Connecteur seulement s’il reste dans la bande grille
+        if (
+          !fullyVisible(topCy, 1, visibleTop, visibleBottom) &&
+          !fullyVisible(botCy, 1, visibleTop, visibleBottom)
+        ) {
           continue
         }
+        const clipY = (y: number) => Math.min(visibleTop, Math.max(visibleBottom, y))
         const x0 = nextX
         const x1 = nextX + connectorW * 0.42
         const x2 = nextX + connectorW
-        page.drawLine({ start: { x: x0, y: topCy }, end: { x: x1, y: topCy }, thickness: 1, color: LINE })
-        page.drawLine({ start: { x: x0, y: botCy }, end: { x: x1, y: botCy }, thickness: 1, color: LINE })
-        page.drawLine({ start: { x: x1, y: topCy }, end: { x: x1, y: botCy }, thickness: 1, color: LINE })
-        page.drawLine({ start: { x: x1, y: midCy }, end: { x: x2, y: midCy }, thickness: 1, color: LINE })
+        const tY = clipY(topCy)
+        const bY = clipY(botCy)
+        const mY = clipY(midCy)
+        page.drawLine({ start: { x: x0, y: tY }, end: { x: x1, y: tY }, thickness: 1, color: LINE })
+        page.drawLine({ start: { x: x0, y: bY }, end: { x: x1, y: bY }, thickness: 1, color: LINE })
+        page.drawLine({ start: { x: x1, y: tY }, end: { x: x1, y: bY }, thickness: 1, color: LINE })
+        page.drawLine({ start: { x: x1, y: mY }, end: { x: x2, y: mY }, thickness: 1, color: LINE })
       }
       x = nextX + connectorW
     } else {
       const cy = matchCenterY(0, count)
-      if (inVisibleRange(cy, 20, visibleTop, visibleBottom)) {
+      if (fullyVisible(cy, 12, visibleTop, visibleBottom)) {
         const x0 = nextX
         page.drawLine({
           start: { x: x0, y: cy },
@@ -235,27 +256,11 @@ function drawBracketSlice(
         })
         page.drawText(pdfSafeText('Vainqueur'), {
           x: x0 + 32,
-          y: cy + 4,
+          y: cy - 2.5,
           size: 8,
           font: fontBold,
           color: RED
         })
-        const final = round[0]!
-        const winner =
-          final.top.fighter && !final.bottom.fighter
-            ? final.top.fighter
-            : final.bottom.fighter && !final.top.fighter
-              ? final.bottom.fighter
-              : null
-        if (winner) {
-          page.drawText(truncate(font, winner.name, 7, WINNER_TAIL - 4), {
-            x: x0 + 32,
-            y: cy - 8,
-            size: 7,
-            font,
-            color: NAVY
-          })
-        }
       }
     }
   }
@@ -263,7 +268,8 @@ function drawBracketSlice(
   return colH
 }
 
-function drawPageChrome(
+/** En-tête (titres) dans une zone réservée, au-dessus de la grille. */
+function drawPageHeader(
   page: ReturnType<PDFDocument['addPage']>,
   font: Awaited<ReturnType<PDFDocument['embedFont']>>,
   fontBold: Awaited<ReturnType<PDFDocument['embedFont']>>,
@@ -271,7 +277,7 @@ function drawPageChrome(
   meta: { filtersLabel?: string } | undefined,
   pageIndex: number,
   pageCount: number
-): number {
+): void {
   let y = PAGE_H - MARGIN
 
   page.drawText(pdfSafeText('JudoVACapp - Grille de combats'), {
@@ -323,20 +329,24 @@ function drawPageChrome(
     y -= 14
   }
 
-  page.drawText(
-    pdfSafeText(
-      `${pool.entrantCount} judoka(s) · tableau ${pool.bracket.size} · ${new Date().toLocaleString('fr-FR')}`
-    ),
-    {
-      x: MARGIN,
-      y: y - 8,
-      size: 8,
-      font,
-      color: MUTED
-    }
-  )
-  y -= 18
+  const metaLine =
+    pageCount > 1 && pageIndex > 0
+      ? `${pool.entrantCount} judoka(s) · tableau ${pool.bracket.size} · suite`
+      : `${pool.entrantCount} judoka(s) · tableau ${pool.bracket.size} · ${new Date().toLocaleString('fr-FR')}`
 
+  page.drawText(pdfSafeText(metaLine), {
+    x: MARGIN,
+    y: y - 8,
+    size: 8,
+    font,
+    color: MUTED
+  })
+}
+
+function drawPageFooter(
+  page: ReturnType<PDFDocument['addPage']>,
+  font: Awaited<ReturnType<PDFDocument['embedFont']>>
+): void {
   page.drawText(pdfSafeText('Format A4 paysage - JudoVACapp'), {
     x: MARGIN,
     y: 14,
@@ -344,12 +354,10 @@ function drawPageChrome(
     font,
     color: MUTED
   })
-
-  return y
 }
 
 /**
- * PDF A4 paysage : grille lisible, découpée sur plusieurs pages si nécessaire.
+ * PDF A4 paysage : titres isolés de la grille ; multi-pages sans chevauchement.
  */
 export async function exportTirageBracketPdfBytes(
   pools: TiragePool[],
@@ -371,35 +379,63 @@ export async function exportTirageBracketPdfBytes(
     return doc.save()
   }
 
+  const headerH = measureHeaderHeight(meta)
+  const contentTop = PAGE_H - MARGIN - headerH
+  const contentBottom = MARGIN + FOOTER_H
+  const availableH = Math.max(80, contentTop - contentBottom)
+
   for (const pool of pools) {
     const n0 = pool.bracket.rounds[0]?.length ?? 0
     const colH = n0 > 0 ? n0 * (BOX_H + BOX_GAP) - BOX_GAP : 0
-
-    // Estimer la zone utile après en-tête (même chrome sur chaque page)
-    const probe = doc.addPage([PAGE_W, PAGE_H])
-    const contentTop = drawPageChrome(probe, font, fontBold, pool, meta, 0, 1)
-    doc.removePage(doc.getPageCount() - 1)
-
-    const contentBottom = MARGIN + 22
-    const availableH = Math.max(80, contentTop - contentBottom)
     const pageCount = Math.max(1, Math.ceil(colH / availableH) || 1)
 
     for (let p = 0; p < pageCount; p++) {
       const page = doc.addPage([PAGE_W, PAGE_H])
-      const originTop = drawPageChrome(page, font, fontBold, pool, meta, p, pageCount)
       const yShift = p * availableH
+
+      // 1) Grille d’abord (bande utile uniquement)
       drawBracketSlice(
         page,
         font,
         fontBold,
         pool.bracket,
         MARGIN,
-        originTop,
+        contentTop,
         yShift,
-        originTop,
+        contentTop,
         contentBottom,
         PAGE_W - MARGIN * 2
       )
+
+      // 2) Masques blancs : titres et pied ne peuvent pas être recouverts par la grille
+      page.drawRectangle({
+        x: 0,
+        y: contentTop,
+        width: PAGE_W,
+        height: PAGE_H - contentTop,
+        color: WHITE,
+        borderWidth: 0
+      })
+      page.drawRectangle({
+        x: 0,
+        y: 0,
+        width: PAGE_W,
+        height: contentBottom,
+        color: WHITE,
+        borderWidth: 0
+      })
+
+      // 3) Titres + pied par-dessus les masques
+      drawPageHeader(page, font, fontBold, pool, meta, p, pageCount)
+      drawPageFooter(page, font)
+
+      // Trait de séparation titres / grille
+      page.drawLine({
+        start: { x: MARGIN, y: contentTop + 2 },
+        end: { x: PAGE_W - MARGIN, y: contentTop + 2 },
+        thickness: 0.5,
+        color: rgb(0.75, 0.8, 0.85)
+      })
     }
   }
 

@@ -84,7 +84,6 @@ export function CombatBracket({
                 firstRoundCount={firstRound.length}
                 matchBlockH={matchBlockH}
                 matchGap={matchGap}
-                finalMatch={round[0]}
               />
             )}
           </div>
@@ -186,8 +185,7 @@ function ConnectorColumn({
 function WinnerTail({
   firstRoundCount,
   matchBlockH,
-  matchGap,
-  finalMatch
+  matchGap
 }: {
   firstRoundCount: number
   matchBlockH: number
@@ -196,12 +194,6 @@ function WinnerTail({
 }) {
   const colH = firstRoundCount * (matchBlockH + matchGap) - matchGap
   const midY = colH / 2
-  const winner =
-    finalMatch?.top.fighter && !finalMatch.bottom.fighter
-      ? finalMatch.top.fighter
-      : finalMatch?.bottom.fighter && !finalMatch.top.fighter
-        ? finalMatch.bottom.fighter
-        : null
 
   return (
     <div className="relative" style={{ width: 120, height: colH }}>
@@ -218,11 +210,6 @@ function WinnerTail({
         style={{ top: midY }}
       >
         <div className="text-xs font-semibold text-judo-red">Vainqueur</div>
-        {winner ? (
-          <div className="mt-0.5 truncate text-[9px] leading-tight text-judo-navy" title={winner.name}>
-            {winner.name}
-          </div>
-        ) : null}
       </div>
     </div>
   )

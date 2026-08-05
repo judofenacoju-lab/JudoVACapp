@@ -253,23 +253,20 @@ function slotFromFighter(fighter: TirageFighter | null): BracketSlot {
 }
 
 /**
- * Fait avancer automatiquement les judokas sans adversaire vers le tour suivant
- * (comme s’ils avaient gagné), récursivement jusqu’à la finale.
+ * Bye = un seul passage : du combat de départ (1er tour) vers le 2e tour uniquement.
+ * Pas de cascade jusqu’au vainqueur.
  */
-function propagateByeWinners(rounds: BracketMatch[][]): void {
-  for (let r = 0; r < rounds.length - 1; r++) {
-    const current = rounds[r]!
-    const next = rounds[r + 1]!
-    for (let i = 0; i < current.length; i += 2) {
-      const upper = current[i]!
-      const lower = current[i + 1]!
-      const dest = next[Math.floor(i / 2)]!
-      dest.top = slotFromFighter(automaticWinner(upper))
-      dest.bottom = slotFromFighter(automaticWinner(lower))
-      const hasTop = Boolean(dest.top.fighter)
-      const hasBottom = Boolean(dest.bottom.fighter)
-      dest.bye = (hasTop && !hasBottom) || (!hasTop && hasBottom)
-    }
+function propagateFirstRoundByes(rounds: BracketMatch[][]): void {
+  if (rounds.length < 2) return
+  const current = rounds[0]!
+  const next = rounds[1]!
+  for (let i = 0; i < current.length; i += 2) {
+    const upper = current[i]!
+    const lower = current[i + 1]!
+    const dest = next[Math.floor(i / 2)]!
+    dest.top = slotFromFighter(automaticWinner(upper))
+    dest.bottom = slotFromFighter(automaticWinner(lower))
+    dest.bye = false
   }
 }
 
@@ -350,16 +347,16 @@ export function buildBracket(
     roundIdx += 1
   }
 
-  // Byes : le judoka seul avance au tour suivant (affichage + attente adversaire)
-  propagateByeWinners(rounds)
+  // Bye : passage unique 1er tour → 2e tour (pas jusqu’au vainqueur)
+  propagateFirstRoundByes(rounds)
 
   let fightCount = 0
   let byeCount = 0
-  for (const round of rounds) {
+  for (const [ri, round] of rounds.entries()) {
     for (const m of round) {
       const n = (m.top.fighter ? 1 : 0) + (m.bottom.fighter ? 1 : 0)
       if (n === 2) fightCount += 1
-      else if (n === 1) byeCount += 1
+      else if (ri === 0 && n === 1) byeCount += 1
     }
   }
 
