@@ -682,7 +682,7 @@ export function JudokaListPage({
                   Exporter Clubs
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Choisissez le type d’export : effectifs par club (total, garçons, filles).
+                  Choisissez le type d’export : effectifs par club
                 </p>
               </div>
               <Button
