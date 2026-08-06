@@ -228,11 +228,24 @@ export async function exportClubsListPdfBytes(options: ClubsListPdfOptions): Pro
 
 export async function exportAndDownloadClubsListPdf(
   judokas: Judoka[],
-  filterSummary?: string
+  options?: {
+    filterSummary?: string
+    /** Mode d’export : tous les enregistrés, ou uniquement les pesés. */
+    mode?: 'registered' | 'weighed'
+  }
 ): Promise<{ filename: string; clubCount: number }> {
+  const mode = options?.mode ?? 'registered'
+  const filterSummary = options?.filterSummary
   const rows = buildClubStats(judokas)
-  const bytes = await exportClubsListPdfBytes({ rows, filterSummary })
-  const filename = `liste-clubs-${new Date().toISOString().slice(0, 10)}.pdf`
+  const title =
+    mode === 'weighed'
+      ? 'Clubs — judokas pesés — JudoVACapp'
+      : 'Clubs enregistrés — JudoVACapp'
+  const bytes = await exportClubsListPdfBytes({ rows, filterSummary, title })
+  const filename =
+    mode === 'weighed'
+      ? `liste-clubs-peses-${new Date().toISOString().slice(0, 10)}.pdf`
+      : `liste-clubs-enregistres-${new Date().toISOString().slice(0, 10)}.pdf`
   downloadPdfBytes(bytes, filename)
   return { filename, clubCount: rows.length }
 }

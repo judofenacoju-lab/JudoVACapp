@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronLeft, ChevronRight, FileDown, Pencil, Printer, Search, Trash2 } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, FileDown, Pencil, Printer, Search, Trash2, X } from 'lucide-react'
 import type { Judoka } from '@shared/types/judoka'
-import { formatJudokaFullName, resolveJudokaCategory, computeAge } from '@shared/utils/judoka'
+import { formatJudokaFullName, resolveJudokaCategory, computeAge, hasRecordedWeight } from '@shared/utils/judoka'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -45,6 +45,7 @@ export function JudokaListPage({
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [exportClubsOpen, setExportClubsOpen] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [pageIndex, setPageIndex] = useState(0)
   /** Total exact en base (tous les judokas du périmètre serveur / opérateur). */
@@ -348,19 +349,33 @@ export function JudokaListPage({
     }
   }
 
-  async function exportClubsPdf(): Promise<void> {
+  async function exportClubsPdf(mode: 'registered' | 'weighed'): Promise<void> {
     setBusy(true)
     setError(null)
     setMessage(null)
     try {
       const parts = buildFilterSummaryParts()
-      const judokas = await loadJudokasForExport()
+      const all = await loadJudokasForExport()
+      const judokas =
+        mode === 'weighed' ? all.filter((j) => hasRecordedWeight(j.weightKg)) : all
       const { exportAndDownloadClubsListPdf } = await import('@/lib/clubs-list-pdf')
-      const out = await exportAndDownloadClubsListPdf(
-        judokas,
-        parts.length ? parts.join(' · ') : 'Tous les judokas enregistrés'
+      const out = await exportAndDownloadClubsListPdf(judokas, {
+        mode,
+        filterSummary:
+          mode === 'weighed'
+            ? parts.length
+              ? `${parts.join(' · ')} · judokas pesés uniquement`
+              : 'Judokas pesés uniquement'
+            : parts.length
+              ? parts.join(' · ')
+              : 'Tous les judokas enregistrés'
+      })
+      setExportClubsOpen(false)
+      setMessage(
+        mode === 'weighed'
+          ? `Clubs (pesés) exportés (${out.clubCount} club(s)) → ${out.filename}`
+          : `Clubs (enregistrés) exportés (${out.clubCount} club(s)) → ${out.filename}`
       )
-      setMessage(`Clubs exportés (${out.clubCount} club(s)) → ${out.filename}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Export clubs impossible')
     } finally {
@@ -630,7 +645,7 @@ export function JudokaListPage({
                     type="button"
                     size="sm"
                     disabled={busy}
-                    onClick={() => void exportClubsPdf()}
+                    onClick={() => setExportClubsOpen(true)}
                     className="bg-emerald-600 px-4 text-white hover:bg-emerald-700 hover:text-white"
                   >
                     <FileDown className="h-4 w-4" />
@@ -642,6 +657,70 @@ export function JudokaListPage({
           </div>
         )}
       </div>
+
+      {exportClubsOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
+          role="presentation"
+          onClick={() => {
+            if (!busy) setExportClubsOpen(false)
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="export-clubs-title"
+            className="w-full max-w-md rounded-xl border bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
+              <div>
+                <h2
+                  id="export-clubs-title"
+                  className="font-display text-lg font-semibold text-judo-navy"
+                >
+                  Exporter Clubs
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Choisissez le type d’export : effectifs par club (total, garçons, filles).
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                disabled={busy}
+                onClick={() => setExportClubsOpen(false)}
+                aria-label="Fermer"
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+            <div className="flex flex-col gap-3 px-5 py-5 sm:flex-row sm:justify-center">
+              <Button
+                type="button"
+                size="lg"
+                disabled={busy}
+                className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700 hover:text-white"
+                onClick={() => void exportClubsPdf('registered')}
+              >
+                <FileDown className="h-4 w-4" />
+                {busy ? 'Export…' : 'Enregistrer'}
+              </Button>
+              <Button
+                type="button"
+                size="lg"
+                disabled={busy}
+                className="flex-1 bg-judo-navy text-white hover:bg-judo-navy/90 hover:text-white"
+                onClick={() => void exportClubsPdf('weighed')}
+              >
+                <FileDown className="h-4 w-4" />
+                {busy ? 'Export…' : 'Pesés'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </AppShell>
   )
 }
