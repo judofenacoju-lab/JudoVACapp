@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Copy, Check, RefreshCw, Save, Trash2, Plus, Eraser } from 'lucide-react'
+import { ArrowLeft, Copy, Check, FileDown, RefreshCw, Save, Trash2, Plus, Eraser } from 'lucide-react'
 import type { AppSettings } from '@shared/types/settings'
 import { createDefaultCategoryAgeRanges } from '@shared/types/settings'
 import { mergeRegisteredClubNames, setActiveRegisteredClubs } from '@shared/utils/clubs'
@@ -49,6 +49,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
   const [newClubName, setNewClubName] = useState('')
   /** Effectifs judokas par club (clé = nom en minuscules). */
   const [clubCounts, setClubCounts] = useState<Record<string, number>>({})
+  const [categoriesListBusy, setCategoriesListBusy] = useState(false)
 
   async function refreshClubCounts(): Promise<void> {
     const res = await window.judovac.listJudokaClubNames()
@@ -165,6 +166,32 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     }
     setSettings(res.data)
     setMessage('Paramètres enregistrés.')
+  }
+
+  async function exportCategoriesListPdf(): Promise<void> {
+    if (!settings) return
+    setCategoriesListBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const res = await window.judovac.listJudokas({ limit: 1_000_000, offset: 0 })
+      if (!res.ok) {
+        setError(res.error)
+        return
+      }
+      const { exportAndDownloadCategoriesListPdf } = await import('@/lib/categories-list-pdf')
+      const out = await exportAndDownloadCategoriesListPdf(
+        res.data.items,
+        settings.categories ?? createDefaultCategoryAgeRanges()
+      )
+      setMessage(
+        `Liste catégories exportée (${out.categoryCount} catégorie(s)) → ${out.filename}`
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Export liste catégories impossible')
+    } finally {
+      setCategoriesListBusy(false)
+    }
   }
 
   function addClubRow(): void {
@@ -994,10 +1021,24 @@ export function AdminPage({ onBack, embedded = false }: Props) {
         )}
 
         {tab !== 'logs' && tab !== 'users' && (
-          <Button variant="accent" size="lg" disabled={busy} onClick={() => void save()}>
-            <Save className="h-4 w-4" />
-            {busy ? 'Enregistrement…' : 'Enregistrer'}
-          </Button>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="accent" size="lg" disabled={busy} onClick={() => void save()}>
+              <Save className="h-4 w-4" />
+              {busy ? 'Enregistrement…' : 'Enregistrer'}
+            </Button>
+            {tab === 'categories' && (
+              <Button
+                type="button"
+                variant="outline"
+                size="lg"
+                disabled={busy || categoriesListBusy || !settings}
+                onClick={() => void exportCategoriesListPdf()}
+              >
+                <FileDown className="h-4 w-4" />
+                {categoriesListBusy ? 'Export…' : 'Liste'}
+              </Button>
+            )}
+          </div>
         )}
 
         {error && <p className="text-sm text-destructive">{error}</p>}
