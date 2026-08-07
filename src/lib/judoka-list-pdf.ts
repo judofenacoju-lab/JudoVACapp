@@ -2,6 +2,7 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import type { Judoka } from '@shared/types/judoka'
 import { formatJudokaFullName } from '@shared/utils/judoka'
 import { downloadBytes } from './download-blob'
+import { pdfSafeText } from './pdf-winansi-text'
 
 const MARGIN = 36
 const ROW_H = 16
@@ -14,30 +15,36 @@ type Col = { key: string; label: string; width: number; value: (j: Judoka, i: nu
 
 const COLS: Col[] = [
   { key: 'n', label: 'N°', width: 28, value: (_j, i) => String(i + 1) },
-  { key: 'id', label: 'ID', width: 78, value: (j) => j.displayId || '—' },
-  { key: 'name', label: 'Nom complet', width: 140, value: (j) => formatJudokaFullName(j) || '—' },
-  { key: 'sex', label: 'Sexe', width: 32, value: (j) => j.sex || '—' },
-  { key: 'age', label: 'Âge', width: 28, value: (j) => (j.age != null ? String(j.age) : '—') },
-  { key: 'club', label: 'Club', width: 90, value: (j) => j.club || '—' },
-  { key: 'grade', label: 'Grade', width: 55, value: (j) => j.grade || '—' },
-  { key: 'cat', label: 'Catégorie', width: 70, value: (j) => j.category || '—' },
+  { key: 'id', label: 'ID', width: 78, value: (j) => j.displayId || '-' },
+  { key: 'name', label: 'Nom complet', width: 140, value: (j) => formatJudokaFullName(j) || '-' },
+  { key: 'sex', label: 'Sexe', width: 32, value: (j) => j.sex || '-' },
+  { key: 'age', label: 'Age', width: 28, value: (j) => (j.age != null ? String(j.age) : '-') },
+  { key: 'club', label: 'Club', width: 90, value: (j) => j.club || '-' },
+  { key: 'grade', label: 'Grade', width: 55, value: (j) => j.grade || '-' },
+  { key: 'cat', label: 'Categorie', width: 70, value: (j) => j.category || '-' },
   {
     key: 'weight',
     label: 'Poids',
     width: 40,
-    value: (j) => (j.weightKg != null ? `${j.weightKg}` : '—')
+    value: (j) => (j.weightKg != null ? `${j.weightKg}` : '-')
   },
-  { key: 'license', label: 'Licence', width: 70, value: (j) => j.licenseNumber || '—' },
-  { key: 'user', label: 'Utilisateur', width: 70, value: (j) => j.createdBy || '—' }
+  { key: 'license', label: 'Licence', width: 70, value: (j) => j.licenseNumber || '-' },
+  { key: 'user', label: 'Utilisateur', width: 70, value: (j) => j.createdBy || '-' }
 ]
 
-function truncate(font: Awaited<ReturnType<PDFDocument['embedFont']>>, text: string, size: number, maxW: number): string {
-  if (font.widthOfTextAtSize(text, size) <= maxW) return text
-  let t = text
-  while (t.length > 1 && font.widthOfTextAtSize(`${t}…`, size) > maxW) {
+function truncate(
+  font: Awaited<ReturnType<PDFDocument['embedFont']>>,
+  text: string,
+  size: number,
+  maxW: number
+): string {
+  const safe = pdfSafeText(text)
+  if (font.widthOfTextAtSize(safe, size) <= maxW) return safe
+  let t = safe
+  while (t.length > 1 && font.widthOfTextAtSize(`${t}...`, size) > maxW) {
     t = t.slice(0, -1)
   }
-  return `${t}…`
+  return `${t}...`
 }
 
 export interface JudokaListPdfOptions {
@@ -51,7 +58,7 @@ export interface JudokaListPdfOptions {
  * PDF tableau de la liste des judokas (respecte le filtre courant).
  */
 export async function exportJudokaListPdfBytes(options: JudokaListPdfOptions): Promise<Uint8Array> {
-  const { judokas, filterSummary, title = 'Liste des judokas — JudoVACapp' } = options
+  const { judokas, filterSummary, title = 'Liste des judokas - JudoVACapp' } = options
   const pdf = await PDFDocument.create()
   pdf.setTitle(title)
   pdf.setAuthor('JudoVACapp')
@@ -74,16 +81,27 @@ export async function exportJudokaListPdfBytes(options: JudokaListPdfOptions): P
   let y = pageH - MARGIN
 
   function drawHeaderBlock(): void {
-    page.drawText(title, { x: MARGIN, y: y - TITLE_SIZE, size: TITLE_SIZE, font: fontBold, color: navy })
+    page.drawText(pdfSafeText(title), {
+      x: MARGIN,
+      y: y - TITLE_SIZE,
+      size: TITLE_SIZE,
+      font: fontBold,
+      color: navy
+    })
     y -= TITLE_SIZE + 6
-    const dateLine = `Export du ${new Date().toLocaleString('fr-FR')} — ${judokas.length} judoka(s)`
+    const dateLine = pdfSafeText(
+      `Export du ${new Date().toLocaleString('fr-FR')} - ${judokas.length} judoka(s)`
+    )
     page.drawText(dateLine, { x: MARGIN, y: y - META_SIZE, size: META_SIZE, font, color: text })
     y -= META_SIZE + 4
     if (filterSummary) {
-      page.drawText(
-        truncate(font, `Filtres : ${filterSummary}`, META_SIZE, pageW - MARGIN * 2),
-        { x: MARGIN, y: y - META_SIZE, size: META_SIZE, font, color: text }
-      )
+      page.drawText(truncate(font, `Filtres : ${filterSummary}`, META_SIZE, pageW - MARGIN * 2), {
+        x: MARGIN,
+        y: y - META_SIZE,
+        size: META_SIZE,
+        font,
+        color: text
+      })
       y -= META_SIZE + 8
     } else {
       y -= 4
@@ -100,7 +118,7 @@ export async function exportJudokaListPdfBytes(options: JudokaListPdfOptions): P
     })
     let x = tableX
     for (const col of COLS) {
-      page.drawText(col.label, {
+      page.drawText(pdfSafeText(col.label), {
         x: x + 3,
         y: y - HEADER_H + 5,
         size: CELL_SIZE,
@@ -123,7 +141,7 @@ export async function exportJudokaListPdfBytes(options: JudokaListPdfOptions): P
   drawTableHeader()
 
   if (judokas.length === 0) {
-    page.drawText('Aucun judoka pour les filtres sélectionnés.', {
+    page.drawText(pdfSafeText('Aucun judoka pour les filtres selectionnes.'), {
       x: tableX,
       y: y - 24,
       size: 11,
@@ -157,8 +175,7 @@ export async function exportJudokaListPdfBytes(options: JudokaListPdfOptions): P
 
     let x = tableX
     for (const col of COLS) {
-      const raw = col.value(j, index)
-      const cell = truncate(font, raw, CELL_SIZE, col.width - 6)
+      const cell = truncate(font, col.value(j, index), CELL_SIZE, col.width - 6)
       page.drawText(cell, {
         x: x + 3,
         y: y - ROW_H + 4,

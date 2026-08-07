@@ -383,6 +383,26 @@ export function JudokaListPage({
     }
   }
 
+  async function exportCategoriesPdf(): Promise<void> {
+    setBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const judokas = await loadJudokasForExport()
+      const settingsRes = await window.judovac.getSettings()
+      const categories = settingsRes.ok
+        ? settingsRes.data.categories
+        : []
+      const { exportAndDownloadCategoriesListPdf } = await import('@/lib/categories-list-pdf')
+      const out = await exportAndDownloadCategoriesListPdf(judokas, categories)
+      setMessage(`Catégories exportées (${out.categoryCount} catégorie(s)) → ${out.filename}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Export catégories impossible')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function printSelected(): Promise<void> {
     if (selected.size === 0) return
     setBusy(true)
@@ -650,6 +670,16 @@ export function JudokaListPage({
                   >
                     <FileDown className="h-4 w-4" />
                     Exporter Clubs
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void exportCategoriesPdf()}
+                    className="bg-emerald-600 px-4 text-white hover:bg-emerald-700 hover:text-white"
+                  >
+                    <FileDown className="h-4 w-4" />
+                    Export Catégorie
                   </Button>
                 </>
               )}

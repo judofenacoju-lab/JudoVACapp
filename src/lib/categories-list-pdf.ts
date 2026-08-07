@@ -3,6 +3,7 @@ import type { Judoka } from '@shared/types/judoka'
 import type { CategoryAgeRange } from '@shared/types/settings'
 import { resolveJudokaCategory } from '@shared/utils/judoka'
 import { downloadPdfBytes } from '@/lib/judoka-list-pdf'
+import { pdfSafeText } from '@/lib/pdf-winansi-text'
 
 export interface CategoryStatsRow {
   name: string
@@ -17,12 +18,13 @@ function truncate(
   size: number,
   maxW: number
 ): string {
-  if (font.widthOfTextAtSize(text, size) <= maxW) return text
-  let t = text
-  while (t.length > 1 && font.widthOfTextAtSize(`${t}…`, size) > maxW) {
+  const safe = pdfSafeText(text)
+  if (font.widthOfTextAtSize(safe, size) <= maxW) return safe
+  let t = safe
+  while (t.length > 1 && font.widthOfTextAtSize(`${t}...`, size) > maxW) {
     t = t.slice(0, -1)
   }
-  return `${t}…`
+  return `${t}...`
 }
 
 /**
@@ -119,10 +121,12 @@ export async function exportCategoriesListPdfBytes(
   let y = pageH - margin
 
   function drawPageHeader(): void {
-    page.drawText(title, { x: margin, y: y - 16, size: 16, font: fontBold, color: navy })
+    page.drawText(pdfSafeText(title), { x: margin, y: y - 16, size: 16, font: fontBold, color: navy })
     y -= 22
     page.drawText(
-      `Export du ${new Date().toLocaleString('fr-FR')} — ${rows.length} catégorie(s) · ${totalJudokas} judoka(s) (${totalBoys} garçon(s), ${totalGirls} fille(s))`,
+      pdfSafeText(
+        `Export du ${new Date().toLocaleString('fr-FR')} - ${rows.length} catégorie(s) · ${totalJudokas} judoka(s) (${totalBoys} garçon(s), ${totalGirls} fille(s))`
+      ),
       { x: margin, y: y - 10, size: 9, font, color: muted }
     )
     y -= 14
@@ -155,7 +159,7 @@ export async function exportCategoriesListPdfBytes(
       { label: 'Filles', x: margin + colCat + colNum * 2 }
     ]
     for (const h of headers) {
-      page.drawText(h.label, {
+      page.drawText(pdfSafeText(h.label), {
         x: h.x,
         y: y - headerH + 6,
         size: 9,
@@ -176,7 +180,7 @@ export async function exportCategoriesListPdfBytes(
   drawTableHeader()
 
   if (rows.length === 0) {
-    page.drawText('Aucune catégorie à exporter.', {
+    page.drawText(pdfSafeText('Aucune catégorie à exporter.'), {
       x: margin,
       y: y - 24,
       size: 11,
@@ -238,7 +242,7 @@ export async function exportCategoriesListPdfBytes(
     height: rowH,
     color: rgb(0.88, 0.9, 0.94)
   })
-  page.drawText('Total général', {
+  page.drawText(pdfSafeText('Total général'), {
     x: margin + 6,
     y: y - rowH + 5,
     size: 9,
