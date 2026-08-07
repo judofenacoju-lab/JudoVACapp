@@ -54,7 +54,7 @@ export interface AppSettings {
   }
   /** Tranches d'âge pour la catégorisation automatique. */
   categories: CategoryAgeRange[]
-  /** Clubs proposés à tous les utilisateurs lors de l'enregistrement judoka. */
+  /** Clubs proposés à la sélection lors de l'enregistrement / modification d'un judoka. */
   clubs: string[]
   /** Libellés de poids partagés (Tirage / Triage). */
   weightClasses: WeightClassRange[]

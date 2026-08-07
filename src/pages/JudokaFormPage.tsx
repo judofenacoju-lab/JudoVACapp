@@ -11,7 +11,7 @@ import {
   computeAge,
   getActiveCategoryNames
 } from '@shared/utils/judoka'
-import { getActiveRegisteredClubNames } from '@shared/utils/clubs'
+import { getActiveRegisteredClubNames, setActiveRegisteredClubs } from '@shared/utils/clubs'
 
 interface Props {
   createdBy: string
@@ -90,7 +90,21 @@ export function JudokaFormPage({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [duplicateHint, setDuplicateHint] = useState<string | null>(null)
+  const [clubOptions, setClubOptions] = useState<string[]>(() => getActiveRegisteredClubNames())
   const isEdit = Boolean(editing?.id)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const res = await window.judovac.getSettings()
+      if (cancelled || !res.ok) return
+      setActiveRegisteredClubs(res.data.clubs)
+      setClubOptions(getActiveRegisteredClubNames())
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!editing) return
@@ -124,10 +138,6 @@ export function JudokaFormPage({
   }, [editing])
 
   useEffect(() => {
-    void window.judovac.getSettings()
-  }, [])
-
-  useEffect(() => {
     if (!focusWeight) return
     const t = window.setTimeout(() => {
       document.getElementById('weightKg')?.focus()
@@ -142,7 +152,6 @@ export function JudokaFormPage({
   )
 
   const categoryOptions = getActiveCategoryNames()
-  const clubOptions = getActiveRegisteredClubNames()
 
   // Dès que l'âge est détecté → catégorie appropriée
   useEffect(() => {
@@ -301,36 +310,34 @@ export function JudokaFormPage({
           <h2 className="text-lg font-semibold text-judo-navy">Informations sportives</h2>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <Field label="Club" id="club">
-              {clubOptions.length > 0 ? (
-                <select
-                  id="club"
-                  required
-                  className="flex h-10 w-full rounded-md border border-input bg-white/80 px-3 text-sm"
-                  value={form.club}
-                  onChange={(e) => set('club', e.target.value)}
-                >
-                  <option value="">— Sélectionner un club —</option>
-                  {clubOptions.map((club) => (
-                    <option key={club} value={club}>
-                      {club}
-                    </option>
-                  ))}
-                  {form.club &&
-                    !clubOptions.some((c) => c.toLowerCase() === form.club.trim().toLowerCase()) && (
-                      <option value={form.club}>{form.club}</option>
-                    )}
-                </select>
-              ) : (
-                <>
-                  <Input
-                    id="club"
-                    value={form.club}
-                    onChange={(e) => set('club', e.target.value)}
-                  />
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Aucun club configuré par le Serveur — saisie libre.
-                  </p>
-                </>
+              <select
+                id="club"
+                required
+                disabled={clubOptions.length === 0}
+                className="flex h-10 w-full rounded-md border border-input bg-white/80 px-3 text-sm disabled:opacity-60"
+                value={
+                  clubOptions.some((c) => c.toLowerCase() === form.club.trim().toLowerCase())
+                    ? clubOptions.find((c) => c.toLowerCase() === form.club.trim().toLowerCase())!
+                    : ''
+                }
+                onChange={(e) => set('club', e.target.value)}
+              >
+                <option value="">
+                  {clubOptions.length === 0
+                    ? '— Aucun club configuré —'
+                    : '— Sélectionner un club —'}
+                </option>
+                {clubOptions.map((club) => (
+                  <option key={club} value={club}>
+                    {club}
+                  </option>
+                ))}
+              </select>
+              {clubOptions.length === 0 && (
+                <p className="mt-1 text-xs text-amber-700">
+                  Aucun club dans Configuration → Clubs (compte Serveur). Ajoutez des clubs puis
+                  enregistrez les paramètres.
+                </p>
               )}
             </Field>
             <Field label="Ligue" id="league">

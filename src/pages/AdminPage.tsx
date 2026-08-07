@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ArrowLeft, Copy, Check, RefreshCw, Save, Trash2, Plus, Eraser } from 'lucide-react'
 import type { AppSettings } from '@shared/types/settings'
 import { createDefaultCategoryAgeRanges } from '@shared/types/settings'
@@ -47,8 +47,6 @@ export function AdminPage({ onBack, embedded = false }: Props) {
   const [resetBusy, setResetBusy] = useState(false)
   const [resetError, setResetError] = useState<string | null>(null)
   const [newClubName, setNewClubName] = useState('')
-  const [clubsImportBusy, setClubsImportBusy] = useState(false)
-  const clubsAutoImportedRef = useRef(false)
 
   async function loadNetwork(): Promise<void> {
     const n = await window.judovac.getLocalNetworkInfo()
@@ -115,32 +113,6 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     setMessage('Paramètres enregistrés.')
   }
 
-  async function importClubsFromJudokas(showMessage = true): Promise<void> {
-    if (!settings) return
-    setClubsImportBusy(true)
-    setError(null)
-    try {
-      const res = await window.judovac.listJudokaClubNames()
-      if (!res.ok) {
-        setError(res.error)
-        return
-      }
-      const before = mergeRegisteredClubNames(settings.clubs).length
-      const merged = mergeRegisteredClubNames(settings.clubs, res.data.items)
-      setSettings({ ...settings, clubs: merged })
-      if (showMessage) {
-        const added = merged.length - before
-        setMessage(
-          added > 0
-            ? `${added} club(s) issu(s) des fiches judokas ajouté(s) à la liste (${merged.length} au total).`
-            : `Liste à jour (${merged.length} club(s)) — aucun nouveau nom détecté.`
-        )
-      }
-    } finally {
-      setClubsImportBusy(false)
-    }
-  }
-
   function addClubRow(): void {
     if (!settings) return
     const name = newClubName.trim()
@@ -156,12 +128,6 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     })
     setNewClubName('')
   }
-
-  useEffect(() => {
-    if (tab !== 'clubs' || !settings || clubsAutoImportedRef.current) return
-    clubsAutoImportedRef.current = true
-    void importClubsFromJudokas(false)
-  }, [tab, settings])
 
   async function createUser(): Promise<void> {
     setBusy(true)
@@ -523,28 +489,10 @@ export function AdminPage({ onBack, embedded = false }: Props) {
 
         {tab === 'clubs' && (
           <section className="space-y-4 rounded-xl border bg-white/75 p-5">
-            <p className="text-sm text-muted-foreground">
-              Clubs proposés à <strong>tous les utilisateurs</strong> lors de l’enregistrement d’un
-              judoka. Les noms déjà saisis sur les fiches existantes sont repris automatiquement à
-              l’ouverture de cet onglet (comme s’ils avaient été créés ici). Cliquez{' '}
-              <strong>Enregistrer</strong> pour publier la liste à tous les utilisateurs.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={clubsImportBusy || busy}
-                onClick={() => void importClubsFromJudokas(true)}
-              >
-                <RefreshCw className={`h-4 w-4 ${clubsImportBusy ? 'animate-spin' : ''}`} />
-                {clubsImportBusy ? 'Synchronisation…' : 'Synchroniser depuis les judokas'}
-              </Button>
-            </div>
             <ul className="space-y-2">
               {(settings.clubs ?? []).length === 0 && (
                 <li className="text-sm text-muted-foreground">
-                  Aucun club pour l’instant. Ajoutez-en un ou synchronisez depuis les fiches.
+                  Aucun club pour l’instant. Ajoutez-en un ci-dessous.
                 </li>
               )}
               {(settings.clubs ?? []).map((name, index) => (
