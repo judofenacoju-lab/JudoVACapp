@@ -47,6 +47,18 @@ export function AdminPage({ onBack, embedded = false }: Props) {
   const [resetBusy, setResetBusy] = useState(false)
   const [resetError, setResetError] = useState<string | null>(null)
   const [newClubName, setNewClubName] = useState('')
+  /** Effectifs judokas par club (clé = nom en minuscules). */
+  const [clubCounts, setClubCounts] = useState<Record<string, number>>({})
+
+  async function refreshClubCounts(): Promise<void> {
+    const res = await window.judovac.listJudokaClubNames()
+    if (!res.ok) return
+    const map: Record<string, number> = {}
+    for (const row of res.data.stats ?? []) {
+      map[row.name.trim().toLowerCase()] = row.count
+    }
+    setClubCounts(map)
+  }
 
   /** Reprend tous les clubs des fiches judokas comme clubs Serveur (persistés). */
   async function syncSystemClubsIntoSettings(current: AppSettings): Promise<AppSettings> {
@@ -54,6 +66,11 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     if (!res.ok) return current
     const before = mergeRegisteredClubNames(current.clubs)
     const merged = mergeRegisteredClubNames(current.clubs, res.data.items)
+    const map: Record<string, number> = {}
+    for (const row of res.data.stats ?? []) {
+      map[row.name.trim().toLowerCase()] = row.count
+    }
+    setClubCounts(map)
     if (merged.join('\0') === before.join('\0')) return current
     const saved = await window.judovac.setSettings({ ...current, clubs: merged })
     if (saved.ok) {
@@ -103,7 +120,10 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     let cancelled = false
     void (async () => {
       const next = await syncSystemClubsIntoSettings(settings)
-      if (!cancelled) setSettings(next)
+      if (!cancelled) {
+        setSettings(next)
+        await refreshClubCounts()
+      }
     })()
     return () => {
       cancelled = true
@@ -529,31 +549,40 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                   Aucun club pour l’instant. Ajoutez-en un ci-dessous.
                 </li>
               )}
-              {(settings.clubs ?? []).map((name, index) => (
-                <li key={`${name}-${index}`} className="flex flex-wrap items-center gap-2">
-                  <Input
-                    className="min-w-[12rem] flex-1"
-                    value={name}
-                    onChange={(e) => {
-                      const clubs = [...(settings.clubs ?? [])]
-                      clubs[index] = e.target.value
-                      setSettings({ ...settings, clubs })
-                    }}
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    title="Retirer de la liste"
-                    onClick={() => {
-                      const clubs = (settings.clubs ?? []).filter((_, i) => i !== index)
-                      setSettings({ ...settings, clubs })
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </li>
-              ))}
+              {(settings.clubs ?? []).map((name, index) => {
+                const count = clubCounts[name.trim().toLowerCase()] ?? 0
+                return (
+                  <li key={`${name}-${index}`} className="flex flex-wrap items-center gap-2">
+                    <Input
+                      className="min-w-[12rem] flex-1"
+                      value={name}
+                      onChange={(e) => {
+                        const clubs = [...(settings.clubs ?? [])]
+                        clubs[index] = e.target.value
+                        setSettings({ ...settings, clubs })
+                      }}
+                    />
+                    <span
+                      className="shrink-0 rounded-md border bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-judo-navy"
+                      title="Judokas liés à ce club"
+                    >
+                      {count} judoka{count !== 1 ? 's' : ''}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      title="Retirer de la liste"
+                      onClick={() => {
+                        const clubs = (settings.clubs ?? []).filter((_, i) => i !== index)
+                        setSettings({ ...settings, clubs })
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </li>
+                )
+              })}
             </ul>
             <div className="flex flex-wrap items-end gap-2 border-t border-border/60 pt-4">
               <div className="min-w-[12rem] flex-1 space-y-2">

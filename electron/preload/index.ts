@@ -68,7 +68,9 @@ const api = {
   listJudokaCreators: (): Promise<IpcResult<{ items: string[] }>> =>
     ipcRenderer.invoke(IpcChannels.JUDOKA_CREATORS),
 
-  listJudokaClubNames: (): Promise<IpcResult<{ items: string[] }>> =>
+  listJudokaClubNames: (): Promise<
+    IpcResult<{ items: string[]; stats: Array<{ name: string; count: number }> }>
+  > =>
     ipcRenderer.invoke(IpcChannels.JUDOKA_CLUB_NAMES),
 
   deleteJudokaCreator: (

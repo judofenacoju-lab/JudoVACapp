@@ -778,8 +778,8 @@ async function queryJudokasPaginated(
   }
 }
 
-/** Noms de clubs distincts déjà présents sur les fiches judokas (admin). */
-async function fetchDistinctJudokaClubNames(): Promise<string[]> {
+/** Clubs distincts + effectifs judokas (admin). */
+async function fetchJudokaClubStats(): Promise<Array<{ name: string; count: number }>> {
   const profile = await requireProfile()
   if (profile.role !== 'admin') {
     throw new Error('Réservé au compte Serveur.')
@@ -792,7 +792,7 @@ async function fetchDistinctJudokaClubNames(): Promise<string[]> {
   if (countError) throw new Error(countError.message)
   const expected = exactCount ?? 0
 
-  const seen = new Map<string, string>()
+  const seen = new Map<string, { name: string; count: number }>()
   let offset = 0
   let loaded = 0
   const pageSize = 1000
@@ -821,13 +821,15 @@ async function fetchDistinctJudokaClubNames(): Promise<string[]> {
       const name = String((row as { club?: string }).club ?? '').trim()
       if (!name) continue
       const key = name.toLowerCase()
-      if (!seen.has(key)) seen.set(key, name)
+      const cur = seen.get(key)
+      if (cur) cur.count += 1
+      else seen.set(key, { name, count: 1 })
     }
     loaded += batch.length
     if (batch.length === 0) break
     offset += batch.length
   }
-  return [...seen.values()].sort((a, b) => a.localeCompare(b, 'fr'))
+  return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr'))
 }
 
 export const judovacClient = {
@@ -2070,10 +2072,12 @@ export const judovacClient = {
     return ok(merged)
   },
 
-  listJudokaClubNames: async (): Promise<IpcResult<{ items: string[] }>> => {
+  listJudokaClubNames: async (): Promise<
+    IpcResult<{ items: string[]; stats: Array<{ name: string; count: number }> }>
+  > => {
     try {
-      const items = await fetchDistinctJudokaClubNames()
-      return ok({ items })
+      const stats = await fetchJudokaClubStats()
+      return ok({ items: stats.map((s) => s.name), stats })
     } catch (e) {
       return fail(e instanceof Error ? e.message : 'Liste des clubs impossible')
     }
