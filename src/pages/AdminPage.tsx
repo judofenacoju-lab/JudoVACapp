@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { ArrowLeft, Copy, Check, RefreshCw, Save, Trash2, Plus, Eraser } from 'lucide-react'
 import type { AppSettings } from '@shared/types/settings'
 import { createDefaultCategoryAgeRanges } from '@shared/types/settings'
-import { mergeRegisteredClubNames } from '@shared/utils/clubs'
+import { mergeRegisteredClubNames, setActiveRegisteredClubs } from '@shared/utils/clubs'
 import type { SystemLogEntry } from '@shared/types/dashboard'
 import type { CreatedUserAccount, UserAccount } from '@shared/types/user-account'
 import { Button } from '@/components/ui/button'
@@ -48,6 +48,22 @@ export function AdminPage({ onBack, embedded = false }: Props) {
   const [resetError, setResetError] = useState<string | null>(null)
   const [newClubName, setNewClubName] = useState('')
 
+  /** Reprend tous les clubs des fiches judokas comme clubs Serveur (persistés). */
+  async function syncSystemClubsIntoSettings(current: AppSettings): Promise<AppSettings> {
+    const res = await window.judovac.listJudokaClubNames()
+    if (!res.ok) return current
+    const before = mergeRegisteredClubNames(current.clubs)
+    const merged = mergeRegisteredClubNames(current.clubs, res.data.items)
+    if (merged.join('\0') === before.join('\0')) return current
+    const saved = await window.judovac.setSettings({ ...current, clubs: merged })
+    if (saved.ok) {
+      setActiveRegisteredClubs(saved.data.clubs)
+      return saved.data
+    }
+    setActiveRegisteredClubs(merged)
+    return { ...current, clubs: merged }
+  }
+
   async function loadNetwork(): Promise<void> {
     const n = await window.judovac.getLocalNetworkInfo()
     if (n.ok) setNetwork(n.data)
@@ -70,13 +86,31 @@ export function AdminPage({ onBack, embedded = false }: Props) {
         window.judovac.getLogs(80),
         window.judovac.listUsers()
       ])
-      if (s.ok) setSettings(s.data)
-      else setError(s.error)
+      if (s.ok) {
+        const withClubs = await syncSystemClubsIntoSettings(s.data)
+        setSettings(withClubs)
+      } else {
+        setError(s.error)
+      }
       if (l.ok) setLogs(l.data.items)
       if (u.ok) setUsers(u.data.items)
       await loadNetwork()
     })()
   }, [])
+
+  useEffect(() => {
+    if (tab !== 'clubs' || !settings) return
+    let cancelled = false
+    void (async () => {
+      const next = await syncSystemClubsIntoSettings(settings)
+      if (!cancelled) setSettings(next)
+    })()
+    return () => {
+      cancelled = true
+    }
+    // Re-sync à chaque ouverture de l’onglet pour intégrer les nouveaux clubs des fiches
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- volontairement lié à l’onglet
+  }, [tab])
 
   async function save(): Promise<void> {
     if (!settings) return

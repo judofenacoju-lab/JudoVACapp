@@ -11,7 +11,7 @@ import {
   computeAge,
   getActiveCategoryNames
 } from '@shared/utils/judoka'
-import { getActiveRegisteredClubNames, setActiveRegisteredClubs } from '@shared/utils/clubs'
+import { getActiveRegisteredClubNames, mergeRegisteredClubNames, setActiveRegisteredClubs } from '@shared/utils/clubs'
 
 interface Props {
   createdBy: string
@@ -96,9 +96,15 @@ export function JudokaFormPage({
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const res = await window.judovac.getSettings()
-      if (cancelled || !res.ok) return
-      setActiveRegisteredClubs(res.data.clubs)
+      const [settingsRes, clubsRes] = await Promise.all([
+        window.judovac.getSettings(),
+        window.judovac.listJudokaClubNames()
+      ])
+      if (cancelled) return
+      const fromSettings = settingsRes.ok ? settingsRes.data.clubs : []
+      const fromJudokas = clubsRes.ok ? clubsRes.data.items : []
+      const merged = mergeRegisteredClubNames(fromSettings, fromJudokas)
+      setActiveRegisteredClubs(merged)
       setClubOptions(getActiveRegisteredClubNames())
     })()
     return () => {
