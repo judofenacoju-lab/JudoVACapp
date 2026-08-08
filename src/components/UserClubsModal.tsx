@@ -4,6 +4,7 @@ import type { Judoka } from '@shared/types/judoka'
 import type { UserAccount } from '@shared/types/user-account'
 import { formatJudokaFullName, resolveJudokaCategory } from '@shared/utils/judoka'
 import { formatCreatorLabel } from '@shared/utils/creator'
+import { mergeRegisteredClubNames } from '@shared/utils/clubs'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 
@@ -25,6 +26,7 @@ export function UserClubsModal({ username, onClose, onTransferred }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [judokas, setJudokas] = useState<Judoka[]>([])
+  const [configuredClubs, setConfiguredClubs] = useState<string[]>([])
   const [openClubs, setOpenClubs] = useState<Set<string>>(new Set())
   const [users, setUsers] = useState<UserAccount[]>([])
   const [transferClub, setTransferClub] = useState<string | null>(null)
@@ -32,6 +34,8 @@ export function UserClubsModal({ username, onClose, onTransferred }: Props) {
   const [transferBusy, setTransferBusy] = useState(false)
   const [transferError, setTransferError] = useState<string | null>(null)
   const [transferMessage, setTransferMessage] = useState<string | null>(null)
+  const [movingJudokaId, setMovingJudokaId] = useState<string | null>(null)
+  const [moveError, setMoveError] = useState<string | null>(null)
 
   const loadJudokas = useCallback(async (): Promise<void> => {
     setLoading(true)
@@ -60,8 +64,14 @@ export function UserClubsModal({ username, onClose, onTransferred }: Props) {
 
   useEffect(() => {
     void (async () => {
-      const res = await window.judovac.listUsers()
-      if (res.ok) setUsers(res.data.items)
+      const [usersRes, settingsRes] = await Promise.all([
+        window.judovac.listUsers(),
+        window.judovac.getSettings()
+      ])
+      if (usersRes.ok) setUsers(usersRes.data.items)
+      if (settingsRes.ok) {
+        setConfiguredClubs(mergeRegisteredClubNames(settingsRes.data.clubs))
+      }
     })()
   }, [])
 
@@ -86,6 +96,11 @@ export function UserClubsModal({ username, onClose, onTransferred }: Props) {
         return a.club.localeCompare(b.club, 'fr')
       })
   }, [judokas])
+
+  const clubOptions = useMemo(() => {
+    const fromJudokas = judokas.map((j) => j.club.trim()).filter(Boolean)
+    return mergeRegisteredClubNames(configuredClubs, fromJudokas)
+  }, [configuredClubs, judokas])
 
   const transferTargets = useMemo(
     () =>
@@ -114,6 +129,33 @@ export function UserClubsModal({ username, onClose, onTransferred }: Props) {
     setTransferTarget(transferTargets[0]?.username ?? '')
     setTransferError(null)
     setTransferMessage(null)
+  }
+
+  async function changeJudokaClub(judoka: Judoka, nextClub: string): Promise<void> {
+    const current = judoka.club.trim() || 'Sans club'
+    const target = nextClub.trim()
+    if (!target || target.toLowerCase() === current.toLowerCase()) return
+
+    setMovingJudokaId(judoka.id)
+    setMoveError(null)
+    setTransferMessage(null)
+    const res = await window.judovac.updateJudoka(judoka.id, { club: target })
+    setMovingJudokaId(null)
+    if (!res.ok) {
+      setMoveError(res.error)
+      return
+    }
+    setOpenClubs((prev) => {
+      const next = new Set(prev)
+      next.add(current)
+      next.add(target)
+      return next
+    })
+    setTransferMessage(
+      `${formatJudokaFullName(judoka)} déplacé de « ${current} » vers « ${target} ».`
+    )
+    await loadJudokas()
+    onTransferred?.()
   }
 
   async function confirmTransfer(): Promise<void> {
@@ -153,7 +195,7 @@ export function UserClubsModal({ username, onClose, onTransferred }: Props) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="user-clubs-title"
-        className="relative z-10 flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border bg-white shadow-2xl"
+        className="relative z-10 flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-xl border bg-white shadow-2xl"
       >
         <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
           <div>
@@ -173,6 +215,11 @@ export function UserClubsModal({ username, onClose, onTransferred }: Props) {
 
         <div className="flex-1 overflow-auto px-3 py-3">
           {error && <p className="px-2 text-sm text-destructive">{error}</p>}
+          {moveError && (
+            <p className="mb-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+              {moveError}
+            </p>
+          )}
           {transferMessage && (
             <p className="mb-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
               {transferMessage}
@@ -218,23 +265,85 @@ export function UserClubsModal({ username, onClose, onTransferred }: Props) {
                     <ul className="border-t bg-slate-50/80 px-3 py-2">
                       {group.judokas.map((j) => {
                         const category = resolveJudokaCategory(j.birthDate, j.category)
+                        const currentClub = j.club.trim() || 'Sans club'
+                        const selectValue = clubOptions.some(
+                          (c) => c.toLowerCase() === currentClub.toLowerCase()
+                        )
+                          ? clubOptions.find(
+                              (c) => c.toLowerCase() === currentClub.toLowerCase()
+                            )!
+                          : currentClub === 'Sans club'
+                            ? ''
+                            : currentClub
+                        const optionsForRow =
+                          selectValue &&
+                          !clubOptions.some((c) => c.toLowerCase() === selectValue.toLowerCase())
+                            ? mergeRegisteredClubNames(clubOptions, [selectValue])
+                            : clubOptions
+                        const busy = movingJudokaId === j.id
                         return (
                           <li
                             key={j.id}
                             className="border-b border-border/50 py-2 text-sm last:border-0"
                           >
-                            <p className="font-medium text-judo-navy">{formatJudokaFullName(j)}</p>
-                            <p className="mt-0.5 text-xs text-muted-foreground">
-                              {[
-                                j.displayId,
-                                j.birthDate
-                                  ? `né(e) ${new Date(j.birthDate + 'T12:00:00').toLocaleDateString('fr-FR')}`
-                                  : null,
-                                category || null
-                              ]
-                                .filter(Boolean)
-                                .join(' · ')}
-                            </p>
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                              <div className="min-w-0 flex-1">
+                                <p className="font-medium text-judo-navy">
+                                  {formatJudokaFullName(j)}
+                                </p>
+                                <p className="mt-0.5 text-xs text-muted-foreground">
+                                  {[
+                                    j.displayId,
+                                    j.birthDate
+                                      ? `né(e) ${new Date(j.birthDate + 'T12:00:00').toLocaleDateString('fr-FR')}`
+                                      : null,
+                                    category || null
+                                  ]
+                                    .filter(Boolean)
+                                    .join(' · ')}
+                                </p>
+                              </div>
+                              <div className="w-full shrink-0 sm:w-48">
+                                <Label
+                                  htmlFor={`move-club-${j.id}`}
+                                  className="mb-1 block text-[11px] text-muted-foreground"
+                                >
+                                  Changer de club
+                                </Label>
+                                <select
+                                  id={`move-club-${j.id}`}
+                                  className="flex h-9 w-full rounded-md border border-input bg-white px-2 text-xs disabled:opacity-60"
+                                  value={selectValue}
+                                  disabled={busy || movingJudokaId != null || optionsForRow.length === 0}
+                                  title="Déplacer ce judoka vers un autre club"
+                                  onChange={(e) => {
+                                    const next = e.target.value
+                                    if (!next) return
+                                    void changeJudokaClub(j, next)
+                                  }}
+                                >
+                                  {optionsForRow.length === 0 ? (
+                                    <option value="">Aucun club configuré</option>
+                                  ) : (
+                                    <>
+                                      {currentClub === 'Sans club' && (
+                                        <option value="">Sans club</option>
+                                      )}
+                                      {optionsForRow.map((club) => (
+                                        <option key={club} value={club}>
+                                          {club}
+                                        </option>
+                                      ))}
+                                    </>
+                                  )}
+                                </select>
+                                {busy && (
+                                  <p className="mt-1 text-[11px] text-muted-foreground">
+                                    Déplacement…
+                                  </p>
+                                )}
+                              </div>
+                            </div>
                           </li>
                         )
                       })}
