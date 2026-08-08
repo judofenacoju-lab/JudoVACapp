@@ -17,6 +17,27 @@ function hexRgb(hex: string) {
   return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255)
 }
 
+/** Helvetica = WinAnsi : normaliser NFD / hors Latin-1. */
+function pdfSafeText(input: string): string {
+  let s = input.normalize('NFC')
+  s = s
+    .replace(/\u2026/g, '...')
+    .replace(/[\u2018\u2019\u201A\u2032]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u2033]/g, '"')
+    .replace(/[\u2013\u2014\u2212\u2010\u2011]/g, '-')
+    .replace(/[\u00A0\u202F\u2007\u2009]/g, ' ')
+    .replace(/[\u0300-\u036f]/g, '')
+  return [...s]
+    .map((ch) => {
+      const cp = ch.codePointAt(0) ?? 0
+      if (cp <= 0xff) return ch
+      const folded = ch.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      if (folded && [...folded].every((c) => (c.codePointAt(0) ?? 0) <= 0xff)) return folded
+      return '?'
+    })
+    .join('')
+}
+
 function dataUrlToBytes(dataUrl: string): Uint8Array {
   const comma = dataUrl.indexOf(',')
   const b64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl
@@ -150,11 +171,11 @@ export async function buildBadgesPdf(opts: {
 
     const name = `${j.firstName} ${j.lastName}`.trim()
     const fields = [
-      { key: 'fullName', text: name, bold: true },
-      { key: 'category', text: j.category },
-      { key: 'weight', text: j.weightKg != null ? `${j.weightKg} kg` : '' },
-      { key: 'sex', text: j.sex },
-      { key: 'displayId', text: j.displayId }
+      { key: 'fullName', text: pdfSafeText(name), bold: true },
+      { key: 'category', text: pdfSafeText(j.category), bold: false },
+      { key: 'weight', text: j.weightKg != null ? pdfSafeText(`${j.weightKg} kg`) : '', bold: false },
+      { key: 'sex', text: pdfSafeText(j.sex), bold: false },
+      { key: 'displayId', text: pdfSafeText(j.displayId), bold: false }
     ]
     for (const f of fields) {
       if (!f.text) continue

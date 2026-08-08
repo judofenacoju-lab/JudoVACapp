@@ -10,6 +10,30 @@ const PDFDocument = require('pdfkit') as typeof import('pdfkit')
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const QRCode = require('qrcode') as typeof import('qrcode')
 
+/** Helvetica = WinAnsi : normaliser NFD / caractères hors Latin-1. */
+function pdfSafeText(input: string): string {
+  let s = input.normalize('NFC')
+  s = s
+    .replace(/\u2026/g, '...')
+    .replace(/[\u2018\u2019\u201A\u2032]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u2033]/g, '"')
+    .replace(/[\u2013\u2014\u2212\u2010\u2011]/g, '-')
+    .replace(/[\u00A0\u202F\u2007\u2009]/g, ' ')
+    .replace(/[\u0300-\u036f]/g, '')
+  s = [...s]
+    .map((ch) => {
+      const cp = ch.codePointAt(0) ?? 0
+      if (cp <= 0xff) return ch
+      const folded = ch.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      if (folded && [...folded].every((c) => (c.codePointAt(0) ?? 0) <= 0xff)) {
+        return folded
+      }
+      return '?'
+    })
+    .join('')
+  return s
+}
+
 export type BadgeLayoutMode = 4 | 6 | 8 | 'custom'
 
 type JudokaLite = {
@@ -154,6 +178,8 @@ function drawField(
   sy: number,
   opts?: { bgColor?: string; textColor?: string }
 ): void {
+  const safe = pdfSafeText(text)
+  if (!safe) return
   const fontSize = style.fontSize * Math.min(sx, sy)
   const font = style.fontFamily?.includes('Bold') ? 'Helvetica-Bold' : 'Helvetica'
   doc.font(font).fontSize(fontSize)
@@ -163,7 +189,7 @@ function drawField(
   const color = opts?.textColor ?? style.color
 
   if (opts?.bgColor) {
-    const textW = doc.widthOfString(text)
+    const textW = doc.widthOfString(safe)
     const padX = 4 * sx
     const padY = 2 * sy
     const bandW = Math.min(maxW, textW + padX * 2)
@@ -171,9 +197,9 @@ function drawField(
     if (style.align === 'center') bandX = x + (maxW - bandW) / 2
     else if (style.align === 'right') bandX = x + maxW - bandW
     doc.rect(bandX, y - padY, bandW, fontSize + padY * 2).fill(opts.bgColor)
-    doc.fillColor(color).text(text, bandX + padX, y, { lineBreak: false })
+    doc.fillColor(color).text(safe, bandX + padX, y, { lineBreak: false })
   } else {
-    doc.fillColor(color).text(text, x, y, { width: maxW, align: style.align, lineBreak: false })
+    doc.fillColor(color).text(safe, x, y, { width: maxW, align: style.align, lineBreak: false })
   }
 }
 
@@ -252,7 +278,7 @@ async function drawBadge(
   }
 
   for (const [key, style] of Object.entries(fields)) {
-    const text = values[key] ?? ''
+    const text = pdfSafeText(values[key] ?? '')
     if (!text) continue
     if (key === 'displayId') {
       doc
@@ -361,7 +387,7 @@ export async function exportBadgesPdfToBuffer(options: PdfExportBufferOptions): 
   }
 
   if (judokas.length === 0) {
-    doc.fontSize(12).fillColor('#64748b').text('Aucun judoka à exporter', margin, margin)
+    doc.fontSize(12).fillColor('#64748b').text(pdfSafeText('Aucun judoka à exporter'), margin, margin)
   }
 
   doc.end()

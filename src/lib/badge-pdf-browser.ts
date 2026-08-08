@@ -7,6 +7,7 @@ import QRCode from 'qrcode'
 import type { BadgeTemplate } from '@shared/types/badge'
 import type { Judoka } from '@shared/types/judoka'
 import { formatBadgeJudokaName } from '@shared/utils/judoka'
+import { pdfSafeText } from '@shared/utils/pdf-winansi-text'
 import brandLogoUrl from '@/assets/brand-logo.png'
 
 const DESIGN_SCALE = 2.5
@@ -212,12 +213,14 @@ function drawText(
   color: ReturnType<typeof rgb>,
   opts?: { maxWidth?: number; align?: 'left' | 'center' | 'right' }
 ): void {
+  const safe = pdfSafeText(text)
+  if (!safe) return
   const width = opts?.maxWidth
-  const textW = font.widthOfTextAtSize(text, size)
+  const textW = font.widthOfTextAtSize(safe, size)
   let drawX = x
   if (width != null && opts?.align === 'center') drawX = x + (width - textW) / 2
   else if (width != null && opts?.align === 'right') drawX = x + width - textW
-  page.drawText(text, {
+  page.drawText(safe, {
     x: Math.max(0, drawX),
     y: yBottom,
     size,
@@ -298,7 +301,7 @@ export async function exportBadgesPdfBytes(options: BrowserPdfExportOptions): Pr
 
   if (judokas.length === 0) {
     page = pdf.addPage([pageW, pageH])
-    page.drawText('Aucun judoka à exporter', {
+    page.drawText(pdfSafeText('Aucun judoka à exporter'), {
       x: margin,
       y: pageH - margin - 14,
       size: 12,
@@ -451,11 +454,11 @@ async function drawBadge(
 
   const fields = template.layout.fields
   const values: Record<string, string> = {
-    fullName: formatName(judoka),
-    category: judoka.category || '',
-    weight: judoka.weightKg != null ? `${judoka.weightKg} kg` : '',
-    sex: judoka.sex || '',
-    displayId: judoka.displayId || ''
+    fullName: pdfSafeText(formatName(judoka)),
+    category: pdfSafeText(judoka.category || ''),
+    weight: judoka.weightKg != null ? pdfSafeText(`${judoka.weightKg} kg`) : '',
+    sex: pdfSafeText(judoka.sex || ''),
+    displayId: pdfSafeText(judoka.displayId || '')
   }
 
   for (const [key, style] of Object.entries(fields)) {

@@ -7,6 +7,7 @@ import type { Judoka } from '@shared/types/judoka'
 import type { BadgeTemplate, BadgeTextStyle } from '@shared/types/badge'
 import { formatBadgeCategory, formatBadgeJudokaName } from '@shared/utils/judoka'
 import { badgeDesignCanvas } from '@shared/utils/badge-canvas'
+import { pdfSafeText } from '@shared/utils/pdf-winansi-text'
 
 function resolveBrandLogoPath(): string | null {
   const candidates = [
@@ -75,7 +76,7 @@ export async function exportBadgesPdf(options: PdfExportOptions): Promise<string
   }
 
   if (judokas.length === 0) {
-    doc.fontSize(12).fillColor('#64748b').text('Aucun judoka à exporter', margin, margin)
+    doc.fontSize(12).fillColor('#64748b').text(pdfSafeText('Aucun judoka à exporter'), margin, margin)
   }
 
   doc.end()
@@ -116,6 +117,8 @@ function drawBadgeField(
   sy: number,
   opts?: { bgColor?: string; textColor?: string }
 ): void {
+  const safe = pdfSafeText(text)
+  if (!safe) return
   const fontSize = style.fontSize * Math.min(sx, sy)
   const font = style.fontFamily.includes('Bold') ? 'Helvetica-Bold' : 'Helvetica'
   doc.font(font).fontSize(fontSize)
@@ -125,7 +128,7 @@ function drawBadgeField(
   const color = opts?.textColor ?? style.color
 
   if (opts?.bgColor) {
-    const textW = doc.widthOfString(text)
+    const textW = doc.widthOfString(safe)
     const padX = 4 * sx
     const padY = 2 * sy
     const bandW = Math.min(maxW, textW + padX * 2)
@@ -133,9 +136,9 @@ function drawBadgeField(
     if (style.align === 'center') bandX = x + (maxW - bandW) / 2
     else if (style.align === 'right') bandX = x + maxW - bandW
     doc.rect(bandX, y - padY, bandW, fontSize + padY * 2).fill(opts.bgColor)
-    doc.fillColor(color).text(text, bandX + padX, y, { lineBreak: false })
+    doc.fillColor(color).text(safe, bandX + padX, y, { lineBreak: false })
   } else {
-    doc.fillColor(color).text(text, x, y, { width: maxW, align: style.align, lineBreak: false })
+    doc.fillColor(color).text(safe, x, y, { width: maxW, align: style.align, lineBreak: false })
   }
 }
 
@@ -239,7 +242,7 @@ async function drawBadge(
   }
 
   for (const [key, style] of Object.entries(fields)) {
-    const text = values[key] ?? ''
+    const text = pdfSafeText(values[key] ?? '')
     if (!text) continue
     if (key === 'displayId') {
       const fontSize = style.fontSize * Math.min(sx, sy)
