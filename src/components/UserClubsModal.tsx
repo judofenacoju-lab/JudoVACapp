@@ -4,7 +4,6 @@ import type { Judoka } from '@shared/types/judoka'
 import type { UserAccount } from '@shared/types/user-account'
 import { formatJudokaFullName, resolveJudokaCategory } from '@shared/utils/judoka'
 import { formatCreatorLabel } from '@shared/utils/creator'
-import { mergeRegisteredClubNames } from '@shared/utils/clubs'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 
@@ -19,6 +18,21 @@ type ClubGroup = {
   judokas: Judoka[]
 }
 
+/** Conserve chaque orthographe distincte (après trim), tri alphabétique. */
+function distinctClubLabels(...lists: Array<string[] | undefined | null>): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const list of lists) {
+    for (const raw of list ?? []) {
+      const name = raw.trim()
+      if (!name || seen.has(name)) continue
+      seen.add(name)
+      out.push(name)
+    }
+  }
+  return out.sort((a, b) => a.localeCompare(b, 'fr'))
+}
+
 /**
  * Modal : clubs enregistrés par un utilisateur, judokas dépliables par club.
  */
@@ -27,6 +41,7 @@ export function UserClubsModal({ username, onClose, onTransferred }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [judokas, setJudokas] = useState<Judoka[]>([])
   const [configuredClubs, setConfiguredClubs] = useState<string[]>([])
+  const [catalogClubs, setCatalogClubs] = useState<string[]>([])
   const [openClubs, setOpenClubs] = useState<Set<string>>(new Set())
   const [users, setUsers] = useState<UserAccount[]>([])
   const [transferClub, setTransferClub] = useState<string | null>(null)
@@ -64,13 +79,18 @@ export function UserClubsModal({ username, onClose, onTransferred }: Props) {
 
   useEffect(() => {
     void (async () => {
-      const [usersRes, settingsRes] = await Promise.all([
+      const [usersRes, settingsRes, clubsRes] = await Promise.all([
         window.judovac.listUsers(),
-        window.judovac.getSettings()
+        window.judovac.getSettings(),
+        window.judovac.listJudokaClubNames()
       ])
       if (usersRes.ok) setUsers(usersRes.data.items)
       if (settingsRes.ok) {
-        setConfiguredClubs(mergeRegisteredClubNames(settingsRes.data.clubs))
+        // Liste Configuration telle quelle (chaque entrée / orthographe)
+        setConfiguredClubs(distinctClubLabels(settingsRes.data.clubs))
+      }
+      if (clubsRes.ok) {
+        setCatalogClubs(distinctClubLabels(clubsRes.data.items))
       }
     })()
   }, [])
@@ -99,8 +119,9 @@ export function UserClubsModal({ username, onClose, onTransferred }: Props) {
 
   const clubOptions = useMemo(() => {
     const fromJudokas = judokas.map((j) => j.club.trim()).filter(Boolean)
-    return mergeRegisteredClubNames(configuredClubs, fromJudokas)
-  }, [configuredClubs, judokas])
+    // Configuration + tous clubs en base + clubs de cet utilisateur (orthographes exactes)
+    return distinctClubLabels(configuredClubs, catalogClubs, fromJudokas)
+  }, [configuredClubs, catalogClubs, judokas])
 
   const transferTargets = useMemo(
     () =>
@@ -266,20 +287,11 @@ export function UserClubsModal({ username, onClose, onTransferred }: Props) {
                       {group.judokas.map((j) => {
                         const category = resolveJudokaCategory(j.birthDate, j.category)
                         const currentClub = j.club.trim() || 'Sans club'
-                        const selectValue = clubOptions.some(
-                          (c) => c.toLowerCase() === currentClub.toLowerCase()
+                        const selectValue = currentClub === 'Sans club' ? '' : currentClub
+                        const optionsForRow = distinctClubLabels(
+                          clubOptions,
+                          selectValue ? [selectValue] : []
                         )
-                          ? clubOptions.find(
-                              (c) => c.toLowerCase() === currentClub.toLowerCase()
-                            )!
-                          : currentClub === 'Sans club'
-                            ? ''
-                            : currentClub
-                        const optionsForRow =
-                          selectValue &&
-                          !clubOptions.some((c) => c.toLowerCase() === selectValue.toLowerCase())
-                            ? mergeRegisteredClubNames(clubOptions, [selectValue])
-                            : clubOptions
                         const busy = movingJudokaId === j.id
                         return (
                           <li
@@ -303,7 +315,7 @@ export function UserClubsModal({ username, onClose, onTransferred }: Props) {
                                     .join(' · ')}
                                 </p>
                               </div>
-                              <div className="w-full shrink-0 sm:w-48">
+                              <div className="w-full shrink-0 sm:min-w-[14rem] sm:w-56">
                                 <Label
                                   htmlFor={`move-club-${j.id}`}
                                   className="mb-1 block text-[11px] text-muted-foreground"
@@ -323,7 +335,7 @@ export function UserClubsModal({ username, onClose, onTransferred }: Props) {
                                   }}
                                 >
                                   {optionsForRow.length === 0 ? (
-                                    <option value="">Aucun club configuré</option>
+                                    <option value="">Aucun club répertorié</option>
                                   ) : (
                                     <>
                                       {currentClub === 'Sans club' && (

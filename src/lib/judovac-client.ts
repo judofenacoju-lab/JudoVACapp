@@ -778,8 +778,11 @@ async function queryJudokasPaginated(
   }
 }
 
-/** Clubs distincts + effectifs judokas (admin). */
-async function fetchJudokaClubStats(): Promise<Array<{ name: string; count: number }>> {
+/** Clubs distincts + effectifs judokas (admin). Inclut chaque orthographe exacte. */
+async function fetchJudokaClubStats(): Promise<{
+  stats: Array<{ name: string; count: number }>
+  labels: string[]
+}> {
   const profile = await requireProfile()
   if (profile.role !== 'admin') {
     throw new Error('Réservé au compte Serveur.')
@@ -793,6 +796,7 @@ async function fetchJudokaClubStats(): Promise<Array<{ name: string; count: numb
   const expected = exactCount ?? 0
 
   const seen = new Map<string, { name: string; count: number }>()
+  const exactLabels = new Set<string>()
   let offset = 0
   let loaded = 0
   const pageSize = 1000
@@ -820,6 +824,7 @@ async function fetchJudokaClubStats(): Promise<Array<{ name: string; count: numb
     for (const row of batch) {
       const name = String((row as { club?: string }).club ?? '').trim()
       if (!name) continue
+      exactLabels.add(name)
       const key = name.toLowerCase()
       const cur = seen.get(key)
       if (cur) cur.count += 1
@@ -829,7 +834,10 @@ async function fetchJudokaClubStats(): Promise<Array<{ name: string; count: numb
     if (batch.length === 0) break
     offset += batch.length
   }
-  return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr'))
+  return {
+    stats: [...seen.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr')),
+    labels: [...exactLabels].sort((a, b) => a.localeCompare(b, 'fr'))
+  }
 }
 
 export const judovacClient = {
@@ -2076,8 +2084,8 @@ export const judovacClient = {
     IpcResult<{ items: string[]; stats: Array<{ name: string; count: number }> }>
   > => {
     try {
-      const stats = await fetchJudokaClubStats()
-      return ok({ items: stats.map((s) => s.name), stats })
+      const { stats, labels } = await fetchJudokaClubStats()
+      return ok({ items: labels, stats })
     } catch (e) {
       return fail(e instanceof Error ? e.message : 'Liste des clubs impossible')
     }
