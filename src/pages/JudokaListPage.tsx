@@ -46,6 +46,7 @@ export function JudokaListPage({
   const [message, setMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [exportClubsOpen, setExportClubsOpen] = useState(false)
+  const [exportCategoriesOpen, setExportCategoriesOpen] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [pageIndex, setPageIndex] = useState(0)
   /** Total exact en base (tous les judokas du périmètre serveur / opérateur). */
@@ -383,19 +384,35 @@ export function JudokaListPage({
     }
   }
 
-  async function exportCategoriesPdf(): Promise<void> {
+  async function exportCategoriesPdf(mode: 'registered' | 'weighed'): Promise<void> {
     setBusy(true)
     setError(null)
     setMessage(null)
     try {
-      const judokas = await loadJudokasForExport()
+      const parts = buildFilterSummaryParts()
+      const all = await loadJudokasForExport()
+      const judokas =
+        mode === 'weighed' ? all.filter((j) => hasRecordedWeight(j.weightKg)) : all
       const settingsRes = await window.judovac.getSettings()
-      const categories = settingsRes.ok
-        ? settingsRes.data.categories
-        : []
+      const categories = settingsRes.ok ? settingsRes.data.categories : []
       const { exportAndDownloadCategoriesListPdf } = await import('@/lib/categories-list-pdf')
-      const out = await exportAndDownloadCategoriesListPdf(judokas, categories)
-      setMessage(`Catégories exportées (${out.categoryCount} catégorie(s)) → ${out.filename}`)
+      const out = await exportAndDownloadCategoriesListPdf(judokas, categories, {
+        mode,
+        filterSummary:
+          mode === 'weighed'
+            ? parts.length
+              ? `${parts.join(' · ')} · judokas pesés uniquement`
+              : 'Judokas pesés uniquement'
+            : parts.length
+              ? parts.join(' · ')
+              : 'Tous les judokas enregistrés'
+      })
+      setExportCategoriesOpen(false)
+      setMessage(
+        mode === 'weighed'
+          ? `Catégories (pesés) exportées (${out.categoryCount} catégorie(s)) → ${out.filename}`
+          : `Catégories (enregistrés) exportées (${out.categoryCount} catégorie(s)) → ${out.filename}`
+      )
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Export catégories impossible')
     } finally {
@@ -675,7 +692,7 @@ export function JudokaListPage({
                     type="button"
                     size="sm"
                     disabled={busy}
-                    onClick={() => void exportCategoriesPdf()}
+                    onClick={() => setExportCategoriesOpen(true)}
                     className="bg-emerald-600 px-4 text-white hover:bg-emerald-700 hover:text-white"
                   >
                     <FileDown className="h-4 w-4" />
@@ -687,6 +704,70 @@ export function JudokaListPage({
           </div>
         )}
       </div>
+
+      {exportCategoriesOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
+          role="presentation"
+          onClick={() => {
+            if (!busy) setExportCategoriesOpen(false)
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="export-categories-title"
+            className="w-full max-w-md rounded-xl border bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
+              <div>
+                <h2
+                  id="export-categories-title"
+                  className="font-display text-lg font-semibold text-judo-navy"
+                >
+                  Export Catégorie
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Choisissez le type d’export : effectifs par catégorie
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                disabled={busy}
+                onClick={() => setExportCategoriesOpen(false)}
+                aria-label="Fermer"
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+            <div className="flex flex-col gap-3 px-5 py-5 sm:flex-row sm:justify-center">
+              <Button
+                type="button"
+                size="lg"
+                disabled={busy}
+                className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700 hover:text-white"
+                onClick={() => void exportCategoriesPdf('registered')}
+              >
+                <FileDown className="h-4 w-4" />
+                {busy ? 'Export…' : 'Enregistrés'}
+              </Button>
+              <Button
+                type="button"
+                size="lg"
+                disabled={busy}
+                className="flex-1 bg-judo-navy text-white hover:bg-judo-navy/90 hover:text-white"
+                onClick={() => void exportCategoriesPdf('weighed')}
+              >
+                <FileDown className="h-4 w-4" />
+                {busy ? 'Export…' : 'Pesés'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {exportClubsOpen && (
         <div

@@ -267,11 +267,25 @@ export async function exportCategoriesListPdfBytes(
 
 export async function exportAndDownloadCategoriesListPdf(
   judokas: Judoka[],
-  configuredCategories: CategoryAgeRange[] | string[]
+  configuredCategories: CategoryAgeRange[] | string[],
+  options?: {
+    filterSummary?: string
+    /** Mode d’export : tous les enregistrés, ou uniquement les pesés. */
+    mode?: 'registered' | 'weighed'
+  }
 ): Promise<{ filename: string; categoryCount: number }> {
+  const mode = options?.mode ?? 'registered'
+  const filterSummary = options?.filterSummary
   const rows = buildCategoryStats(judokas, configuredCategories)
-  const bytes = await exportCategoriesListPdfBytes({ rows })
-  const filename = `liste-categories-${new Date().toISOString().slice(0, 10)}.pdf`
+  const title =
+    mode === 'weighed'
+      ? 'Catégories — judokas pesés — JudoVACapp'
+      : 'Catégories enregistrées — JudoVACapp'
+  const bytes = await exportCategoriesListPdfBytes({ rows, filterSummary, title })
+  const filename =
+    mode === 'weighed'
+      ? `liste-categories-peses-${new Date().toISOString().slice(0, 10)}.pdf`
+      : `liste-categories-enregistrees-${new Date().toISOString().slice(0, 10)}.pdf`
   downloadPdfBytes(bytes, filename)
   return { filename, categoryCount: rows.length }
 }
