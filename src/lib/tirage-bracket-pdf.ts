@@ -23,7 +23,63 @@ const WHITE = rgb(1, 1, 1)
 
 const EMPTY_SLOT = '...'
 
+/**
+ * Max de combats du 1er tour par page PDF.
+ * Au-delà (ex. tableau 256 → 128 combats R1), la grille continue sur la page suivante.
+ */
+const MAX_FIRST_ROUND_MATCHES_PER_PAGE = 64
+
 type PdfFont = Awaited<ReturnType<PDFDocument['embedFont']>>
+
+/**
+ * Extrait la sous-grille couvrant les combats du 1er tour [r0Start, r0End)
+ * (sous-arbre autonome jusqu’au vainqueur local de cette partie).
+ */
+function sliceBracketTree(
+  bracket: BracketTree,
+  r0Start: number,
+  r0End: number
+): BracketTree {
+  const rounds: BracketMatch[][] = []
+  let start = r0Start
+  let end = r0End
+
+  for (let r = 0; r < bracket.rounds.length; r++) {
+    const source = bracket.rounds[r]
+    if (!source || end <= start) break
+    const sliced = source.slice(start, Math.min(end, source.length))
+    if (sliced.length === 0) break
+    rounds.push(sliced)
+    // Vainqueur local de cette partie : on n’inclut pas le tour suivant (fusion hors page)
+    if (sliced.length === 1) break
+    start = Math.floor(start / 2)
+    end = Math.ceil(end / 2)
+  }
+
+  const r0Count = rounds[0]?.length ?? 0
+  return {
+    rounds,
+    size: Math.max(r0Count * 2, 2),
+    entrantCount: bracket.entrantCount
+  }
+}
+
+/** Découpe un tableau en parties de ≤ 64 combats au 1er tour. */
+function bracketPageSlices(bracket: BracketTree): Array<{ start: number; end: number }> {
+  const n0 = bracket.rounds[0]?.length ?? 0
+  if (n0 <= 0) return [{ start: 0, end: 0 }]
+  if (n0 <= MAX_FIRST_ROUND_MATCHES_PER_PAGE) {
+    return [{ start: 0, end: n0 }]
+  }
+  const slices: Array<{ start: number; end: number }> = []
+  for (let start = 0; start < n0; start += MAX_FIRST_ROUND_MATCHES_PER_PAGE) {
+    slices.push({
+      start,
+      end: Math.min(start + MAX_FIRST_ROUND_MATCHES_PER_PAGE, n0)
+    })
+  }
+  return slices
+}
 
 function wrapLines(font: PdfFont, text: string, size: number, maxW: number, maxLines: number): string[] {
   const safe = pdfSafeText(text)
@@ -329,7 +385,8 @@ function drawHeaderAndGetGridTop(
   font: PdfFont,
   fontBold: PdfFont,
   pool: TiragePool,
-  showDocTitle: boolean
+  showDocTitle: boolean,
+  partInfo?: { part: number; totalParts: number; matchFrom: number; matchTo: number }
 ): number {
   let y = PAGE_H - MARGIN
 
@@ -365,16 +422,21 @@ function drawHeaderAndGetGridTop(
     y -= 12
   }
 
-  page.drawText(
-    pdfSafeText(`${pool.entrantCount} judoka(s) · tableau ${pool.bracket.size}`),
-    {
-      x: MARGIN,
-      y: y - 8,
-      size: 8,
-      font,
-      color: MUTED
-    }
-  )
+  const metaParts = [
+    `${pool.entrantCount} judoka(s)`,
+    `tableau ${pool.bracket.size}`,
+    partInfo && partInfo.totalParts > 1
+      ? `partie ${partInfo.part}/${partInfo.totalParts} · combats ${partInfo.matchFrom}–${partInfo.matchTo}`
+      : null
+  ].filter(Boolean)
+
+  page.drawText(pdfSafeText(metaParts.join(' · ')), {
+    x: MARGIN,
+    y: y - 8,
+    size: 8,
+    font,
+    color: MUTED
+  })
   y -= 16
 
   // Ligne de séparation titres / grille
@@ -390,7 +452,8 @@ function drawHeaderAndGetGridTop(
 }
 
 /**
- * PDF A4 paysage : grille entière sans coupure ; titres sans seuils d’âge.
+ * PDF A4 paysage : max 64 combats (1er tour) par page ; au-delà, suite sur page suivante.
+ * Titres sans seuils d’âge.
  */
 export async function exportTirageBracketPdfBytes(
   pools: TiragePool[],
@@ -413,41 +476,49 @@ export async function exportTirageBracketPdfBytes(
   }
 
   let isFirstDocPage = true
-  const shownTitles = new Set<string>()
 
   for (const pool of pools) {
-    const page = doc.addPage([PAGE_W, PAGE_H])
-    const showDocTitle = isFirstDocPage
-    isFirstDocPage = false
+    const slices = bracketPageSlices(pool.bracket)
+    const totalParts = slices.length
 
-    const titleKey = poolTitleWithoutAgeThresholds(pool)
-    const showCategoryBlock = !shownTitles.has(titleKey)
-    if (showCategoryBlock) shownTitles.add(titleKey)
+    for (let partIndex = 0; partIndex < slices.length; partIndex++) {
+      const slice = slices[partIndex]!
+      const page = doc.addPage([PAGE_W, PAGE_H])
+      const showDocTitle = isFirstDocPage
+      isFirstDocPage = false
 
-    // 1) En-tête d’abord (sans seuils d’âge) — mesure réelle de la zone grille
-    let gridTop: number
-    if (showCategoryBlock) {
-      gridTop = drawHeaderAndGetGridTop(page, font, fontBold, pool, showDocTitle)
-    } else if (showDocTitle) {
-      page.drawText(pdfSafeText('JudoVACapp - Grille de combats'), {
-        x: MARGIN,
-        y: PAGE_H - MARGIN - 12,
-        size: 14,
-        font: fontBold,
-        color: NAVY
-      })
-      gridTop = PAGE_H - MARGIN - 28
-    } else {
-      gridTop = PAGE_H - MARGIN - 8
+      const partInfo =
+        totalParts > 1
+          ? {
+              part: partIndex + 1,
+              totalParts,
+              matchFrom: slice.start + 1,
+              matchTo: slice.end
+            }
+          : undefined
+
+      // En-tête (répété sur chaque partie si multipage)
+      const gridTop = drawHeaderAndGetGridTop(
+        page,
+        font,
+        fontBold,
+        pool,
+        showDocTitle,
+        partInfo
+      )
+
+      const gridBottom = MARGIN
+      const availableH = Math.max(60, gridTop - gridBottom)
+      const availableW = PAGE_W - MARGIN * 2
+
+      const pageBracket =
+        totalParts === 1
+          ? pool.bracket
+          : sliceBracketTree(pool.bracket, slice.start, slice.end)
+
+      const layout = computeLayout(pageBracket, availableW, availableH)
+      drawFullBracket(page, font, fontBold, pageBracket, layout, MARGIN, gridTop)
     }
-
-    const gridBottom = MARGIN
-    const availableH = Math.max(60, gridTop - gridBottom)
-    const availableW = PAGE_W - MARGIN * 2
-
-    // 2) Layout qui tient entièrement dans la zone ; toutes les cases dessinées
-    const layout = computeLayout(pool.bracket, availableW, availableH)
-    drawFullBracket(page, font, fontBold, pool.bracket, layout, MARGIN, gridTop)
   }
 
   return doc.save()
