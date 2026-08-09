@@ -56,6 +56,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
   const [clubMembers, setClubMembers] = useState<Judoka[]>([])
   const [clubMembersLoading, setClubMembersLoading] = useState(false)
   const [clubMembersError, setClubMembersError] = useState<string | null>(null)
+  const [clubMembersExportBusy, setClubMembersExportBusy] = useState(false)
 
   async function refreshClubCounts(): Promise<void> {
     const res = await window.judovac.listJudokaClubNames()
@@ -99,6 +100,37 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     setClubMembers([])
     setClubMembersError(null)
     setClubMembersLoading(false)
+    setClubMembersExportBusy(false)
+  }
+
+  async function exportClubMembersPdf(): Promise<void> {
+    if (!clubMembersClub || clubMembers.length === 0) return
+    setClubMembersExportBusy(true)
+    setClubMembersError(null)
+    setMessage(null)
+    try {
+      const { downloadPdfBytes, exportJudokaListPdfBytes } = await import('@/lib/judoka-list-pdf')
+      const bytes = await exportJudokaListPdfBytes({
+        judokas: clubMembers,
+        title: `Club — ${clubMembersClub} — JudoVACapp`,
+        filterSummary: `Club « ${clubMembersClub} »`,
+        mode: 'registered'
+      })
+      const safe = clubMembersClub
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^\w\-]+/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_|_$/g, '')
+        .slice(0, 48)
+      const filename = `liste-club-${safe || 'club'}-${new Date().toISOString().slice(0, 10)}.pdf`
+      downloadPdfBytes(bytes, filename)
+      setMessage(`Liste du club « ${clubMembersClub} » exportée (${clubMembers.length} judoka(s)) → ${filename}`)
+    } catch (e) {
+      setClubMembersError(e instanceof Error ? e.message : 'Export PDF impossible')
+    } finally {
+      setClubMembersExportBusy(false)
+    }
   }
 
   /** Reprend tous les clubs des fiches judokas comme clubs Serveur (persistés). */
@@ -1270,7 +1302,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
             className="relative z-10 flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border bg-white shadow-2xl"
           >
             <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
-              <div>
+              <div className="min-w-0 flex-1">
                 <h2
                   id="club-members-title"
                   className="font-display text-lg font-semibold text-judo-navy"
@@ -1283,15 +1315,31 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                     : `${clubMembers.length} judoka(s)`}
                 </p>
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={closeClubMembers}
-                aria-label="Fermer"
-              >
-                <X className="h-5 w-5" />
-              </Button>
+              <div className="flex shrink-0 items-center gap-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={
+                    clubMembersLoading ||
+                    clubMembersExportBusy ||
+                    clubMembers.length === 0
+                  }
+                  className="bg-emerald-600 text-white hover:bg-emerald-700 hover:text-white"
+                  onClick={() => void exportClubMembersPdf()}
+                >
+                  <FileDown className="h-4 w-4" />
+                  {clubMembersExportBusy ? 'Export…' : 'Export PDF'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={closeClubMembers}
+                  aria-label="Fermer"
+                >
+                  <X className="h-5 w-5" />
+                </Button>
+              </div>
             </div>
             <div className="flex-1 overflow-auto px-3 py-3">
               {clubMembersError && (
