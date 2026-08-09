@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Copy, Check, FileDown, RefreshCw, Save, Trash2, Plus, Eraser } from 'lucide-react'
+import { ArrowLeft, Copy, Check, FileDown, RefreshCw, Save, Trash2, Plus, Eraser, X } from 'lucide-react'
 import type { AppSettings } from '@shared/types/settings'
 import { createDefaultCategoryAgeRanges } from '@shared/types/settings'
+import type { Judoka } from '@shared/types/judoka'
+import { formatJudokaFullName, resolveJudokaCategory } from '@shared/utils/judoka'
 import { mergeRegisteredClubNames, setActiveRegisteredClubs } from '@shared/utils/clubs'
 import type { SystemLogEntry } from '@shared/types/dashboard'
 import type { CreatedUserAccount, UserAccount } from '@shared/types/user-account'
@@ -50,6 +52,10 @@ export function AdminPage({ onBack, embedded = false }: Props) {
   /** Effectifs judokas par club (clé = nom en minuscules). */
   const [clubCounts, setClubCounts] = useState<Record<string, number>>({})
   const [categoriesListBusy, setCategoriesListBusy] = useState(false)
+  const [clubMembersClub, setClubMembersClub] = useState<string | null>(null)
+  const [clubMembers, setClubMembers] = useState<Judoka[]>([])
+  const [clubMembersLoading, setClubMembersLoading] = useState(false)
+  const [clubMembersError, setClubMembersError] = useState<string | null>(null)
 
   async function refreshClubCounts(): Promise<void> {
     const res = await window.judovac.listJudokaClubNames()
@@ -59,6 +65,40 @@ export function AdminPage({ onBack, embedded = false }: Props) {
       map[row.name.trim().toLowerCase()] = row.count
     }
     setClubCounts(map)
+  }
+
+  async function openClubMembers(clubName: string): Promise<void> {
+    const target = clubName.trim()
+    if (!target) return
+    setClubMembersClub(target)
+    setClubMembers([])
+    setClubMembersError(null)
+    setClubMembersLoading(true)
+    try {
+      const key = target.toLowerCase()
+      const res = await window.judovac.searchJudokas('', { club: target })
+      if (!res.ok) {
+        setClubMembersError(res.error)
+        setClubMembers([])
+        return
+      }
+      const items = res.data.items
+        .filter((j) => (j.club.trim() || 'Sans club').toLowerCase() === key)
+        .sort((a, b) => formatJudokaFullName(a).localeCompare(formatJudokaFullName(b), 'fr'))
+      setClubMembers(items)
+    } catch (e) {
+      setClubMembersError(e instanceof Error ? e.message : 'Chargement impossible')
+      setClubMembers([])
+    } finally {
+      setClubMembersLoading(false)
+    }
+  }
+
+  function closeClubMembers(): void {
+    setClubMembersClub(null)
+    setClubMembers([])
+    setClubMembersError(null)
+    setClubMembersLoading(false)
   }
 
   /** Reprend tous les clubs des fiches judokas comme clubs Serveur (persistés). */
@@ -589,12 +629,19 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                         setSettings({ ...settings, clubs })
                       }}
                     />
-                    <span
-                      className="shrink-0 rounded-md border bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-judo-navy"
-                      title="Judokas liés à ce club"
+                    <button
+                      type="button"
+                      disabled={count === 0}
+                      onClick={() => void openClubMembers(name)}
+                      className="shrink-0 rounded-md border bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-judo-navy transition hover:border-judo-navy/40 hover:bg-judo-navy/5 disabled:cursor-default disabled:opacity-60"
+                      title={
+                        count === 0
+                          ? 'Aucun judoka dans ce club'
+                          : 'Voir la liste des judokas de ce club'
+                      }
                     >
                       {count} judoka{count !== 1 ? 's' : ''}
-                    </span>
+                    </button>
                     <Button
                       type="button"
                       variant="ghost"
@@ -1203,6 +1250,81 @@ export function AdminPage({ onBack, embedded = false }: Props) {
               >
                 {deleteBusy ? 'Suppression…' : 'Supprimer'}
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {clubMembersClub && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/45"
+            aria-label="Fermer"
+            onClick={closeClubMembers}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="club-members-title"
+            className="relative z-10 flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border bg-white shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
+              <div>
+                <h2
+                  id="club-members-title"
+                  className="font-display text-lg font-semibold text-judo-navy"
+                >
+                  Club — {clubMembersClub}
+                </h2>
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  {clubMembersLoading
+                    ? 'Chargement…'
+                    : `${clubMembers.length} judoka(s)`}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={closeClubMembers}
+                aria-label="Fermer"
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+            <div className="flex-1 overflow-auto px-3 py-3">
+              {clubMembersError && (
+                <p className="px-2 text-sm text-destructive">{clubMembersError}</p>
+              )}
+              {!clubMembersLoading && !clubMembersError && clubMembers.length === 0 && (
+                <p className="px-2 text-sm text-muted-foreground">
+                  Aucun judoka pour ce club.
+                </p>
+              )}
+              <ul className="space-y-1">
+                {clubMembers.map((j) => {
+                  const category = resolveJudokaCategory(j.birthDate, j.category)
+                  return (
+                    <li
+                      key={j.id}
+                      className="rounded-lg border bg-white px-3 py-2.5 text-sm"
+                    >
+                      <p className="font-medium text-judo-navy">{formatJudokaFullName(j)}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {[
+                          j.displayId,
+                          j.sex === 'F' ? 'F' : 'M',
+                          category || null,
+                          j.weightKg != null ? `${j.weightKg} kg` : null
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </p>
+                    </li>
+                  )
+                })}
+              </ul>
             </div>
           </div>
         </div>
