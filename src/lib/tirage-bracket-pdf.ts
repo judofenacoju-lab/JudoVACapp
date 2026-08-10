@@ -25,9 +25,14 @@ const EMPTY_SLOT = '...'
 
 /**
  * Max de combats du 1er tour par page PDF.
- * Au-delà (ex. tableau 256 → 128 combats R1), la grille continue sur la page suivante.
+ * Limité pour garder des cases lisibles (nom + club + âge) ; le surplus passe à la page suivante.
  */
-const MAX_FIRST_ROUND_MATCHES_PER_PAGE = 64
+const MAX_FIRST_ROUND_MATCHES_PER_PAGE = 12
+/** Hauteur de case cible pour lisibilité (ne pas réduire sous ce seuil). */
+const READABLE_BOX_H = 36
+const READABLE_GAP = 4
+const READABLE_BOX_W = 188
+const READABLE_LATER_W = 110
 
 type PdfFont = Awaited<ReturnType<PDFDocument['embedFont']>>
 
@@ -64,7 +69,7 @@ function sliceBracketTree(
   }
 }
 
-/** Découpe un tableau en parties de ≤ 64 combats au 1er tour. */
+/** Découpe un tableau en parties de ≤ N combats au 1er tour (lisibilité). */
 function bracketPageSlices(bracket: BracketTree): Array<{ start: number; end: number }> {
   const n0 = bracket.rounds[0]?.length ?? 0
   if (n0 <= 0) return [{ start: 0, end: 0 }]
@@ -144,54 +149,43 @@ interface BracketLayout {
 }
 
 /**
- * Calcule un layout qui tient ENTIÈREMENT dans maxWidth × maxHeight
- * (aucune case combat hors page).
+ * Layout à taille lisible fixe (nom + club + âge).
+ * La pagination garantit que n0 tient dans maxHeight.
  */
 function computeLayout(bracket: BracketTree, maxWidth: number, maxHeight: number): BracketLayout {
   const n0 = Math.max(1, bracket.rounds[0]?.length ?? 1)
   const laterRounds = Math.max(0, bracket.rounds.length - 1)
 
-  let boxH = Math.min(40, maxHeight / Math.max(n0, 1) - 2)
-  let gap = Math.min(6, Math.max(1.5, boxH * 0.12))
-  let boxW = 200
-  let laterW = 100
-  let connectorW = 24
-  let winnerTail = 58
+  let boxH = READABLE_BOX_H
+  let gap = READABLE_GAP
+  let boxW = READABLE_BOX_W
+  let laterW = READABLE_LATER_W
+  let connectorW = 22
+  let winnerTail = 56
 
   const widthNeeded = () => boxW + laterRounds * (laterW + connectorW) + winnerTail
   const heightNeeded = () => n0 * (boxH + gap) - gap
 
-  // Largeur : toutes les colonnes jusqu’au vainqueur
+  // Largeur uniquement (ne pas réduire la hauteur sous le seuil lisible)
   let guard = 0
   while (widthNeeded() > maxWidth && guard < 80) {
     guard += 1
-    if (boxW > 90) boxW -= 3
-    else if (laterW > 42) laterW -= 2
+    if (boxW > 140) boxW -= 2
+    else if (laterW > 72) laterW -= 2
     else if (connectorW > 14) connectorW -= 1
     else if (winnerTail > 40) winnerTail -= 2
     else break
   }
 
-  // Hauteur : toutes les lignes du 1er tour
-  guard = 0
-  while (heightNeeded() > maxHeight && guard < 120) {
-    guard += 1
-    if (boxH > 11) boxH -= 0.4
-    if (gap > 1) gap -= 0.15
-  }
-
+  // Si la page est un peu juste, compresser très légèrement sans passer sous 32
   let colH = heightNeeded()
-  if (colH > maxHeight && maxHeight > 30) {
+  if (colH > maxHeight && maxHeight > 40) {
     const scale = (maxHeight - 1) / colH
-    boxH = Math.max(9, boxH * scale)
-    gap = Math.max(0.8, gap * scale)
+    const nextH = Math.max(32, boxH * scale)
+    const nextGap = Math.max(2.5, gap * scale)
+    boxH = nextH
+    gap = nextGap
     colH = n0 * (boxH + gap) - gap
-  }
-
-  // Garantir que rien ne dépasse la bande utile
-  if (colH > maxHeight) {
-    colH = maxHeight
-    boxH = Math.max(8, (colH + gap) / n0 - gap)
   }
 
   return { boxH, gap, boxW, laterW, connectorW, winnerTail, colH }
@@ -210,9 +204,9 @@ function drawMatchCard(
   const y0 = cy - boxH / 2
   const labelW = Math.min(42, Math.max(32, boxW * 0.2))
   const nameW = boxW - labelW
-  const compact = boxH < 28
-  const nameSize = compact ? 5 : boxH >= 34 ? 7 : 6
-  const metaSize = 4.5
+  const compact = boxH < 30
+  const nameSize = compact ? 5.5 : boxH >= 34 ? 7.5 : 6.5
+  const metaSize = 5
   const labelSize = compact ? 5 : 6
   const textMaxW = Math.max(20, nameW - 5)
 
@@ -252,7 +246,7 @@ function drawMatchCard(
     }
 
     const nameLines = wrapLines(fontBold, fighter.name, nameSize, textMaxW, compact ? 1 : 2)
-    const showMeta = !compact && boxH >= 28
+    const showMeta = boxH >= 28
     const metaLine = showMeta
       ? wrapLines(font, formatFighterMeta(fighter), metaSize, textMaxW, 1)[0]
       : undefined
@@ -452,7 +446,7 @@ function drawHeaderAndGetGridTop(
 }
 
 /**
- * PDF A4 paysage : max 64 combats (1er tour) par page ; au-delà, suite sur page suivante.
+ * PDF A4 paysage : cases lisibles (nom + club + âge) ; surplus sur page suivante.
  * Titres sans seuils d’âge.
  */
 export async function exportTirageBracketPdfBytes(

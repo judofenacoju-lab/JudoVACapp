@@ -1,5 +1,6 @@
 import type { Judoka, Sex } from '@shared/types/judoka'
 import {
+  computeAge,
   formatJudokaFullName,
   hasRecordedWeight,
   resolveJudokaCategory
@@ -18,15 +19,21 @@ export interface TirageWeightClass {
 
 /** Options de tirage des combats. */
 export interface TirageSettings {
-  /** Seuils / catégories de poids définis avant le tirage. */
+  /** Seuils / catégories de poids définis avant le tirage (optionnel). */
   weightClasses: TirageWeightClass[]
   /** Si true, évite autant que possible les combats entre judokas du même club. */
   avoidSameClub: boolean
+  /** Filtre sexe appliqué au tirage si aucune catégorie de poids. */
+  sexFilter?: '' | 'M' | 'F'
+  /** Filtre catégorie d’âge appliqué au tirage si aucune catégorie de poids. */
+  categoryFilter?: string
 }
 
 export const DEFAULT_TIRAGE_SETTINGS: TirageSettings = {
   weightClasses: [],
-  avoidSameClub: true
+  avoidSameClub: true,
+  sexFilter: '',
+  categoryFilter: ''
 }
 
 export interface TirageFighter {
@@ -37,6 +44,8 @@ export interface TirageFighter {
   category: string
   weightKg: number
   club: string
+  /** Âge en années (0 si inconnu). */
+  age: number
 }
 
 export interface BracketSlot {
@@ -100,6 +109,12 @@ function toFighter(j: Judoka): TirageFighter {
   const last = j.lastName?.trim() ?? ''
   const displayName =
     first && last ? `${first}, ${last}` : first || last || formatJudokaFullName(j) || j.displayId
+  const age =
+    j.age != null && Number.isFinite(j.age)
+      ? Math.max(0, Math.floor(j.age))
+      : j.birthDate && /^\d{4}-\d{2}-\d{2}$/.test(j.birthDate)
+        ? computeAge(j.birthDate)
+        : 0
   return {
     id: j.id,
     displayId: j.displayId,
@@ -109,7 +124,8 @@ function toFighter(j: Judoka): TirageFighter {
       resolveJudokaCategory(j.birthDate, j.category) || j.category || 'Sans catégorie'
     ),
     weightKg: normalizeWeightKg(j.weightKg),
-    club: j.club.trim() || 'Sans club'
+    club: j.club.trim() || 'Sans club',
+    age
   }
 }
 
@@ -292,12 +308,11 @@ function propagateFirstRoundByes(rounds: BracketMatch[][]): void {
   }
 }
 
-/** Libellé club + poids sous le nom (affichage grille / PDF). */
+/** Libellé club + âge sous le nom (affichage grille / PDF). */
 export function formatFighterMeta(fighter: TirageFighter): string {
-  const w = Number.isInteger(fighter.weightKg)
-    ? `${fighter.weightKg} kg`
-    : `${fighter.weightKg.toFixed(1).replace('.', ',')} kg`
-  return `${fighter.club} · ${w}`
+  const club = fighter.club.trim() || 'Sans club'
+  const agePart = fighter.age > 0 ? `${fighter.age} ans` : null
+  return agePart ? `${club} · ${agePart}` : club
 }
 
 function fightLabel(round: number, number: number): string {
@@ -392,8 +407,8 @@ export function buildBracket(
 
 /**
  * Tirage aléatoire des combats pour les judokas pesés.
- * Groupes = Sexe × Catégorie d’âge × Libellé de poids (tranche min–max).
- * Le poids exact (kg) ne sépare pas les combats : tout le libellé combat ensemble.
+ * Avec catégories de poids : groupes = Sexe × Catégorie d’âge × Libellé de poids.
+ * Sans catégorie de poids : groupes = Sexe × Catégorie d’âge (filtres Afficher / âge appliqués).
  */
 export function generateTirage(
   judokas: Judoka[],
@@ -401,26 +416,49 @@ export function generateTirage(
   random: () => number = Math.random
 ): TirageResult {
   const weightClasses = normalizeWeightClasses(settings.weightClasses ?? [])
-  if (weightClasses.length === 0) {
-    throw new Error('Ajoutez au moins une catégorie de poids avant de lancer le tirage.')
-  }
+  const openWeight = weightClasses.length === 0
 
-  const weighed = judokas.filter((j) => hasRecordedWeight(j.weightKg)).map(toFighter)
+  const weighedAll = judokas.filter((j) => hasRecordedWeight(j.weightKg)).map(toFighter)
+  let weighed = weighedAll
+
+  // Sans catégories de poids : appliquer Afficher + Filtrer catégorie d’âge au tirage
+  if (openWeight) {
+    const sexFilter = settings.sexFilter ?? ''
+    const categoryFilter = (settings.categoryFilter ?? '').trim()
+    if (sexFilter === 'M' || sexFilter === 'F') {
+      weighed = weighed.filter((f) => f.sex === sexFilter)
+    }
+    if (categoryFilter) {
+      const catKey = formatTirageCategoryName(categoryFilter)
+      weighed = weighed.filter((f) => formatTirageCategoryName(f.category) === catKey)
+    }
+  }
 
   type Bucket = {
     sex: Sex
     category: string
-    weightClass: TirageWeightClass
+    weightClass: TirageWeightClass | null
     fighters: TirageFighter[]
   }
   const buckets = new Map<string, Bucket>()
   let matchedCount = 0
 
   for (const f of weighed) {
+    if (openWeight) {
+      matchedCount += 1
+      const key = `${f.sex}::${f.category}::open`
+      let bucket = buckets.get(key)
+      if (!bucket) {
+        bucket = { sex: f.sex, category: f.category, weightClass: null, fighters: [] }
+        buckets.set(key, bucket)
+      }
+      bucket.fighters.push(f)
+      continue
+    }
+
     const wc = matchWeightClass(f.weightKg, weightClasses)
     if (!wc) continue
     matchedCount += 1
-    // Clé = libellé (pas le kg exact) + catégorie d’âge + sexe
     const labelKey = wc.label.trim().toLowerCase()
     const key = `${f.sex}::${f.category}::${labelKey}`
     let bucket = buckets.get(key)
@@ -435,7 +473,11 @@ export function generateTirage(
     if (a.sex !== b.sex) return a.sex === 'M' ? -1 : 1
     const cat = a.category.localeCompare(b.category, 'fr')
     if (cat !== 0) return cat
-    return a.weightClass.maxKg - b.weightClass.maxKg || a.weightClass.minKg - b.weightClass.minKg
+    const aMax = a.weightClass?.maxKg ?? 0
+    const bMax = b.weightClass?.maxKg ?? 0
+    const aMin = a.weightClass?.minKg ?? 0
+    const bMin = b.weightClass?.minKg ?? 0
+    return aMax - bMax || aMin - bMin
   })
 
   const pools: TiragePool[] = []
@@ -450,7 +492,7 @@ export function generateTirage(
       {
         avoidSameClub: settings.avoidSameClub,
         startFightNumber: 1,
-        idPrefix: `${bucket.sex}-${bucket.category}-${wc.id}`
+        idPrefix: `${bucket.sex}-${bucket.category}-${wc?.id ?? 'open'}`
       },
       random
     )
@@ -461,9 +503,11 @@ export function generateTirage(
       sex: bucket.sex,
       sexLabel: bucket.sex === 'F' ? 'Filles' : 'Garçons',
       category: formatTirageCategoryName(bucket.category),
-      weightClassId: wc.id,
-      weightKey: wc.maxKg,
-      weightLabel: (wc.label || '').trim() || suggestWeightClassLabel(wc.maxKg),
+      weightClassId: wc?.id ?? 'open',
+      weightKey: wc?.maxKg ?? 0,
+      weightLabel: wc
+        ? (wc.label || '').trim() || suggestWeightClassLabel(wc.maxKg)
+        : 'Sans catégorie de poids',
       entrantCount: bucket.fighters.length,
       bracket: built.bracket
     })
@@ -472,9 +516,9 @@ export function generateTirage(
   return {
     generatedAt: new Date().toISOString(),
     settings: { ...settings, weightClasses },
-    weighedCount: weighed.length,
+    weighedCount: weighedAll.length,
     matchedCount,
-    unmatchedCount: weighed.length - matchedCount,
+    unmatchedCount: Math.max(0, weighedAll.length - matchedCount),
     fightCount,
     byeCount,
     pools

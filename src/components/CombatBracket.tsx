@@ -50,7 +50,7 @@ export function CombatBracket({
   }
 
   const firstRound = bracket.rounds[0]!
-  const matchBlockH = 84
+  const matchBlockH = 92
   const matchGap = 14
   const firstColHeight = firstRound.length * (matchBlockH + matchGap) - matchGap
 

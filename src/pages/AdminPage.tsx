@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Copy, Check, Eye, FileDown, RefreshCw, Save, Trash2, Plus, Eraser, X } from 'lucide-react'
-import type { AppSettings } from '@shared/types/settings'
+import { ArrowLeft, BarChart3, Copy, Check, Eye, FileDown, RefreshCw, Save, Trash2, Plus, Eraser, X } from 'lucide-react'
+import type { AppSettings, CategoryAgeRange } from '@shared/types/settings'
 import { createDefaultCategoryAgeRanges } from '@shared/types/settings'
 import type { Judoka } from '@shared/types/judoka'
 import {
+  computeAge,
   formatJudokaFullName,
   hasRecordedWeight,
   resolveJudokaCategory
@@ -15,6 +16,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { AppShell } from '@/layouts/AppShell'
+import {
+  CategoryAgeSexChart,
+  type AgeSexBar
+} from '@/components/CategoryAgeSexChart'
 
 interface Props {
   onBack: () => void
@@ -60,6 +65,13 @@ export function AdminPage({ onBack, embedded = false }: Props) {
   const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({})
   const [categoryViewName, setCategoryViewName] = useState<string | null>(null)
   const [categoryExportBusy, setCategoryExportBusy] = useState(false)
+  const [categoryChart, setCategoryChart] = useState<{
+    name: string
+    range: CategoryAgeRange
+  } | null>(null)
+  const [categoryChartData, setCategoryChartData] = useState<AgeSexBar[]>([])
+  const [categoryChartLoading, setCategoryChartLoading] = useState(false)
+  const [categoryChartError, setCategoryChartError] = useState<string | null>(null)
   const [clubMembersClub, setClubMembersClub] = useState<string | null>(null)
   const [clubMembers, setClubMembers] = useState<Judoka[]>([])
   const [clubMembersLoading, setClubMembersLoading] = useState(false)
@@ -244,6 +256,60 @@ export function AdminPage({ onBack, embedded = false }: Props) {
       map[key] = (map[key] ?? 0) + 1
     }
     setCategoryCounts(map)
+  }
+
+  async function openCategoryChart(row: CategoryAgeRange): Promise<void> {
+    const name = row.name.trim() || row.name
+    setCategoryChart({ name, range: row })
+    setCategoryChartData([])
+    setCategoryChartError(null)
+    setCategoryChartLoading(true)
+    try {
+      const ranges = settings?.categories ?? createDefaultCategoryAgeRanges()
+      const key = name.toLowerCase()
+      const res = await window.judovac.listJudokas({ limit: 1_000_000, offset: 0 })
+      if (!res.ok) {
+        setCategoryChartError(res.error)
+        return
+      }
+      const minA = Math.max(0, Math.floor(Number(row.minAge) || 0))
+      const maxA = Math.max(minA, Math.floor(Number(row.maxAge) || minA))
+      const byAge = new Map<number, { boys: number; girls: number }>()
+      for (let a = minA; a <= maxA; a++) {
+        byAge.set(a, { boys: 0, girls: 0 })
+      }
+      for (const j of res.data.items) {
+        const cat =
+          resolveJudokaCategory(j.birthDate, j.category, ranges) || j.category?.trim() || ''
+        if (cat.toLowerCase() !== key) continue
+        const age =
+          j.age != null && Number.isFinite(j.age)
+            ? Math.floor(j.age)
+            : j.birthDate && /^\d{4}-\d{2}-\d{2}$/.test(j.birthDate)
+              ? computeAge(j.birthDate)
+              : -1
+        if (age < 0) continue
+        const bucket = byAge.get(age) ?? { boys: 0, girls: 0 }
+        if (j.sex === 'F') bucket.girls += 1
+        else bucket.boys += 1
+        byAge.set(age, bucket)
+      }
+      const bars: AgeSexBar[] = [...byAge.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([age, counts]) => ({ age, boys: counts.boys, girls: counts.girls }))
+      setCategoryChartData(bars)
+    } catch (e) {
+      setCategoryChartError(e instanceof Error ? e.message : 'Chargement impossible')
+    } finally {
+      setCategoryChartLoading(false)
+    }
+  }
+
+  function closeCategoryChart(): void {
+    setCategoryChart(null)
+    setCategoryChartData([])
+    setCategoryChartError(null)
+    setCategoryChartLoading(false)
   }
 
   async function exportCategoryJudokasPdf(mode: 'registered' | 'weighed'): Promise<void> {
@@ -834,7 +900,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                     <th className="px-2 py-2 w-28">Âge min</th>
                     <th className="px-2 py-2 w-28">Âge max</th>
                     <th className="px-2 py-2 w-28 text-center">Judokas</th>
-                    <th className="px-2 py-2 w-24" />
+                    <th className="px-2 py-2 w-32" />
                   </tr>
                 </thead>
                 <tbody>
@@ -917,6 +983,15 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                             onClick={() => setCategoryViewName(row.name.trim() || row.name)}
                           >
                             <Eye className="h-4 w-4 text-judo-navy" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            title="Graphique garçons / filles par âge"
+                            onClick={() => void openCategoryChart(row)}
+                          >
+                            <BarChart3 className="h-4 w-4 text-judo-navy" />
                           </Button>
                         </div>
                       </td>
@@ -1413,6 +1488,61 @@ export function AdminPage({ onBack, embedded = false }: Props) {
               >
                 {deleteBusy ? 'Suppression…' : 'Supprimer'}
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {categoryChart && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/45"
+            aria-label="Fermer"
+            onClick={closeCategoryChart}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="category-chart-title"
+            className="relative z-10 flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border bg-white shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
+              <div>
+                <h2
+                  id="category-chart-title"
+                  className="font-display text-lg font-semibold text-judo-navy"
+                >
+                  Graphique — {categoryChart.name}
+                </h2>
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  Garçons et filles par âge ({categoryChart.range.minAge}–
+                  {categoryChart.range.maxAge} ans)
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={closeCategoryChart}
+                aria-label="Fermer"
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+            <div className="flex-1 overflow-auto px-4 py-4">
+              {categoryChartLoading && (
+                <p className="py-8 text-center text-sm text-muted-foreground">Chargement…</p>
+              )}
+              {categoryChartError && (
+                <p className="text-sm text-destructive">{categoryChartError}</p>
+              )}
+              {!categoryChartLoading && !categoryChartError && (
+                <CategoryAgeSexChart
+                  data={categoryChartData}
+                  categoryName={categoryChart.name}
+                />
+              )}
             </div>
           </div>
         </div>

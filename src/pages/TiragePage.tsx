@@ -127,11 +127,6 @@ export function TiragePage({ onBack, embedded = false }: Props) {
     setExportMessage(null)
     try {
       const normalized = normalizeWeightClasses(weightClasses)
-      if (normalized.length === 0) {
-        setError('Ajoutez au moins une catégorie de poids valide (min / max) avant le tirage.')
-        setResult(null)
-        return
-      }
       setWeightClasses(normalized)
       await persistWeightClasses(normalized)
 
@@ -143,7 +138,9 @@ export function TiragePage({ onBack, embedded = false }: Props) {
       }
       const generated = generateTirage(listed.data.items, {
         weightClasses: normalized,
-        avoidSameClub
+        avoidSameClub,
+        sexFilter: normalized.length === 0 ? sexFilter : '',
+        categoryFilter: normalized.length === 0 ? categoryFilter : ''
       })
       if (generated.weighedCount === 0) {
         setResult(null)
@@ -153,7 +150,9 @@ export function TiragePage({ onBack, embedded = false }: Props) {
       if (generated.matchedCount === 0) {
         setResult(generated)
         setError(
-          `Aucun judoka pesé ne correspond aux catégories de poids définies (${generated.weighedCount} pesé(s) hors seuils).`
+          normalized.length === 0
+            ? 'Aucun judoka pesé ne correspond aux filtres Afficher / catégorie d’âge.'
+            : `Aucun judoka pesé ne correspond aux catégories de poids définies (${generated.weighedCount} pesé(s) hors seuils).`
         )
         return
       }
@@ -213,8 +212,9 @@ export function TiragePage({ onBack, embedded = false }: Props) {
 
             <div className="space-y-2">
               {weightClasses.length === 0 && (
-                <p className="rounded-md border border-dashed px-3 py-4 text-sm text-amber-700">
-                  Aucune catégorie. Ajoutez par exemple « -20 kg » avec min 18 et max 20.
+                <p className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                  Aucune catégorie de poids : le tirage utilisera Même club, Afficher et Filtrer
+                  catégorie d’âge (groupes par sexe × catégorie d’âge).
                 </p>
               )}
               {weightClasses.map((row, index) => (
@@ -272,7 +272,7 @@ export function TiragePage({ onBack, embedded = false }: Props) {
                       size="sm"
                       variant="outline"
                       className="w-full sm:w-auto"
-                      disabled={loading || weightClasses.length <= 1}
+                      disabled={loading}
                       title="Supprimer cette catégorie"
                       onClick={() => removeWeightClass(row.id)}
                     >
@@ -338,7 +338,7 @@ export function TiragePage({ onBack, embedded = false }: Props) {
             <Button
               variant="accent"
               size="lg"
-              disabled={loading || weightClasses.length === 0}
+              disabled={loading}
               onClick={() => void runTirage()}
             >
               {result ? <RefreshCw className="h-4 w-4" /> : <Dices className="h-4 w-4" />}
