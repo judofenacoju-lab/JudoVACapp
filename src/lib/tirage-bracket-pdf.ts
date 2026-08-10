@@ -28,11 +28,13 @@ const EMPTY_SLOT = '...'
  * Limité pour garder des cases lisibles (nom + club + âge) ; le surplus passe à la page suivante.
  */
 const MAX_FIRST_ROUND_MATCHES_PER_PAGE = 12
-/** Hauteur de case cible pour lisibilité (ne pas réduire sous ce seuil). */
-const READABLE_BOX_H = 36
+/** Hauteur de case cible pour lisibilité (nom + club + âge). */
+const READABLE_BOX_H = 40
 const READABLE_GAP = 4
-const READABLE_BOX_W = 188
-const READABLE_LATER_W = 110
+/** Largeur 1er tour (−25 % vs base 188). */
+const READABLE_BOX_W = Math.round(188 * 0.75)
+/** Largeur tours suivants / 2ᵉ combats (+25 % vs base 110). */
+const READABLE_LATER_W = Math.round(110 * 1.25)
 
 type PdfFont = Awaited<ReturnType<PDFDocument['embedFont']>>
 
@@ -170,18 +172,18 @@ function computeLayout(bracket: BracketTree, maxWidth: number, maxHeight: number
   let guard = 0
   while (widthNeeded() > maxWidth && guard < 80) {
     guard += 1
-    if (boxW > 140) boxW -= 2
-    else if (laterW > 72) laterW -= 2
+    if (boxW > 110) boxW -= 2
+    else if (laterW > 90) laterW -= 2
     else if (connectorW > 14) connectorW -= 1
     else if (winnerTail > 40) winnerTail -= 2
     else break
   }
 
-  // Si la page est un peu juste, compresser très légèrement sans passer sous 32
+  // Si la page est un peu juste, compresser très légèrement sans passer sous 34
   let colH = heightNeeded()
   if (colH > maxHeight && maxHeight > 40) {
     const scale = (maxHeight - 1) / colH
-    const nextH = Math.max(32, boxH * scale)
+    const nextH = Math.max(34, boxH * scale)
     const nextGap = Math.max(2.5, gap * scale)
     boxH = nextH
     gap = nextGap
@@ -202,13 +204,15 @@ function drawMatchCard(
   boxH: number
 ): void {
   const y0 = cy - boxH / 2
-  const labelW = Math.min(42, Math.max(32, boxW * 0.2))
+  // Bandeau combat un peu plus étroit pour laisser place au club / âge
+  const labelW = Math.min(36, Math.max(28, boxW * 0.18))
   const nameW = boxW - labelW
-  const compact = boxH < 30
-  const nameSize = compact ? 5.5 : boxH >= 34 ? 7.5 : 6.5
-  const metaSize = 5
+  const compact = boxH < 32
+  const nameSize = compact ? 6 : boxH >= 38 ? 8 : 7
+  // Meta comme sur Tirage (club · âge), un peu plus grand
+  const metaSize = compact ? 5.5 : 6.5
   const labelSize = compact ? 5 : 6
-  const textMaxW = Math.max(20, nameW - 5)
+  const textMaxW = Math.max(24, nameW - 5)
 
   page.drawRectangle({
     x,
@@ -245,17 +249,15 @@ function drawMatchCard(
       return
     }
 
-    const nameLines = wrapLines(fontBold, fighter.name, nameSize, textMaxW, compact ? 1 : 2)
-    const showMeta = boxH >= 28
-    const metaLine = showMeta
-      ? wrapLines(font, formatFighterMeta(fighter), metaSize, textMaxW, 1)[0]
-      : undefined
+    const nameLines = wrapLines(fontBold, fighter.name, nameSize, textMaxW, 1)
+    // Toujours afficher club · âge comme sur la page Tirage
+    const metaLine = wrapLines(font, formatFighterMeta(fighter), metaSize, textMaxW, 1)[0]
 
-    const lineGap = 1
+    const lineGap = 1.2
     const blockH =
       nameLines.length * nameSize +
       Math.max(0, nameLines.length - 1) * lineGap +
-      (metaLine ? metaSize + 1.5 : 0)
+      (metaLine ? metaSize + 2 : 0)
     let y = slotMid + blockH / 2 - nameSize
 
     for (const line of nameLines) {
