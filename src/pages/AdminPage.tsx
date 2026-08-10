@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Copy, Check, FileDown, RefreshCw, Save, Trash2, Plus, Eraser, X } from 'lucide-react'
+import { ArrowLeft, Copy, Check, Eye, FileDown, RefreshCw, Save, Trash2, Plus, Eraser, X } from 'lucide-react'
 import type { AppSettings } from '@shared/types/settings'
 import { createDefaultCategoryAgeRanges } from '@shared/types/settings'
 import type { Judoka } from '@shared/types/judoka'
-import { formatJudokaFullName, resolveJudokaCategory } from '@shared/utils/judoka'
+import {
+  formatJudokaFullName,
+  hasRecordedWeight,
+  resolveJudokaCategory
+} from '@shared/utils/judoka'
 import { mergeRegisteredClubNames, setActiveRegisteredClubs } from '@shared/utils/clubs'
 import type { SystemLogEntry } from '@shared/types/dashboard'
 import type { CreatedUserAccount, UserAccount } from '@shared/types/user-account'
@@ -52,6 +56,10 @@ export function AdminPage({ onBack, embedded = false }: Props) {
   /** Effectifs judokas par club (clé = nom en minuscules). */
   const [clubCounts, setClubCounts] = useState<Record<string, number>>({})
   const [categoriesListBusy, setCategoriesListBusy] = useState(false)
+  /** Effectifs judokas par catégorie (clé = nom en minuscules). */
+  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({})
+  const [categoryViewName, setCategoryViewName] = useState<string | null>(null)
+  const [categoryExportBusy, setCategoryExportBusy] = useState(false)
   const [clubMembersClub, setClubMembersClub] = useState<string | null>(null)
   const [clubMembers, setClubMembers] = useState<Judoka[]>([])
   const [clubMembersLoading, setClubMembersLoading] = useState(false)
@@ -205,6 +213,102 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- volontairement lié à l’onglet
   }, [tab])
 
+  useEffect(() => {
+    if (tab !== 'categories' || !settings) return
+    let cancelled = false
+    void (async () => {
+      await refreshCategoryCounts()
+      if (cancelled) return
+    })()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- volontairement lié à l’onglet
+  }, [tab])
+
+  async function refreshCategoryCounts(): Promise<void> {
+    if (!settings) return
+    const ranges = settings.categories ?? createDefaultCategoryAgeRanges()
+    const res = await window.judovac.listJudokas({ limit: 1_000_000, offset: 0 })
+    if (!res.ok) return
+    const map: Record<string, number> = {}
+    for (const r of ranges) {
+      const key = r.name.trim().toLowerCase()
+      if (key) map[key] = 0
+    }
+    for (const j of res.data.items) {
+      const cat =
+        resolveJudokaCategory(j.birthDate, j.category, ranges) || j.category?.trim() || ''
+      const key = cat.toLowerCase()
+      if (!key) continue
+      map[key] = (map[key] ?? 0) + 1
+    }
+    setCategoryCounts(map)
+  }
+
+  async function exportCategoryJudokasPdf(mode: 'registered' | 'weighed'): Promise<void> {
+    if (!categoryViewName || !settings) return
+    setCategoryExportBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const ranges = settings.categories ?? createDefaultCategoryAgeRanges()
+      const key = categoryViewName.trim().toLowerCase()
+      const res = await window.judovac.listJudokas({ limit: 1_000_000, offset: 0 })
+      if (!res.ok) {
+        setError(res.error)
+        return
+      }
+      let items = res.data.items.filter((j) => {
+        const cat =
+          resolveJudokaCategory(j.birthDate, j.category, ranges) || j.category?.trim() || ''
+        return cat.toLowerCase() === key
+      })
+      if (mode === 'weighed') {
+        items = items.filter((j) => hasRecordedWeight(j.weightKg))
+      }
+      items = [...items].sort((a, b) =>
+        formatJudokaFullName(a).localeCompare(formatJudokaFullName(b), 'fr')
+      )
+
+      const { downloadPdfBytes, exportJudokaListPdfBytes } = await import('@/lib/judoka-list-pdf')
+      const bytes = await exportJudokaListPdfBytes({
+        judokas: items,
+        title:
+          mode === 'weighed'
+            ? `Catégorie — ${categoryViewName} (pesés) — JudoVACapp`
+            : `Catégorie — ${categoryViewName} (enregistrés) — JudoVACapp`,
+        filterSummary:
+          mode === 'weighed'
+            ? `Catégorie « ${categoryViewName} » · judokas pesés uniquement`
+            : `Catégorie « ${categoryViewName} » · tous les judokas enregistrés`,
+        mode
+      })
+      const safe = categoryViewName
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^\w\-]+/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_|_$/g, '')
+        .slice(0, 48)
+      const filename =
+        mode === 'weighed'
+          ? `liste-categorie-${safe || 'cat'}-peses-${new Date().toISOString().slice(0, 10)}.pdf`
+          : `liste-categorie-${safe || 'cat'}-enregistres-${new Date().toISOString().slice(0, 10)}.pdf`
+      downloadPdfBytes(bytes, filename)
+      setCategoryViewName(null)
+      setMessage(
+        mode === 'weighed'
+          ? `Catégorie « ${categoryViewName} » (pesés) : ${items.length} judoka(s) → ${filename}`
+          : `Catégorie « ${categoryViewName} » (enregistrés) : ${items.length} judoka(s) → ${filename}`
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Export catégorie impossible')
+    } finally {
+      setCategoryExportBusy(false)
+    }
+  }
+
   async function save(): Promise<void> {
     if (!settings) return
     setBusy(true)
@@ -238,6 +342,8 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     }
     setSettings(res.data)
     setMessage('Paramètres enregistrés.')
+    void refreshClubCounts()
+    void refreshCategoryCounts()
   }
 
   async function exportCategoriesListPdf(): Promise<void> {
@@ -727,11 +833,14 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                     <th className="px-2 py-2">Catégorie</th>
                     <th className="px-2 py-2 w-28">Âge min</th>
                     <th className="px-2 py-2 w-28">Âge max</th>
-                    <th className="px-2 py-2 w-16" />
+                    <th className="px-2 py-2 w-28 text-center">Judokas</th>
+                    <th className="px-2 py-2 w-24" />
                   </tr>
                 </thead>
                 <tbody>
-                  {(settings.categories ?? createDefaultCategoryAgeRanges()).map((row, index) => (
+                  {(settings.categories ?? createDefaultCategoryAgeRanges()).map((row, index) => {
+                    const count = categoryCounts[row.name.trim().toLowerCase()] ?? 0
+                    return (
                     <tr key={`${row.name}-${index}`} className="border-b last:border-0">
                       <td className="px-2 py-2">
                         <Input
@@ -775,23 +884,45 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                           }}
                         />
                       </td>
-                      <td className="px-2 py-2">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          title="Supprimer"
-                          disabled={(settings.categories ?? []).length <= 1}
-                          onClick={() => {
-                            const categories = (settings.categories ?? []).filter((_, i) => i !== index)
-                            setSettings({ ...settings, categories })
-                          }}
+                      <td className="px-2 py-2 text-center">
+                        <span
+                          className="inline-block rounded-md border bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-judo-navy"
+                          title="Judokas enregistrés dans cette catégorie"
                         >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
+                          {count}
+                        </span>
+                      </td>
+                      <td className="px-2 py-2">
+                        <div className="flex items-center justify-end gap-0.5">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            title="Supprimer"
+                            disabled={(settings.categories ?? []).length <= 1}
+                            onClick={() => {
+                              const categories = (settings.categories ?? []).filter(
+                                (_, i) => i !== index
+                              )
+                              setSettings({ ...settings, categories })
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            title="Voir / exporter les judokas de cette catégorie"
+                            onClick={() => setCategoryViewName(row.name.trim() || row.name)}
+                          >
+                            <Eye className="h-4 w-4 text-judo-navy" />
+                          </Button>
+                        </div>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1281,6 +1412,70 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                 onClick={() => void confirmDeleteUser()}
               >
                 {deleteBusy ? 'Suppression…' : 'Supprimer'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {categoryViewName && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4"
+          role="presentation"
+          onClick={() => {
+            if (!categoryExportBusy) setCategoryViewName(null)
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="category-view-title"
+            className="w-full max-w-md rounded-xl border bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
+              <div>
+                <h2
+                  id="category-view-title"
+                  className="font-display text-lg font-semibold text-judo-navy"
+                >
+                  Catégorie — {categoryViewName}
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Télécharger la liste des judokas de cette catégorie
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                disabled={categoryExportBusy}
+                onClick={() => setCategoryViewName(null)}
+                aria-label="Fermer"
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+            <div className="flex flex-col gap-3 px-5 py-5 sm:flex-row sm:justify-center">
+              <Button
+                type="button"
+                size="lg"
+                disabled={categoryExportBusy}
+                className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700 hover:text-white"
+                onClick={() => void exportCategoryJudokasPdf('registered')}
+              >
+                <FileDown className="h-4 w-4" />
+                {categoryExportBusy ? 'Export…' : 'Voir Enregistrés'}
+              </Button>
+              <Button
+                type="button"
+                size="lg"
+                disabled={categoryExportBusy}
+                className="flex-1 bg-judo-navy text-white hover:bg-judo-navy/90 hover:text-white"
+                onClick={() => void exportCategoryJudokasPdf('weighed')}
+              >
+                <FileDown className="h-4 w-4" />
+                {categoryExportBusy ? 'Export…' : 'Voir Pesés'}
               </Button>
             </div>
           </div>
