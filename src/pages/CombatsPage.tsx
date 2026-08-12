@@ -17,6 +17,8 @@ import {
   createEmptyCombatSession,
   createTatamiId,
   distributeCombatsAcrossTatamis,
+  isCombatSchedulableOnTatami,
+  listTatamisWithoutCombats,
   type CombatSession,
   type CombatStatus,
   type ManagedCombat,
@@ -124,12 +126,12 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
   const confirmed = Boolean(session?.confirmedAt)
   const stats = useMemo(() => {
     if (!session) return { total: 0, ready: 0, done: 0, unassigned: 0 }
-    const firstRound = session.combats.filter((c) => c.round === 0)
+    const schedulable = session.combats.filter(isCombatSchedulableOnTatami)
     return {
       total: session.combats.length,
       ready: session.combats.filter((c) => c.status === 'ready' || c.status === 'in_progress').length,
       done: session.combats.filter((c) => c.status === 'completed').length,
-      unassigned: firstRound.filter((c) => !c.tatamiId).length
+      unassigned: schedulable.filter((c) => !c.tatamiId).length
     }
   }, [session])
 
@@ -218,25 +220,40 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
       setError('Créez au moins un tatami avant la répartition automatique.')
       return
     }
-    void persist(distributeCombatsAcrossTatamis(session), 'Combats répartis sur les tatamis')
+    const next = distributeCombatsAcrossTatamis(session)
+    const empty = listTatamisWithoutCombats(next)
+    if (empty.length > 0) {
+      setError(
+        `${empty.length} tatami(s) sans combat après répartition (${empty.map((t) => t.name).join(', ')}). Supprimez des tatamis ou ajoutez des combats via Tirage.`
+      )
+      return
+    }
+    void persist(next, 'Combats des tours 1 et 2 classés sur les tatamis')
   }
 
   async function confirmSession(): Promise<void> {
     if (!session) return
     if (session.combats.length === 0) {
-      setError('Aucun combat à confirmer. Lancez d’abord un tirage (menu Tirage).')
+      setError('Aucun combat à confirmer. Envoyez d’abord les combats depuis Tirage.')
       return
     }
     if (session.tatamis.length === 0) {
       setError('Créez au moins un tatami avant de confirmer.')
       return
     }
-    const unassignedReady = session.combats.filter(
-      (c) => c.round === 0 && !c.tatamiId && (c.status === 'ready' || c.status === 'completed')
+    const unassigned = session.combats.filter(
+      (c) => isCombatSchedulableOnTatami(c) && !c.tatamiId
     )
-    if (unassignedReady.length > 0) {
+    if (unassigned.length > 0) {
       setError(
-        `${unassignedReady.length} combat(s) du 1er tour sans tatami. Répartissez-les avant confirmation.`
+        `${unassigned.length} combat(s) des tours 1–2 sans tatami. Répartissez-les avant confirmation.`
+      )
+      return
+    }
+    const empty = listTatamisWithoutCombats(session)
+    if (empty.length > 0) {
+      setError(
+        `Impossible de confirmer : tatami(s) sans combat — ${empty.map((t) => t.name).join(', ')}. Répartissez automatiquement ou assignez des combats.`
       )
       return
     }
@@ -409,7 +426,7 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
                   <div className="font-semibold tabular-nums">{stats.done}</div>
                 </div>
                 <div className="rounded-lg border bg-slate-50/80 px-3 py-2">
-                  <div className="text-xs text-muted-foreground">Sans tatami (T1)</div>
+                  <div className="text-xs text-muted-foreground">Sans tatami (T1–T2)</div>
                   <div className="font-semibold tabular-nums">{stats.unassigned}</div>
                 </div>
               </div>
@@ -561,11 +578,10 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
                         <div>
                           <span className="text-sm font-semibold">{c.label}</span>
                           <span className="text-xs text-muted-foreground ml-2">{c.poolLabel}</span>
-                          {c.round > 0 && (
-                            <span className="text-xs text-muted-foreground ml-2">
-                              Tour {c.round + 1}
-                            </span>
-                          )}
+                          <span className="text-xs text-muted-foreground ml-2">
+                            Tour {c.round + 1}
+                            {c.tatamiId != null ? ` · n°${c.orderOnTatami + 1}` : ''}
+                          </span>
                         </div>
                         <span
                           className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusClass(c.status)}`}

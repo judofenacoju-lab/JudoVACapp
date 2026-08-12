@@ -99,8 +99,9 @@ export function formatCombatSummary(c: ManagedCombat): string {
 }
 
 /**
- * Importe un tirage dans une session existante en conservant les tatamis déjà créés.
- * Les nouveaux combats arrivent non assignés (répartition ensuite sur Combats).
+ * Importe un tirage dans une session existante en conservant les tatamis déjà créés,
+ * puis répartit les combats des 1er et 2e tours pour qu’aucun tatami ne reste vide
+ * (si le nombre de combats le permet).
  */
 export function mergeTirageIntoCombatSession(
   existing: CombatSession | null,
@@ -108,13 +109,39 @@ export function mergeTirageIntoCombatSession(
 ): CombatSession {
   const draft = combatSessionFromTirage(result)
   if (!existing?.tatamis.length) return draft
-  return {
+  const merged: CombatSession = {
     ...draft,
     id: existing.id,
     tatamis: existing.tatamis.map((t) => ({ ...t })),
     confirmedAt: null,
     updatedAt: new Date().toISOString()
   }
+  return distributeCombatsAcrossTatamis(merged)
+}
+
+/** Tours placés sur les tatamis à l’import / répartition (1er + 2e). */
+export const TATAMI_SCHEDULE_ROUNDS = [0, 1] as const
+
+/** Combat du 1er ou 2e tour à placer sur un tatami. */
+export function isCombatSchedulableOnTatami(c: ManagedCombat): boolean {
+  if (c.round === 0) return c.status === 'ready' || c.status === 'completed'
+  if (c.round === 1) return true
+  return false
+}
+
+/** Combats des 1er et 2e tours pouvant être placés sur un tatami. */
+export function countSchedulableOnTatamis(session: CombatSession): number {
+  return session.combats.filter(isCombatSchedulableOnTatami).length
+}
+
+/** @deprecated Utiliser countSchedulableOnTatamis. */
+export function countFirstRoundAssignable(session: CombatSession): number {
+  return countSchedulableOnTatamis(session)
+}
+
+/** Tatamis sans aucun combat assigné. */
+export function listTatamisWithoutCombats(session: CombatSession): Tatami[] {
+  return session.tatamis.filter((t) => !session.combats.some((c) => c.tatamiId === t.id))
 }
 
 /**
@@ -235,28 +262,65 @@ export function applyCombatWinner(
   return { ...session, combats, updatedAt: now }
 }
 
-/** Répartit les combats « ready » du 1er tour (et byes) sur les tatamis en round-robin. */
+/**
+ * Répartit et classe les combats des 1er et 2e tours sur les tatamis disponibles.
+ * Ordre sur chaque tatami : 1er tour puis 2e tour (par poule / index).
+ * Si assez de combats, chaque tatami reçoit au moins un combat.
+ */
 export function distributeCombatsAcrossTatamis(session: CombatSession): CombatSession {
   const tatamis = session.tatamis
   if (tatamis.length === 0) return session
   const now = new Date().toISOString()
-  const assignable = session.combats
+
+  const sortSchedulable = (a: ManagedCombat, b: ManagedCombat): number =>
+    a.round - b.round ||
+    a.poolLabel.localeCompare(b.poolLabel, 'fr') ||
+    a.matchIndex - b.matchIndex
+
+  const round1 = session.combats
     .filter((c) => c.round === 0 && (c.status === 'ready' || c.status === 'completed'))
-    .sort((a, b) => a.poolLabel.localeCompare(b.poolLabel, 'fr') || a.matchIndex - b.matchIndex)
+    .sort(sortSchedulable)
+  const round2 = session.combats.filter((c) => c.round === 1).sort(sortSchedulable)
+  const assignable = [...round1, ...round2]
 
-  const counts = new Map<string, number>()
-  for (const t of tatamis) counts.set(t.id, 0)
+  const byTatami = new Map<string, ManagedCombat[]>()
+  for (const t of tatamis) byTatami.set(t.id, [])
 
-  const assignedIds = new Set<string>()
+  const pickLeastLoaded = (): string => {
+    let bestId = tatamis[0]!.id
+    let bestCount = byTatami.get(bestId)?.length ?? 0
+    for (const t of tatamis) {
+      const n = byTatami.get(t.id)?.length ?? 0
+      if (n < bestCount) {
+        bestId = t.id
+        bestCount = n
+      }
+    }
+    return bestId
+  }
+
+  // 1) Garantir un combat par tatami (priorité 1er tour)
+  let cursor = 0
+  for (const tatami of tatamis) {
+    if (cursor >= assignable.length) break
+    const c = assignable[cursor]!
+    byTatami.get(tatami.id)!.push(c)
+    cursor += 1
+  }
+  // 2) Répartir le reste (suite 1er tour puis 2e tour) sur le tatami le moins chargé
+  while (cursor < assignable.length) {
+    const c = assignable[cursor]!
+    byTatami.get(pickLeastLoaded())!.push(c)
+    cursor += 1
+  }
+
   const updates = new Map<string, { tatamiId: string; orderOnTatami: number }>()
-
-  assignable.forEach((c, i) => {
-    const tatami = tatamis[i % tatamis.length]!
-    const order = counts.get(tatami.id) ?? 0
-    counts.set(tatami.id, order + 1)
-    updates.set(c.id, { tatamiId: tatami.id, orderOnTatami: order })
-    assignedIds.add(c.id)
-  })
+  for (const tatami of tatamis) {
+    const list = (byTatami.get(tatami.id) ?? []).slice().sort(sortSchedulable)
+    list.forEach((c, order) => {
+      updates.set(c.id, { tatamiId: tatami.id, orderOnTatami: order })
+    })
+  }
 
   return {
     ...session,
@@ -264,7 +328,10 @@ export function distributeCombatsAcrossTatamis(session: CombatSession): CombatSe
     combats: session.combats.map((c) => {
       const u = updates.get(c.id)
       if (!u) {
-        if (c.round === 0) return { ...c, tatamiId: null, orderOnTatami: 0, updatedAt: now }
+        // Tours 1–2 non retenus / tours suivants : pas d’affectation ici
+        if (c.round === 0 || c.round === 1) {
+          return { ...c, tatamiId: null, orderOnTatami: 0, updatedAt: now }
+        }
         return c
       }
       return { ...c, ...u, updatedAt: now }
