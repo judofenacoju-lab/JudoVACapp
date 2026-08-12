@@ -28,7 +28,8 @@ interface Props {
 
 type Tab = 'event' | 'users' | 'clubs' | 'categories' | 'print' | 'colors' | 'network' | 'logs'
 
-type AgeThresholdMode = 'eq' | 'gte' | 'lte'
+type ThresholdMode = 'eq' | 'gte' | 'lte'
+type ThresholdDimension = 'age' | 'weight'
 
 function judokaAgeYears(j: Judoka): number {
   if (j.age != null && Number.isFinite(j.age)) return Math.max(0, Math.floor(j.age))
@@ -36,24 +37,38 @@ function judokaAgeYears(j: Judoka): number {
   return -1
 }
 
+function judokaWeightKg(j: Judoka): number {
+  if (!hasRecordedWeight(j.weightKg)) return -1
+  const n = Number(j.weightKg)
+  return Number.isFinite(n) && n > 0 ? n : -1
+}
+
+function formatKg(n: number): string {
+  return Number.isInteger(n) ? `${n} kg` : `${n.toFixed(1).replace('.', ',')} kg`
+}
+
 function AgeThresholdList({
   pool,
   threshold,
-  mode
+  mode,
+  dimension
 }: {
   pool: Judoka[]
   threshold: string
-  mode: AgeThresholdMode
+  mode: ThresholdMode
+  dimension: ThresholdDimension
 }) {
-  const n = Number(threshold)
+  const n = Number(String(threshold).replace(',', '.'))
   const hasThreshold = threshold.trim() !== '' && Number.isFinite(n)
   const items = hasThreshold
     ? pool.filter((j) => {
-        const age = judokaAgeYears(j)
-        if (age < 0) return false
-        if (mode === 'eq') return age === n
-        if (mode === 'gte') return age >= n
-        return age <= n
+        const value = dimension === 'age' ? judokaAgeYears(j) : judokaWeightKg(j)
+        if (value < 0) return false
+        if (mode === 'eq') {
+          return dimension === 'age' ? value === n : Math.abs(value - n) < 0.05
+        }
+        if (mode === 'gte') return value >= n
+        return value <= n
       })
     : pool
 
@@ -67,17 +82,27 @@ function AgeThresholdList({
     )
   }
 
+  const unit = dimension === 'age' ? 'ans' : 'kg'
+  const label = dimension === 'age' ? 'âge' : 'poids'
+  const cmp = mode === 'eq' ? '=' : mode === 'gte' ? '≥' : '≤'
+
   return (
     <>
       <p className="px-2 pb-2 text-xs text-muted-foreground">
         {items.length} judoka(s)
-        {hasThreshold
-          ? ` · âge ${mode === 'eq' ? '=' : mode === 'gte' ? '≥' : '≤'} ${n} ans`
-          : ''}
+        {hasThreshold ? ` · ${label} ${cmp} ${n} ${unit}` : ''}
       </p>
       <ul className="space-y-1">
-        {items.map((j) => {
+        {[...items]
+          .sort((a, b) => {
+            const va = dimension === 'age' ? judokaAgeYears(a) : judokaWeightKg(a)
+            const vb = dimension === 'age' ? judokaAgeYears(b) : judokaWeightKg(b)
+            if (va !== vb) return va - vb
+            return formatJudokaFullName(a).localeCompare(formatJudokaFullName(b), 'fr')
+          })
+          .map((j) => {
           const age = judokaAgeYears(j)
+          const w = judokaWeightKg(j)
           return (
             <li key={j.id} className="rounded-lg border bg-white px-3 py-2.5 text-sm">
               <p className="font-medium text-judo-navy">{formatJudokaFullName(j)}</p>
@@ -85,6 +110,7 @@ function AgeThresholdList({
                 {[
                   j.displayId,
                   age >= 0 ? `${age} ans` : null,
+                  w > 0 ? formatKg(w) : null,
                   j.sex === 'F' ? 'F' : 'M',
                   j.club?.trim() || null
                 ]
@@ -145,9 +171,12 @@ export function AdminPage({ onBack, embedded = false }: Props) {
   const [categoryChartError, setCategoryChartError] = useState<string | null>(null)
   const [categoryChartYoungest, setCategoryChartYoungest] = useState<string | null>(null)
   const [categoryChartOldest, setCategoryChartOldest] = useState<string | null>(null)
+  const [categoryChartLightest, setCategoryChartLightest] = useState<string | null>(null)
+  const [categoryChartHeaviest, setCategoryChartHeaviest] = useState<string | null>(null)
   const [ageThresholdRow, setAgeThresholdRow] = useState<CategoryAgeRange | null>(null)
   const [ageThreshold, setAgeThreshold] = useState('')
-  const [ageThresholdMode, setAgeThresholdMode] = useState<AgeThresholdMode>('gte')
+  const [ageThresholdMode, setAgeThresholdMode] = useState<ThresholdMode>('gte')
+  const [ageThresholdDimension, setAgeThresholdDimension] = useState<ThresholdDimension>('age')
   const [ageThresholdPool, setAgeThresholdPool] = useState<Judoka[]>([])
   const [ageThresholdLoading, setAgeThresholdLoading] = useState(false)
   const [ageThresholdError, setAgeThresholdError] = useState<string | null>(null)
@@ -343,6 +372,8 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     setCategoryChartData([])
     setCategoryChartYoungest(null)
     setCategoryChartOldest(null)
+    setCategoryChartLightest(null)
+    setCategoryChartHeaviest(null)
     setCategoryChartError(null)
     setCategoryChartLoading(true)
     try {
@@ -360,13 +391,17 @@ export function AdminPage({ onBack, embedded = false }: Props) {
         byAge.set(a, { boys: 0, girls: 0 })
       }
       const withAge: Array<{ name: string; age: number }> = []
+      const withWeight: Array<{ name: string; weight: number }> = []
       for (const j of res.data.items) {
         const cat =
           resolveJudokaCategory(j.birthDate, j.category, ranges) || j.category?.trim() || ''
         if (cat.toLowerCase() !== key) continue
+        const nameLabel = formatJudokaFullName(j)
         const age = judokaAgeYears(j)
+        const w = judokaWeightKg(j)
+        if (w > 0) withWeight.push({ name: nameLabel, weight: w })
         if (age < 0) continue
-        withAge.push({ name: formatJudokaFullName(j), age })
+        withAge.push({ name: nameLabel, age })
         const bucket = byAge.get(age) ?? { boys: 0, girls: 0 }
         if (j.sex === 'F') bucket.girls += 1
         else bucket.boys += 1
@@ -388,6 +423,18 @@ export function AdminPage({ onBack, embedded = false }: Props) {
         setCategoryChartYoungest(youngest ? `${youngest.name} (${minAge} ans)` : null)
         setCategoryChartOldest(oldest ? `${oldest.name} (${maxAge} ans)` : null)
       }
+      if (withWeight.length > 0) {
+        const minW = Math.min(...withWeight.map((x) => x.weight))
+        const maxW = Math.max(...withWeight.map((x) => x.weight))
+        const lightest = withWeight
+          .filter((x) => x.weight === minW)
+          .sort((a, b) => a.name.localeCompare(b.name, 'fr'))[0]
+        const heaviest = withWeight
+          .filter((x) => x.weight === maxW)
+          .sort((a, b) => a.name.localeCompare(b.name, 'fr'))[0]
+        setCategoryChartLightest(lightest ? `${lightest.name} (${formatKg(minW)})` : null)
+        setCategoryChartHeaviest(heaviest ? `${heaviest.name} (${formatKg(maxW)})` : null)
+      }
     } catch (e) {
       setCategoryChartError(e instanceof Error ? e.message : 'Chargement impossible')
     } finally {
@@ -400,6 +447,8 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     setCategoryChartData([])
     setCategoryChartYoungest(null)
     setCategoryChartOldest(null)
+    setCategoryChartLightest(null)
+    setCategoryChartHeaviest(null)
     setCategoryChartError(null)
     setCategoryChartLoading(false)
   }
@@ -408,6 +457,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     setAgeThresholdRow(row)
     setAgeThreshold(String(row.minAge ?? ''))
     setAgeThresholdMode('gte')
+    setAgeThresholdDimension('age')
     setAgeThresholdPool([])
     setAgeThresholdError(null)
     setAgeThresholdLoading(true)
@@ -443,6 +493,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     setAgeThresholdPool([])
     setAgeThresholdError(null)
     setAgeThresholdLoading(false)
+    setAgeThresholdDimension('age')
   }
 
   async function exportCategoryJudokasPdf(mode: 'registered' | 'weighed'): Promise<void> {
@@ -1130,7 +1181,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                             type="button"
                             variant="ghost"
                             size="icon"
-                            title="Seuil d’âge — liste des judokas"
+                            title="Seuil d’âge ou de poids — liste des judokas"
                             onClick={() => void openAgeThreshold(row)}
                           >
                             <ListChecks className="h-4 w-4 text-judo-navy" />
@@ -1675,6 +1726,18 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                         {categoryChartOldest ?? '—'}
                       </span>
                     </p>
+                    <p>
+                      <span className="text-muted-foreground">Pèse moins : </span>
+                      <span className="font-medium text-judo-navy">
+                        {categoryChartLightest ?? '—'}
+                      </span>
+                    </p>
+                    <p>
+                      <span className="text-muted-foreground">Pèse plus : </span>
+                      <span className="font-medium text-judo-navy">
+                        {categoryChartHeaviest ?? '—'}
+                      </span>
+                    </p>
                   </div>
                 )}
               </div>
@@ -1722,10 +1785,11 @@ export function AdminPage({ onBack, embedded = false }: Props) {
             <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
               <div>
                 <h2 className="font-display text-lg font-semibold text-judo-navy">
-                  Seuil d’âge — {ageThresholdRow.name}
+                  {ageThresholdDimension === 'age' ? 'Seuil d’âge' : 'Seuil de poids'} —{' '}
+                  {ageThresholdRow.name}
                 </h2>
                 <p className="mt-0.5 text-sm text-muted-foreground">
-                  Afficher les judokas de cette catégorie selon le seuil
+                  Checking par {ageThresholdDimension === 'age' ? 'âge' : 'poids'}
                 </p>
               </div>
               <Button
@@ -1739,14 +1803,41 @@ export function AdminPage({ onBack, embedded = false }: Props) {
               </Button>
             </div>
             <div className="space-y-3 border-b px-5 py-4">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={ageThresholdDimension === 'age' ? 'accent' : 'outline'}
+                  onClick={() => {
+                    setAgeThresholdDimension('age')
+                    setAgeThreshold(String(ageThresholdRow.minAge ?? ''))
+                  }}
+                >
+                  Par âge
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={ageThresholdDimension === 'weight' ? 'accent' : 'outline'}
+                  onClick={() => {
+                    setAgeThresholdDimension('weight')
+                    setAgeThreshold('')
+                  }}
+                >
+                  Par poids
+                </Button>
+              </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1">
-                  <Label htmlFor="age-threshold">Seuil (ans)</Label>
+                  <Label htmlFor="age-threshold">
+                    {ageThresholdDimension === 'age' ? 'Seuil (ans)' : 'Seuil (kg)'}
+                  </Label>
                   <Input
                     id="age-threshold"
                     type="number"
                     min={0}
-                    max={120}
+                    max={ageThresholdDimension === 'age' ? 120 : 300}
+                    step={ageThresholdDimension === 'age' ? 1 : 0.1}
                     value={ageThreshold}
                     onChange={(e) => setAgeThreshold(e.target.value)}
                   />
@@ -1757,11 +1848,21 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                     id="age-threshold-mode"
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                     value={ageThresholdMode}
-                    onChange={(e) => setAgeThresholdMode(e.target.value as AgeThresholdMode)}
+                    onChange={(e) => setAgeThresholdMode(e.target.value as ThresholdMode)}
                   >
-                    <option value="eq">Âge = seuil</option>
-                    <option value="gte">Âge ≥ seuil</option>
-                    <option value="lte">Âge ≤ seuil</option>
+                    {ageThresholdDimension === 'age' ? (
+                      <>
+                        <option value="eq">Âge = seuil</option>
+                        <option value="gte">Âge ≥ seuil</option>
+                        <option value="lte">Âge ≤ seuil</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="eq">Poids = seuil</option>
+                        <option value="gte">Poids ≥ seuil</option>
+                        <option value="lte">Poids ≤ seuil</option>
+                      </>
+                    )}
                   </select>
                 </div>
               </div>
@@ -1778,6 +1879,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                   pool={ageThresholdPool}
                   threshold={ageThreshold}
                   mode={ageThresholdMode}
+                  dimension={ageThresholdDimension}
                 />
               )}
             </div>
