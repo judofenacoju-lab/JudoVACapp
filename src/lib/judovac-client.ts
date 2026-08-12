@@ -24,7 +24,7 @@ import {
 } from './mappers'
 import { readDurableSession, saveDurableSession, isAccessTokenExpired } from './durable-session'
 import { downloadBlob, downloadBytes } from './download-blob'
-import { detectLanIpv4Addresses } from './detect-lan-ip'
+import { detectLanIpv4Addresses, fetchLanFromLocalServer } from './detect-lan-ip'
 
 export type IpcResult<T> =
   | { ok: true; data: T }
@@ -2104,6 +2104,8 @@ export const judovacClient = {
       port: number
     }>
   > => {
+    const local = await fetchLanFromLocalServer()
+    if (local) return ok(local)
     const ips = await detectLanIpv4Addresses()
     return ok({
       addresses: ips.map((address) => ({ address, iface: 'lan' })),
@@ -2135,5 +2137,31 @@ export const judovacClient = {
 export type JudovacApi = typeof judovacClient
 
 export function installJudovacClient(): void {
-  window.judovac = judovacClient
+  const electron = window.judovac
+  const fromPreload = Boolean(
+    electron &&
+      electron !== judovacClient &&
+      typeof electron.getLocalNetworkInfo === 'function'
+  )
+  if (!fromPreload) {
+    window.judovac = judovacClient
+    return
+  }
+  window.judovac = {
+    ...judovacClient,
+    getLocalNetworkInfo: async () => {
+      const res = await electron.getLocalNetworkInfo()
+      if (res.ok && (res.data.preferredAddress || res.data.addresses.length > 0)) {
+        return res
+      }
+      return judovacClient.getLocalNetworkInfo()
+    },
+    getServerStatus: async () => {
+      const res = await electron.getServerStatus()
+      if (res.ok && (res.data.preferredAddress || res.data.localAddresses.length > 0)) {
+        return res
+      }
+      return judovacClient.getServerStatus()
+    }
+  }
 }

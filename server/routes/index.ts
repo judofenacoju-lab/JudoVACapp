@@ -1,6 +1,10 @@
 import { Router } from 'express'
-import { APP_NAME, APP_VERSION } from '@shared/constants/app'
+import { APP_NAME, APP_VERSION, DEFAULT_SERVER_PORT } from '@shared/constants/app'
 import { DuplicateError, NotFoundError, ValidationError } from '@core/domain/errors'
+import {
+  getPreferredLanAddress,
+  listLocalIpv4Addresses
+} from '../../electron/main/network/local-ips'
 import { formatBadgeCategory, formatBadgeJudokaName } from '@shared/utils/judoka'
 import type { BadgeVerifyResponse } from '@shared/types/badge-verify'
 import { getContainer } from '../container'
@@ -18,6 +22,18 @@ export function createApiRouter(): Router {
       dbReady: c.dbReady,
       dbError: c.dbError,
       at: new Date().toISOString()
+    })
+  })
+
+  /** IPv4 de cet ordinateur — pour JVac-Chrono (même Wi‑Fi / LAN). */
+  router.get('/network/lan', (_req, res) => {
+    const addresses = listLocalIpv4Addresses()
+    const port = Number(process.env.JUDVAC_SERVER_PORT ?? DEFAULT_SERVER_PORT)
+    res.json({
+      ok: true,
+      port,
+      addresses,
+      preferredAddress: getPreferredLanAddress(addresses)
     })
   })
 

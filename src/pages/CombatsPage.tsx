@@ -549,8 +549,8 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
               )}
               {confirmed && session.tatamis.length > 0 && (
                 <Button
-                  variant="accent"
                   size="lg"
+                  className="bg-emerald-600 text-white hover:bg-emerald-700 hover:text-white"
                   onClick={() => setTatamiModalOpen(true)}
                 >
                   <Timer className="h-4 w-4" />

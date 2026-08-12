@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Copy, Timer, X } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Copy, RefreshCw, Timer, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { tatamiDisplayLabel, type Tatami } from '@shared/types/combats'
 import { chronoListenPort, detectLanIpv4Addresses } from '@/lib/detect-lan-ip'
@@ -20,28 +20,35 @@ export function TatamiAccessModals({ tatamis, onClose }: Props) {
   const [copied, setCopied] = useState<string | null>(null)
   const [detecting, setDetecting] = useState(true)
 
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      setDetecting(true)
-      try {
-        const status = await window.judovac.getServerStatus()
-        const fromStatus = status.ok ? status.data : undefined
-        const port = fromStatus ? chronoListenPort(fromStatus.port) : 3847
-        const ips = await detectLanIpv4Addresses(fromStatus)
-        if (cancelled) return
-        setServerPort(port)
-        setLanIps(ips)
-      } catch {
-        if (!cancelled) setLanIps([])
-      } finally {
-        if (!cancelled) setDetecting(false)
-      }
-    })()
-    return () => {
-      cancelled = true
+  const detectIp = useCallback(async (): Promise<void> => {
+    setDetecting(true)
+    try {
+      const net = await window.judovac.getLocalNetworkInfo()
+      const status = await window.judovac.getServerStatus()
+      const fromNet = net.ok ? net.data : undefined
+      const fromStatus = status.ok ? status.data : undefined
+      const port = chronoListenPort(fromNet?.port ?? fromStatus?.port)
+      const ips = await detectLanIpv4Addresses({
+        localAddresses: fromNet?.addresses ?? fromStatus?.localAddresses,
+        preferredAddress: fromNet?.preferredAddress ?? fromStatus?.preferredAddress
+      })
+      const preferred = fromNet?.preferredAddress ?? fromStatus?.preferredAddress
+      const ordered =
+        preferred && ips.includes(preferred)
+          ? [preferred, ...ips.filter((ip) => ip !== preferred)]
+          : ips
+      setServerPort(port)
+      setLanIps(ordered)
+    } catch {
+      setLanIps([])
+    } finally {
+      setDetecting(false)
     }
   }, [])
+
+  useEffect(() => {
+    void detectIp()
+  }, [detectIp])
 
   const serverIp = lanIps[0] ?? null
 
@@ -95,17 +102,29 @@ export function TatamiAccessModals({ tatamis, onClose }: Props) {
                       ? `${serverIp}:${serverPort}`
                       : 'Non détectée'}
                 </p>
-                {serverIp && (
+                <div className="flex shrink-0 items-center gap-1">
                   <Button
                     type="button"
                     size="sm"
                     variant="outline"
-                    onClick={() => void copy(`${serverIp}:${serverPort}`, 'ip')}
+                    onClick={() => void detectIp()}
+                    disabled={detecting}
+                    title="Actualiser l’IP locale"
                   >
-                    <Copy className="h-3.5 w-3.5" />
-                    {copied === 'ip' ? 'Copié' : 'Copier'}
+                    <RefreshCw className={`h-3.5 w-3.5 ${detecting ? 'animate-spin' : ''}`} />
                   </Button>
-                )}
+                  {serverIp && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void copy(`${serverIp}:${serverPort}`, 'ip')}
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      {copied === 'ip' ? 'Copié' : 'Copier'}
+                    </Button>
+                  )}
+                </div>
               </div>
               {lanIps.length > 1 && (
                 <ul className="mt-2 space-y-1 text-xs font-mono text-muted-foreground">
@@ -118,8 +137,8 @@ export function TatamiAccessModals({ tatamis, onClose }: Props) {
               )}
               {!detecting && !serverIp && (
                 <p className="mt-2 text-xs text-amber-800">
-                  IP locale introuvable. Sur cet ordinateur, notez l’IPv4 du Wi‑Fi / Ethernet
-                  (souvent 192.168.x.x) et le port {serverPort}.
+                  IP locale introuvable. Vérifiez que cet ordinateur est en Wi‑Fi / Ethernet, puis
+                  actualisez. Port JVac-Chrono : {serverPort}.
                 </p>
               )}
             </div>

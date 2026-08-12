@@ -15,6 +15,8 @@ let mainWindow: BrowserWindow | null = null
 const modeStore = new ModeStore()
 let isShuttingDown = false
 
+app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns')
+
 app.whenReady().then(async () => {
   loadAppEnv()
   ensureDataDirs()
