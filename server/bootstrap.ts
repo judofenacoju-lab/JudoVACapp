@@ -6,6 +6,7 @@ import { DEFAULT_SERVER_PORT, APP_NAME, APP_VERSION } from '@shared/constants/ap
 import { SocketEvents } from '@shared/constants/socket-events'
 import type { ConnectedClient } from '@shared/types/dashboard'
 import { createApiRouter } from './routes'
+import { createChronoRouter } from './routes/chrono'
 import { getContainer, resetContainer } from './container'
 import { clientRegistry } from './client-registry'
 import { upsertSyncedJudoka } from './judoka-sync'
@@ -45,6 +46,7 @@ export async function bootstrapServer(opts: BootstrapOptions = {}): Promise<void
   app.use(cors())
   app.use(express.json({ limit: '15mb' }))
   app.use('/api', createApiRouter())
+  app.use('/api/chrono', createChronoRouter())
 
   app.get('/health', (_req, res) => {
     res.json({

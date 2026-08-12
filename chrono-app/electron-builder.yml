@@ -1,0 +1,37 @@
+appId: com.judovacapp.chrono
+productName: JVac-Chrono
+copyright: Copyright © JudoVACapp
+directories:
+  output: release-chrono
+  buildResources: build
+files:
+  - out-chrono/**/*
+  - package.json
+extraMetadata:
+  name: jvac-chrono
+  main: out-chrono/main/index.js
+extraResources:
+  - from: build/icon.ico
+    to: icon.ico
+  - from: build/icon.png
+    to: brand-logo.png
+win:
+  icon: build/icon.ico
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-Setup.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: JVac-Chrono
+  uninstallDisplayName: JVac-Chrono
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  runAfterFinish: true
+  menuCategory: true

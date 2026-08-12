@@ -18,6 +18,18 @@ npm run dist
 
 Résultat : `release/JudoVACapp-*-Setup.exe`
 
+## JVac-Chrono (module séparé)
+
+Installateur LAN pour le chronométrage d’un tatami (IP du Serveur + mot de passe).
+
+```bash
+npm run dist:chrono
+```
+
+Résultat : `release-chrono/JVac-Chrono-*-Setup.exe`
+
+Développement : `npm run dev:chrono`
+
 Test sans installer :
 
 ```bash

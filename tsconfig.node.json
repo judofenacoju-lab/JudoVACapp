@@ -23,6 +23,8 @@
   "include": [
     "electron.vite.config.ts",
     "electron/**/*",
+    "chrono-app/electron/**/*",
+    "chrono-app/electron.vite.config.ts",
     "server/**/*",
     "core/**/*",
     "shared/**/*",

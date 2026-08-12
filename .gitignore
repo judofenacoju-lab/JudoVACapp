@@ -4,7 +4,9 @@ node_modules/
 # Builds
 dist/
 out/
+out-chrono/
 release/
+release-chrono/
 build/
 *.exe
 *.blockmap
@@ -32,3 +34,5 @@ Thumbs.db
 *.log
 .vercel/
 .vscode/
+.vercel
+.env*

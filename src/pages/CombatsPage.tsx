@@ -6,6 +6,7 @@ import {
   Plus,
   RefreshCw,
   Swords,
+  Timer,
   Trash2
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -17,6 +18,8 @@ import {
   createEmptyCombatSession,
   createTatamiId,
   distributeCombatsAcrossTatamis,
+  ensureTatamiPasswords,
+  hasAtLeastOneJudoka,
   isCombatSchedulableOnTatami,
   listTatamisWithoutCombats,
   type CombatSession,
@@ -24,6 +27,7 @@ import {
   type ManagedCombat,
   type Tatami
 } from '@shared/types/combats'
+import { TatamiAccessModals } from '@/components/TatamiAccessModals'
 
 interface Props {
   onBack: () => void
@@ -78,6 +82,7 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
   const [message, setMessage] = useState<string | null>(null)
   const [selectedTatamiId, setSelectedTatamiId] = useState<string | 'unassigned' | 'all'>('all')
   const [newTatamiName, setNewTatamiName] = useState('')
+  const [tatamiModalOpen, setTatamiModalOpen] = useState(false)
 
   async function load(): Promise<void> {
     setLoading(true)
@@ -126,18 +131,19 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
   const confirmed = Boolean(session?.confirmedAt)
   const stats = useMemo(() => {
     if (!session) return { total: 0, ready: 0, done: 0, unassigned: 0 }
-    const schedulable = session.combats.filter(isCombatSchedulableOnTatami)
+    const visible = session.combats.filter(hasAtLeastOneJudoka)
+    const schedulable = visible.filter(isCombatSchedulableOnTatami)
     return {
-      total: session.combats.length,
-      ready: session.combats.filter((c) => c.status === 'ready' || c.status === 'in_progress').length,
-      done: session.combats.filter((c) => c.status === 'completed').length,
+      total: visible.length,
+      ready: visible.filter((c) => c.status === 'ready' || c.status === 'in_progress').length,
+      done: visible.filter((c) => c.status === 'completed').length,
       unassigned: schedulable.filter((c) => !c.tatamiId).length
     }
   }, [session])
 
   const visibleCombats = useMemo(() => {
     if (!session) return []
-    let list = [...session.combats]
+    let list = session.combats.filter(hasAtLeastOneJudoka)
     if (selectedTatamiId === 'unassigned') {
       list = list.filter((c) => !c.tatamiId)
     } else if (selectedTatamiId !== 'all') {
@@ -233,7 +239,7 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
 
   async function confirmSession(): Promise<void> {
     if (!session) return
-    if (session.combats.length === 0) {
+    if (!session.combats.some(hasAtLeastOneJudoka)) {
       setError('Aucun combat à confirmer. Envoyez d’abord les combats depuis Tirage.')
       return
     }
@@ -259,8 +265,8 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
     }
     const now = new Date().toISOString()
     await persist(
-      { ...session, confirmedAt: now, updatedAt: now },
-      'Combats confirmés et sauvegardés — suivi d’évolution activé.'
+      ensureTatamiPasswords({ ...session, confirmedAt: now, updatedAt: now }),
+      'Combats confirmés et sauvegardés — le bouton Tatamis donne l’accès JVac-Chrono.'
     )
   }
 
@@ -494,7 +500,9 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
               ) : (
                 <ul className="space-y-2">
                   {session.tatamis.map((t) => {
-                    const count = session.combats.filter((c) => c.tatamiId === t.id).length
+                    const count = session.combats.filter(
+                      (c) => c.tatamiId === t.id && hasAtLeastOneJudoka(c)
+                    ).length
                     return (
                       <li
                         key={t.id}
@@ -528,7 +536,7 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
                 </ul>
               )}
 
-              {!confirmed && session.combats.length > 0 && (
+              {!confirmed && session.combats.some(hasAtLeastOneJudoka) && (
                 <Button
                   variant="accent"
                   size="lg"
@@ -539,6 +547,16 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
                   Confirmer et sauvegarder les combats
                 </Button>
               )}
+              {confirmed && session.tatamis.length > 0 && (
+                <Button
+                  variant="accent"
+                  size="lg"
+                  onClick={() => setTatamiModalOpen(true)}
+                >
+                  <Timer className="h-4 w-4" />
+                  Tatamis
+                </Button>
+              )}
               {!confirmed && session.combats.length === 0 && session.tatamis.length > 0 && (
                 <p className="text-sm text-muted-foreground">
                   Tatamis prêts. Allez dans <strong>Tirage</strong>, générez les combats, puis
@@ -547,7 +565,7 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
               )}
             </div>
 
-            {session.combats.length > 0 && (
+            {session.combats.some(hasAtLeastOneJudoka) && (
             <div className="rounded-xl border bg-white/75 p-5 space-y-4 max-w-4xl">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <Label className="text-base">Liste des combats</Label>
@@ -679,6 +697,12 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
           </>
         )}
       </div>
+      {tatamiModalOpen && session && (
+        <TatamiAccessModals
+          tatamis={session.tatamis}
+          onClose={() => setTatamiModalOpen(false)}
+        />
+      )}
     </AppShell>
   )
 }

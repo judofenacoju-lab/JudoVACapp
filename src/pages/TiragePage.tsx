@@ -15,7 +15,7 @@ import {
   type TirageResult,
   type TirageWeightClass
 } from '@shared/utils/tirage'
-import { mergeTirageIntoCombatSession, listTatamisWithoutCombats } from '@shared/types/combats'
+import { mergeTirageIntoCombatSession, listTatamisWithoutCombats, isCombatSchedulableOnTatami } from '@shared/types/combats'
 import { getActiveCategoryNames } from '@shared/utils/judoka'
 
 interface Props {
@@ -215,10 +215,7 @@ export function TiragePage({ onBack, embedded = false }: Props) {
       const next = mergeTirageIntoCombatSession(existing, result)
       const empty = listTatamisWithoutCombats(next)
       if (empty.length > 0) {
-        const assignable = next.combats.filter(
-          (c) =>
-            (c.round === 0 && (c.status === 'ready' || c.status === 'completed')) || c.round === 1
-        ).length
+        const assignable = next.combats.filter(isCombatSchedulableOnTatami).length
         setError(
           `Impossible d’envoyer : ${empty.length} tatami(s) resteraient sans combat (${assignable} combat(s) des tours 1–2 pour ${n} tatami(s) : ${empty.map((t) => t.name).join(', ')}). Supprimez des tatamis sur Combats, puis renvoyez.`
         )

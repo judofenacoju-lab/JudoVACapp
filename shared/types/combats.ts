@@ -20,6 +20,8 @@ export interface Tatami {
   id: string
   name: string
   createdAt: string
+  /** Mot de passe JVac-Chrono (généré à la confirmation). */
+  password?: string
 }
 
 export interface ManagedCombat {
@@ -74,6 +76,38 @@ export function createTatamiId(): string {
   return `tat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+const TATAMI_PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+
+/** Mot de passe court, lisible, pour JVac-Chrono. */
+export function createTatamiPassword(): string {
+  let s = ''
+  for (let i = 0; i < 6; i++) {
+    s += TATAMI_PASSWORD_ALPHABET[Math.floor(Math.random() * TATAMI_PASSWORD_ALPHABET.length)]
+  }
+  return s
+}
+
+export function ensureTatamiPasswords(session: CombatSession): CombatSession {
+  return {
+    ...session,
+    tatamis: session.tatamis.map((t, i) => ({
+      ...t,
+      name: t.name.trim() || `Tatami ${i + 1}`,
+      password: t.password?.trim() || createTatamiPassword()
+    })),
+    updatedAt: new Date().toISOString()
+  }
+}
+
+export function tatamiDisplayLabel(_tatami: Tatami, index: number): string {
+  return `Tatami-${index + 1}`
+}
+
+/** Au moins un judoka présent (les cases vides restent en base, non affichées). */
+export function hasAtLeastOneJudoka(c: ManagedCombat): boolean {
+  return Boolean(c.top || c.bottom)
+}
+
 function fighterRef(f: TirageFighter | null | undefined): CombatFighterRef | null {
   if (!f) return null
   return {
@@ -122,8 +156,9 @@ export function mergeTirageIntoCombatSession(
 /** Tours placés sur les tatamis à l’import / répartition (1er + 2e). */
 export const TATAMI_SCHEDULE_ROUNDS = [0, 1] as const
 
-/** Combat du 1er ou 2e tour à placer sur un tatami. */
+/** Combat du 1er ou 2e tour à placer sur un tatami (uniquement s’il y a un judoka). */
 export function isCombatSchedulableOnTatami(c: ManagedCombat): boolean {
+  if (!hasAtLeastOneJudoka(c)) return false
   if (c.round === 0) return c.status === 'ready' || c.status === 'completed'
   if (c.round === 1) return true
   return false
@@ -139,9 +174,11 @@ export function countFirstRoundAssignable(session: CombatSession): number {
   return countSchedulableOnTatamis(session)
 }
 
-/** Tatamis sans aucun combat assigné. */
+/** Tatamis sans aucun combat (avec judoka) assigné. */
 export function listTatamisWithoutCombats(session: CombatSession): Tatami[] {
-  return session.tatamis.filter((t) => !session.combats.some((c) => c.tatamiId === t.id))
+  return session.tatamis.filter(
+    (t) => !session.combats.some((c) => c.tatamiId === t.id && hasAtLeastOneJudoka(c))
+  )
 }
 
 /**
@@ -253,6 +290,13 @@ export function applyCombatWinner(
       } else if (hasOne && next.status === 'pending') {
         next.status = 'pending'
       }
+      if (hasAtLeastOneJudoka(next) && !next.tatamiId && combat.tatamiId) {
+        const maxOrder = combats
+          .filter((x) => x.tatamiId === combat.tatamiId)
+          .reduce((m, x) => Math.max(m, x.orderOnTatami), -1)
+        next.tatamiId = combat.tatamiId
+        next.orderOnTatami = maxOrder + 1
+      }
       next.updatedAt = now
       combats[nextIdx] = next
     }
@@ -278,9 +322,16 @@ export function distributeCombatsAcrossTatamis(session: CombatSession): CombatSe
     a.matchIndex - b.matchIndex
 
   const round1 = session.combats
-    .filter((c) => c.round === 0 && (c.status === 'ready' || c.status === 'completed'))
+    .filter(
+      (c) =>
+        c.round === 0 &&
+        hasAtLeastOneJudoka(c) &&
+        (c.status === 'ready' || c.status === 'completed')
+    )
     .sort(sortSchedulable)
-  const round2 = session.combats.filter((c) => c.round === 1).sort(sortSchedulable)
+  const round2 = session.combats
+    .filter((c) => c.round === 1 && hasAtLeastOneJudoka(c))
+    .sort(sortSchedulable)
   const assignable = [...round1, ...round2]
 
   const byTatami = new Map<string, ManagedCombat[]>()

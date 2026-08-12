@@ -9,6 +9,9 @@
   "type": "module",
   "scripts": {
     "dev": "electron-vite dev",
+    "dev:chrono": "electron-vite dev --config chrono-app/electron.vite.config.ts",
+    "build:chrono": "electron-vite build --config chrono-app/electron.vite.config.ts",
+    "dist:chrono": "npm run icon:build && npm run build:chrono && electron-builder --config chrono-app/electron-builder.yml --win --x64",
     "dev:web": "vite",
     "dev:vercel": "vercel dev",
     "dev:win": "dev.bat",
@@ -18,7 +21,7 @@
     "preview:web": "vite preview",
     "dist": "npm run icon:build && npm run build && electron-builder --win --x64",
     "dist:dir": "npm run icon:build && npm run build && electron-builder --win --x64 --dir",
-    "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
+    "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.chrono.json",
     "test:sync": "tsx --tsconfig tsconfig.node.json scripts/test-sync.ts",
     "lint": "tsc --noEmit -p tsconfig.web.json",
     "admin:create": "tsx --tsconfig tsconfig.node.json scripts/create-admin.ts",
