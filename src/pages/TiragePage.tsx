@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Dices, FileDown, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { ArrowLeft, Dices, FileDown, Plus, RefreshCw, Send, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -15,7 +15,7 @@ import {
   type TirageResult,
   type TirageWeightClass
 } from '@shared/utils/tirage'
-import { combatSessionFromTirage } from '@shared/types/combats'
+import { mergeTirageIntoCombatSession } from '@shared/types/combats'
 import { getActiveCategoryNames } from '@shared/utils/judoka'
 
 interface Props {
@@ -50,6 +50,20 @@ export function TiragePage({ onBack, embedded = false }: Props) {
   const [result, setResult] = useState<TirageResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [exportMessage, setExportMessage] = useState<string | null>(null)
+  const [sendBusy, setSendBusy] = useState(false)
+  /** Tatamis déjà créés sur la page Combats (requis pour activer l’envoi). */
+  const [tatamiCount, setTatamiCount] = useState(0)
+
+  async function refreshTatamiCount(): Promise<number> {
+    const settingsRes = await window.judovac.getSettings()
+    if (!settingsRes.ok) {
+      setTatamiCount(0)
+      return 0
+    }
+    const n = settingsRes.data.combatSession?.tatamis?.length ?? 0
+    setTatamiCount(n)
+    return n
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -64,8 +78,10 @@ export function TiragePage({ onBack, embedded = false }: Props) {
         )
         const saved = normalizeWeightClasses(settingsRes.data.weightClasses ?? [])
         if (saved.length > 0) setWeightClasses(saved)
+        setTatamiCount(settingsRes.data.combatSession?.tatamis?.length ?? 0)
       } else {
         setCategories(getActiveCategoryNames())
+        setTatamiCount(0)
       }
     })()
     return () => {
@@ -158,30 +174,58 @@ export function TiragePage({ onBack, embedded = false }: Props) {
         return
       }
 
-      const settingsRes = await window.judovac.getSettings()
-      if (
-        settingsRes.ok &&
-        settingsRes.data.combatSession?.confirmedAt &&
-        !window.confirm(
-          'Une session Combats confirmée existe déjà. Le nouveau tirage la remplacera (brouillon). Continuer ?'
-        )
-      ) {
-        setResult(generated)
-        return
-      }
-
       setResult(generated)
-      // Alimente le menu Combats (brouillon) pour tatamis + confirmation.
-      const combatDraft = combatSessionFromTirage(generated)
-      await window.judovac.setSettings({ combatSession: combatDraft })
-      setExportMessage(
-        `${generated.fightCount} combat(s) envoyés vers le menu Combats (à confirmer après répartition tatamis).`
-      )
+      await refreshTatamiCount()
     } catch (e) {
       setResult(null)
       setError(e instanceof Error ? e.message : 'Tirage impossible')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function sendToCombats(): Promise<void> {
+    if (!result || result.matchedCount === 0) return
+    setSendBusy(true)
+    setError(null)
+    setExportMessage(null)
+    try {
+      const settingsRes = await window.judovac.getSettings()
+      if (!settingsRes.ok) {
+        setError(settingsRes.error)
+        return
+      }
+      const existing = settingsRes.data.combatSession ?? null
+      const n = existing?.tatamis?.length ?? 0
+      setTatamiCount(n)
+      if (n === 0) {
+        setError(
+          'Créez d’abord au moins un tatami dans le menu Combats, puis renvoyez les combats.'
+        )
+        return
+      }
+      if (
+        existing?.confirmedAt &&
+        !window.confirm(
+          'Une session Combats confirmée existe déjà. L’envoi remplacera les combats (les tatamis sont conservés). Continuer ?'
+        )
+      ) {
+        return
+      }
+      const next = mergeTirageIntoCombatSession(existing, result)
+      const saved = await window.judovac.setSettings({ combatSession: next })
+      if (!saved.ok) {
+        setError(saved.error)
+        return
+      }
+      setTatamiCount(saved.data.combatSession?.tatamis?.length ?? n)
+      setExportMessage(
+        `${result.fightCount} combat(s) envoyés vers Combats (${n} tatami(s) conservé(s)). Répartissez puis confirmez.`
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Envoi vers Combats impossible')
+    } finally {
+      setSendBusy(false)
     }
   }
 
@@ -364,11 +408,27 @@ export function TiragePage({ onBack, embedded = false }: Props) {
               {result ? <RefreshCw className="h-4 w-4" /> : <Dices className="h-4 w-4" />}
               {loading ? 'Tirage…' : result ? 'Relancer le tirage' : 'Lancer le tirage'}
             </Button>
+            {result && result.matchedCount > 0 && (
+              <Button
+                variant="accent"
+                size="lg"
+                disabled={loading || sendBusy || tatamiCount === 0}
+                title={
+                  tatamiCount === 0
+                    ? 'Créez d’abord des tatamis dans le menu Combats'
+                    : 'Envoyer les combats vers la page Combats'
+                }
+                onClick={() => void sendToCombats()}
+              >
+                <Send className="h-4 w-4" />
+                {sendBusy ? 'Envoi…' : 'Envoyer Combats'}
+              </Button>
+            )}
             {result && (
               <Button
                 variant="outline"
                 size="lg"
-                disabled={loading || exportBusy}
+                disabled={loading || exportBusy || sendBusy}
                 onClick={() => {
                   setResult(null)
                   setError(null)
@@ -383,15 +443,27 @@ export function TiragePage({ onBack, embedded = false }: Props) {
           {error && <p className="text-sm text-destructive">{error}</p>}
           {exportMessage && <p className="text-sm text-emerald-700 break-all">{exportMessage}</p>}
           {result && result.matchedCount > 0 && (
-            <p className="text-sm text-emerald-700">
-              {result.matchedCount} pesé(s) classé(s) · {result.fightCount} combat(s)
-              {result.byeCount > 0
-                ? ` · ${result.byeCount} bye(s) (passage au 2ᵉ tour)`
-                : ''}
-              {result.unmatchedCount > 0
-                ? ` · ${result.unmatchedCount} hors catégories de poids`
-                : ''}
-            </p>
+            <>
+              <p className="text-sm text-emerald-700">
+                {result.matchedCount} pesé(s) classé(s) · {result.fightCount} combat(s)
+                {result.byeCount > 0
+                  ? ` · ${result.byeCount} bye(s) (passage au 2ᵉ tour)`
+                  : ''}
+                {result.unmatchedCount > 0
+                  ? ` · ${result.unmatchedCount} hors catégories de poids`
+                  : ''}
+              </p>
+              {tatamiCount === 0 ? (
+                <p className="text-sm text-amber-800">
+                  « Envoyer Combats » est inactif : créez d’abord au moins un tatami dans le menu{' '}
+                  <strong>Combats</strong>, puis revenez ici.
+                </p>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {tatamiCount} tatami(s) prêt(s) sur Combats — vous pouvez envoyer les combats.
+                </p>
+              )}
+            </>
           )}
         </div>
 

@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label'
 import { AppShell } from '@/layouts/AppShell'
 import {
   applyCombatWinner,
+  createEmptyCombatSession,
   createTatamiId,
   distributeCombatsAcrossTatamis,
   type CombatSession,
@@ -150,10 +151,10 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
   }, [session, selectedTatamiId])
 
   function addTatami(): void {
-    if (!session) return
+    const base = session ?? createEmptyCombatSession()
     const name =
       newTatamiName.trim() ||
-      `Tatami ${session.tatamis.length + 1}`
+      `Tatami ${base.tatamis.length + 1}`
     const tatami: Tatami = {
       id: createTatamiId(),
       name,
@@ -162,11 +163,11 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
     setNewTatamiName('')
     void persist(
       {
-        ...session,
-        tatamis: [...session.tatamis, tatami],
+        ...base,
+        tatamis: [...base.tatamis, tatami],
         updatedAt: new Date().toISOString()
       },
-      `${tatami.name} créé`
+      `${tatami.name} créé — vous pouvez maintenant envoyer les combats depuis Tirage.`
     )
   }
 
@@ -286,19 +287,57 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
       <div className="space-y-6 animate-fade-in">
         {loading && <p className="text-sm text-muted-foreground">Chargement…</p>}
 
-        {!loading && !session && (
-          <div className="rounded-xl border border-dashed bg-white/60 p-8 text-center max-w-2xl">
-            <Swords className="mx-auto h-10 w-10 text-muted-foreground mb-3" />
-            <p className="text-sm text-muted-foreground">
-              Aucun combat importé. Lancez un tirage dans le menu <strong>Tirage</strong> : les
-              combats générés apparaîtront ici pour créer les tatamis et confirmer la session.
-            </p>
-            <Button className="mt-4" variant="outline" onClick={() => void load()}>
-              <RefreshCw className="h-4 w-4" />
-              Actualiser
-            </Button>
-          </div>
-        )}
+        {!loading && (
+          <>
+            {!session && (
+              <div className="rounded-xl border bg-white/75 p-5 space-y-4 max-w-4xl">
+                <div className="flex items-start gap-3">
+                  <Swords className="h-8 w-8 text-muted-foreground shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">Préparez les tatamis</p>
+                    <p className="text-sm text-muted-foreground">
+                      Créez d’abord les tatamis ici. Ensuite, lancez le tirage et utilisez{' '}
+                      <strong>Envoyer Combats</strong> sur la page Tirage pour importer les
+                      combats.
+                    </p>
+                  </div>
+                </div>
+                {error && (
+                  <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                    {error}
+                  </p>
+                )}
+                {message && (
+                  <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                    {message}
+                  </p>
+                )}
+                <div className="flex flex-wrap gap-2 items-end">
+                  <div className="space-y-1 flex-1 min-w-[10rem]">
+                    <Label htmlFor="tatami-name-empty" className="text-xs text-muted-foreground">
+                      Nom du tatami
+                    </Label>
+                    <Input
+                      id="tatami-name-empty"
+                      value={newTatamiName}
+                      placeholder="Tatami 1"
+                      disabled={busy}
+                      onChange={(e) => setNewTatamiName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          addTatami()
+                        }
+                      }}
+                    />
+                  </div>
+                  <Button type="button" disabled={busy} onClick={addTatami}>
+                    <Plus className="h-4 w-4" />
+                    Créer
+                  </Button>
+                </div>
+              </div>
+            )}
 
         {session && (
           <>
@@ -306,7 +345,9 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-sm font-medium">
-                    {confirmed ? (
+                    {session.combats.length === 0 ? (
+                      <span className="text-sky-800">Tatamis prêts — en attente des combats</span>
+                    ) : confirmed ? (
                       <span className="inline-flex items-center gap-1.5 text-emerald-800">
                         <CheckCircle2 className="h-4 w-4" />
                         Session confirmée
@@ -316,19 +357,28 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
                     )}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Tirage du{' '}
-                    {new Date(session.sourceTirageAt).toLocaleString('fr-FR', {
-                      dateStyle: 'short',
-                      timeStyle: 'short'
-                    })}
-                    {session.confirmedAt && (
+                    {session.combats.length === 0 ? (
                       <>
-                        {' '}
-                        · confirmé le{' '}
-                        {new Date(session.confirmedAt).toLocaleString('fr-FR', {
+                        Créez les tatamis, puis envoyez les combats depuis le menu{' '}
+                        <strong>Tirage</strong>.
+                      </>
+                    ) : (
+                      <>
+                        Tirage du{' '}
+                        {new Date(session.sourceTirageAt).toLocaleString('fr-FR', {
                           dateStyle: 'short',
                           timeStyle: 'short'
                         })}
+                        {session.confirmedAt && (
+                          <>
+                            {' '}
+                            · confirmé le{' '}
+                            {new Date(session.confirmedAt).toLocaleString('fr-FR', {
+                              dateStyle: 'short',
+                              timeStyle: 'short'
+                            })}
+                          </>
+                        )}
                       </>
                     )}
                   </p>
@@ -461,7 +511,7 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
                 </ul>
               )}
 
-              {!confirmed && (
+              {!confirmed && session.combats.length > 0 && (
                 <Button
                   variant="accent"
                   size="lg"
@@ -472,8 +522,15 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
                   Confirmer et sauvegarder les combats
                 </Button>
               )}
+              {!confirmed && session.combats.length === 0 && session.tatamis.length > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  Tatamis prêts. Allez dans <strong>Tirage</strong>, générez les combats, puis
+                  cliquez sur <strong>Envoyer Combats</strong>.
+                </p>
+              )}
             </div>
 
+            {session.combats.length > 0 && (
             <div className="rounded-xl border bg-white/75 p-5 space-y-4 max-w-4xl">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <Label className="text-base">Liste des combats</Label>
@@ -600,6 +657,9 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
                 </ul>
               )}
             </div>
+            )}
+          </>
+        )}
           </>
         )}
       </div>

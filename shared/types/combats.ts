@@ -99,6 +99,25 @@ export function formatCombatSummary(c: ManagedCombat): string {
 }
 
 /**
+ * Importe un tirage dans une session existante en conservant les tatamis déjà créés.
+ * Les nouveaux combats arrivent non assignés (répartition ensuite sur Combats).
+ */
+export function mergeTirageIntoCombatSession(
+  existing: CombatSession | null,
+  result: TirageResult
+): CombatSession {
+  const draft = combatSessionFromTirage(result)
+  if (!existing?.tatamis.length) return draft
+  return {
+    ...draft,
+    id: existing.id,
+    tatamis: existing.tatamis.map((t) => ({ ...t })),
+    confirmedAt: null,
+    updatedAt: new Date().toISOString()
+  }
+}
+
+/**
  * Aplatit un TirageResult en combats gérables (tous les tours),
  * avec liens de progression pour le suivi d’évolution.
  */
