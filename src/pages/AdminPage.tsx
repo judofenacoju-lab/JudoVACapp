@@ -379,16 +379,14 @@ export function AdminPage({ onBack, embedded = false }: Props) {
       if (withAge.length > 0) {
         const minAge = Math.min(...withAge.map((x) => x.age))
         const maxAge = Math.max(...withAge.map((x) => x.age))
-        const youngestNames = withAge
+        const youngest = withAge
           .filter((x) => x.age === minAge)
-          .map((x) => x.name)
-          .sort((a, b) => a.localeCompare(b, 'fr'))
-        const oldestNames = withAge
+          .sort((a, b) => a.name.localeCompare(b.name, 'fr'))[0]
+        const oldest = withAge
           .filter((x) => x.age === maxAge)
-          .map((x) => x.name)
-          .sort((a, b) => a.localeCompare(b, 'fr'))
-        setCategoryChartYoungest(`${youngestNames.join(', ')} (${minAge} ans)`)
-        setCategoryChartOldest(`${oldestNames.join(', ')} (${maxAge} ans)`)
+          .sort((a, b) => a.name.localeCompare(b.name, 'fr'))[0]
+        setCategoryChartYoungest(youngest ? `${youngest.name} (${minAge} ans)` : null)
+        setCategoryChartOldest(oldest ? `${oldest.name} (${maxAge} ans)` : null)
       }
     } catch (e) {
       setCategoryChartError(e instanceof Error ? e.message : 'Chargement impossible')
