@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Copy, Timer, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { tatamiDisplayLabel, type Tatami } from '@shared/types/combats'
+import { chronoListenPort, detectLanIpv4Addresses } from '@/lib/detect-lan-ip'
 
 interface Props {
   tatamis: Tatami[]
@@ -9,27 +10,40 @@ interface Props {
 }
 
 /**
- * Accès JVac-Chrono : liste des tatamis, puis IP serveur + mot de passe.
+ * Accès JVac-Chrono : liste des tatamis, puis IP LAN de cet ordinateur + mot de passe.
  */
 export function TatamiAccessModals({ tatamis, onClose }: Props) {
   const [selected, setSelected] = useState<Tatami | null>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
-  const [serverIp, setServerIp] = useState<string | null>(null)
+  const [lanIps, setLanIps] = useState<string[]>([])
   const [serverPort, setServerPort] = useState<number>(3847)
   const [copied, setCopied] = useState<string | null>(null)
+  const [detecting, setDetecting] = useState(true)
 
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const res = await window.judovac.getServerStatus()
-      if (cancelled || !res.ok) return
-      setServerPort(res.data.port || 3847)
-      setServerIp(res.data.preferredAddress || res.data.localAddresses[0]?.address || null)
+      setDetecting(true)
+      try {
+        const status = await window.judovac.getServerStatus()
+        const fromStatus = status.ok ? status.data : undefined
+        const port = fromStatus ? chronoListenPort(fromStatus.port) : 3847
+        const ips = await detectLanIpv4Addresses(fromStatus)
+        if (cancelled) return
+        setServerPort(port)
+        setLanIps(ips)
+      } catch {
+        if (!cancelled) setLanIps([])
+      } finally {
+        if (!cancelled) setDetecting(false)
+      }
     })()
     return () => {
       cancelled = true
     }
   }, [])
+
+  const serverIp = lanIps[0] ?? null
 
   async function copy(text: string, key: string): Promise<void> {
     try {
@@ -70,11 +84,16 @@ export function TatamiAccessModals({ tatamis, onClose }: Props) {
           </div>
           <div className="space-y-4 px-5 py-4">
             <div className="rounded-lg border bg-slate-50 px-3 py-3">
-              <p className="text-xs text-muted-foreground">Adresse IP du Serveur</p>
+              <p className="text-xs text-muted-foreground">
+                Adresse IP de cet ordinateur (réseau local)
+              </p>
               <div className="mt-1 flex items-center justify-between gap-2">
                 <p className="font-mono text-lg font-semibold tracking-wide">
-                  {serverIp ?? 'Non détectée'}
-                  {serverIp ? `:${serverPort}` : ''}
+                  {detecting
+                    ? 'Détection…'
+                    : serverIp
+                      ? `${serverIp}:${serverPort}`
+                      : 'Non détectée'}
                 </p>
                 {serverIp && (
                   <Button
@@ -88,9 +107,19 @@ export function TatamiAccessModals({ tatamis, onClose }: Props) {
                   </Button>
                 )}
               </div>
-              {!serverIp && (
+              {lanIps.length > 1 && (
+                <ul className="mt-2 space-y-1 text-xs font-mono text-muted-foreground">
+                  {lanIps.slice(1).map((ip) => (
+                    <li key={ip}>
+                      {ip}:{serverPort}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {!detecting && !serverIp && (
                 <p className="mt-2 text-xs text-amber-800">
-                  Adresse indisponible. Utilisez l’application bureau en mode Serveur sur le LAN.
+                  IP locale introuvable. Sur cet ordinateur, notez l’IPv4 du Wi‑Fi / Ethernet
+                  (souvent 192.168.x.x) et le port {serverPort}.
                 </p>
               )}
             </div>
@@ -114,8 +143,9 @@ export function TatamiAccessModals({ tatamis, onClose }: Props) {
               </div>
             </div>
             <p className="text-xs text-muted-foreground">
-              Sur l’ordinateur chrono, ouvrez <strong>JVac-Chrono</strong>, saisissez cette IP et
-              ce mot de passe : tous les combats de {label} seront pris en charge.
+              Sur l’ordinateur chrono (même Wi‑Fi / réseau local), ouvrez{' '}
+              <strong>JVac-Chrono</strong> et saisissez cette IP avec le mot de passe : les
+              combats de {label} seront pris en charge.
             </p>
             <Button type="button" variant="outline" className="w-full" onClick={() => setSelected(null)}>
               Retour aux tatamis

@@ -26,7 +26,9 @@ Installateur LAN pour le chronométrage d’un tatami (IP du Serveur + mot de pa
 npm run dist:chrono
 ```
 
-Résultat : `release-chrono/JVac-Chrono-*-Setup.exe`
+Résultats :
+- `release-chrono/JVac-Chrono-*-Setup.exe` (Windows)
+- `release-chrono/JVac-Chrono-*-arm64.dmg` / `*-x64.dmg` (macOS)
 
 Développement : `npm run dev:chrono`
 

@@ -11,8 +11,12 @@ function resolvePreloadPath(): string {
 
 function resolveAppIcon(): string | undefined {
   const candidates = [
+    join(process.resourcesPath, 'icon.icns'),
     join(process.resourcesPath, 'icon.ico'),
-    join(__dirname, '../../build/icon.ico')
+    join(process.resourcesPath, 'brand-logo.png'),
+    join(__dirname, '../../chrono-app/build/icon.icns'),
+    join(__dirname, '../../chrono-app/build/icon.ico'),
+    join(__dirname, '../../chrono-app/build/icon.png')
   ]
   return candidates.find((p) => existsSync(p))
 }

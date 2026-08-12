@@ -1,5 +1,5 @@
 import { IpcChannels } from '@shared/constants/ipc-channels'
-import { APP_VERSION } from '@shared/constants/app'
+import { APP_VERSION, DEFAULT_SERVER_PORT } from '@shared/constants/app'
 import type { ModeConfig, AppRuntimeInfo } from '@shared/types/mode'
 import type { ClientConnectionStatus, DashboardStats, ServerStatus } from '@shared/types/dashboard'
 import type { Judoka, DuplicateMatch } from '@shared/types/judoka'
@@ -24,6 +24,7 @@ import {
 } from './mappers'
 import { readDurableSession, saveDurableSession, isAccessTokenExpired } from './durable-session'
 import { downloadBlob, downloadBytes } from './download-blob'
+import { detectLanIpv4Addresses } from './detect-lan-ip'
 
 export type IpcResult<T> =
   | { ok: true; data: T }
@@ -893,7 +894,7 @@ export const judovacClient = {
         dbReady: true,
         dbBackend: 'cloud',
         localAddresses: [],
-        preferredAddress: window.location.hostname
+        preferredAddress: null
       })
     } catch (e) {
       return fail(e instanceof Error ? e.message : 'Statut serveur indisponible')
@@ -2102,12 +2103,14 @@ export const judovacClient = {
       preferredAddress: string | null
       port: number
     }>
-  > =>
-    ok({
-      addresses: [{ address: window.location.hostname, iface: 'cloud' }],
-      preferredAddress: window.location.hostname,
-      port: 443
-    }),
+  > => {
+    const ips = await detectLanIpv4Addresses()
+    return ok({
+      addresses: ips.map((address) => ({ address, iface: 'lan' })),
+      preferredAddress: ips[0] ?? null,
+      port: DEFAULT_SERVER_PORT
+    })
+  },
 
   printBadges: async (opts: {
     all?: boolean

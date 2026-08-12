@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, BarChart3, Copy, Check, Eye, FileDown, RefreshCw, Save, Trash2, Plus, Eraser, X } from 'lucide-react'
+import { ArrowLeft, BarChart3, Copy, Check, Eye, FileDown, ListChecks, RefreshCw, Save, Trash2, Plus, Eraser, X } from 'lucide-react'
 import type { AppSettings, CategoryAgeRange } from '@shared/types/settings'
 import { createDefaultCategoryAgeRanges } from '@shared/types/settings'
 import type { Judoka } from '@shared/types/judoka'
@@ -27,6 +27,77 @@ interface Props {
 }
 
 type Tab = 'event' | 'users' | 'clubs' | 'categories' | 'print' | 'colors' | 'network' | 'logs'
+
+type AgeThresholdMode = 'eq' | 'gte' | 'lte'
+
+function judokaAgeYears(j: Judoka): number {
+  if (j.age != null && Number.isFinite(j.age)) return Math.max(0, Math.floor(j.age))
+  if (j.birthDate && /^\d{4}-\d{2}-\d{2}$/.test(j.birthDate)) return computeAge(j.birthDate)
+  return -1
+}
+
+function AgeThresholdList({
+  pool,
+  threshold,
+  mode
+}: {
+  pool: Judoka[]
+  threshold: string
+  mode: AgeThresholdMode
+}) {
+  const n = Number(threshold)
+  const hasThreshold = threshold.trim() !== '' && Number.isFinite(n)
+  const items = hasThreshold
+    ? pool.filter((j) => {
+        const age = judokaAgeYears(j)
+        if (age < 0) return false
+        if (mode === 'eq') return age === n
+        if (mode === 'gte') return age >= n
+        return age <= n
+      })
+    : pool
+
+  if (items.length === 0) {
+    return (
+      <p className="px-2 py-6 text-center text-sm text-muted-foreground">
+        {hasThreshold
+          ? 'Aucun judoka de cette catégorie ne correspond à ce seuil.'
+          : 'Aucun judoka dans cette catégorie.'}
+      </p>
+    )
+  }
+
+  return (
+    <>
+      <p className="px-2 pb-2 text-xs text-muted-foreground">
+        {items.length} judoka(s)
+        {hasThreshold
+          ? ` · âge ${mode === 'eq' ? '=' : mode === 'gte' ? '≥' : '≤'} ${n} ans`
+          : ''}
+      </p>
+      <ul className="space-y-1">
+        {items.map((j) => {
+          const age = judokaAgeYears(j)
+          return (
+            <li key={j.id} className="rounded-lg border bg-white px-3 py-2.5 text-sm">
+              <p className="font-medium text-judo-navy">{formatJudokaFullName(j)}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {[
+                  j.displayId,
+                  age >= 0 ? `${age} ans` : null,
+                  j.sex === 'F' ? 'F' : 'M',
+                  j.club?.trim() || null
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
+            </li>
+          )
+        })}
+      </ul>
+    </>
+  )
+}
 
 interface LocalNetworkInfo {
   addresses: Array<{ address: string; iface: string }>
@@ -72,6 +143,14 @@ export function AdminPage({ onBack, embedded = false }: Props) {
   const [categoryChartData, setCategoryChartData] = useState<AgeSexBar[]>([])
   const [categoryChartLoading, setCategoryChartLoading] = useState(false)
   const [categoryChartError, setCategoryChartError] = useState<string | null>(null)
+  const [categoryChartYoungest, setCategoryChartYoungest] = useState<string | null>(null)
+  const [categoryChartOldest, setCategoryChartOldest] = useState<string | null>(null)
+  const [ageThresholdRow, setAgeThresholdRow] = useState<CategoryAgeRange | null>(null)
+  const [ageThreshold, setAgeThreshold] = useState('')
+  const [ageThresholdMode, setAgeThresholdMode] = useState<AgeThresholdMode>('gte')
+  const [ageThresholdPool, setAgeThresholdPool] = useState<Judoka[]>([])
+  const [ageThresholdLoading, setAgeThresholdLoading] = useState(false)
+  const [ageThresholdError, setAgeThresholdError] = useState<string | null>(null)
   const [clubMembersClub, setClubMembersClub] = useState<string | null>(null)
   const [clubMembers, setClubMembers] = useState<Judoka[]>([])
   const [clubMembersLoading, setClubMembersLoading] = useState(false)
@@ -262,6 +341,8 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     const name = row.name.trim() || row.name
     setCategoryChart({ name, range: row })
     setCategoryChartData([])
+    setCategoryChartYoungest(null)
+    setCategoryChartOldest(null)
     setCategoryChartError(null)
     setCategoryChartLoading(true)
     try {
@@ -278,17 +359,14 @@ export function AdminPage({ onBack, embedded = false }: Props) {
       for (let a = minA; a <= maxA; a++) {
         byAge.set(a, { boys: 0, girls: 0 })
       }
+      const withAge: Array<{ name: string; age: number }> = []
       for (const j of res.data.items) {
         const cat =
           resolveJudokaCategory(j.birthDate, j.category, ranges) || j.category?.trim() || ''
         if (cat.toLowerCase() !== key) continue
-        const age =
-          j.age != null && Number.isFinite(j.age)
-            ? Math.floor(j.age)
-            : j.birthDate && /^\d{4}-\d{2}-\d{2}$/.test(j.birthDate)
-              ? computeAge(j.birthDate)
-              : -1
+        const age = judokaAgeYears(j)
         if (age < 0) continue
+        withAge.push({ name: formatJudokaFullName(j), age })
         const bucket = byAge.get(age) ?? { boys: 0, girls: 0 }
         if (j.sex === 'F') bucket.girls += 1
         else bucket.boys += 1
@@ -298,6 +376,20 @@ export function AdminPage({ onBack, embedded = false }: Props) {
         .sort((a, b) => a[0] - b[0])
         .map(([age, counts]) => ({ age, boys: counts.boys, girls: counts.girls }))
       setCategoryChartData(bars)
+      if (withAge.length > 0) {
+        const minAge = Math.min(...withAge.map((x) => x.age))
+        const maxAge = Math.max(...withAge.map((x) => x.age))
+        const youngestNames = withAge
+          .filter((x) => x.age === minAge)
+          .map((x) => x.name)
+          .sort((a, b) => a.localeCompare(b, 'fr'))
+        const oldestNames = withAge
+          .filter((x) => x.age === maxAge)
+          .map((x) => x.name)
+          .sort((a, b) => a.localeCompare(b, 'fr'))
+        setCategoryChartYoungest(`${youngestNames.join(', ')} (${minAge} ans)`)
+        setCategoryChartOldest(`${oldestNames.join(', ')} (${maxAge} ans)`)
+      }
     } catch (e) {
       setCategoryChartError(e instanceof Error ? e.message : 'Chargement impossible')
     } finally {
@@ -308,8 +400,51 @@ export function AdminPage({ onBack, embedded = false }: Props) {
   function closeCategoryChart(): void {
     setCategoryChart(null)
     setCategoryChartData([])
+    setCategoryChartYoungest(null)
+    setCategoryChartOldest(null)
     setCategoryChartError(null)
     setCategoryChartLoading(false)
+  }
+
+  async function openAgeThreshold(row: CategoryAgeRange): Promise<void> {
+    setAgeThresholdRow(row)
+    setAgeThreshold(String(row.minAge ?? ''))
+    setAgeThresholdMode('gte')
+    setAgeThresholdPool([])
+    setAgeThresholdError(null)
+    setAgeThresholdLoading(true)
+    try {
+      const ranges = settings?.categories ?? createDefaultCategoryAgeRanges()
+      const key = (row.name.trim() || row.name).toLowerCase()
+      const res = await window.judovac.listJudokas({ limit: 1_000_000, offset: 0 })
+      if (!res.ok) {
+        setAgeThresholdError(res.error)
+        return
+      }
+      const pool = res.data.items
+        .filter((j) => {
+          const cat =
+            resolveJudokaCategory(j.birthDate, j.category, ranges) || j.category?.trim() || ''
+          return cat.toLowerCase() === key
+        })
+        .sort((a, b) => {
+          const ageDiff = judokaAgeYears(a) - judokaAgeYears(b)
+          if (ageDiff !== 0) return ageDiff
+          return formatJudokaFullName(a).localeCompare(formatJudokaFullName(b), 'fr')
+        })
+      setAgeThresholdPool(pool)
+    } catch (e) {
+      setAgeThresholdError(e instanceof Error ? e.message : 'Chargement impossible')
+    } finally {
+      setAgeThresholdLoading(false)
+    }
+  }
+
+  function closeAgeThreshold(): void {
+    setAgeThresholdRow(null)
+    setAgeThresholdPool([])
+    setAgeThresholdError(null)
+    setAgeThresholdLoading(false)
   }
 
   async function exportCategoryJudokasPdf(mode: 'registered' | 'weighed'): Promise<void> {
@@ -900,7 +1035,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                     <th className="px-2 py-2 w-28">Âge min</th>
                     <th className="px-2 py-2 w-28">Âge max</th>
                     <th className="px-2 py-2 w-28 text-center">Judokas</th>
-                    <th className="px-2 py-2 w-32" />
+                    <th className="px-2 py-2 w-40" />
                   </tr>
                 </thead>
                 <tbody>
@@ -992,6 +1127,15 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                             onClick={() => void openCategoryChart(row)}
                           >
                             <BarChart3 className="h-4 w-4 text-judo-navy" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            title="Seuil d’âge — liste des judokas"
+                            onClick={() => void openAgeThreshold(row)}
+                          >
+                            <ListChecks className="h-4 w-4 text-judo-navy" />
                           </Button>
                         </div>
                       </td>
@@ -1519,6 +1663,22 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                   Garçons et filles par âge ({categoryChart.range.minAge}–
                   {categoryChart.range.maxAge} ans)
                 </p>
+                {!categoryChartLoading && !categoryChartError && (
+                  <div className="mt-2 space-y-0.5 text-sm">
+                    <p>
+                      <span className="text-muted-foreground">Plus jeune : </span>
+                      <span className="font-medium text-judo-navy">
+                        {categoryChartYoungest ?? '—'}
+                      </span>
+                    </p>
+                    <p>
+                      <span className="text-muted-foreground">Plus âgé : </span>
+                      <span className="font-medium text-judo-navy">
+                        {categoryChartOldest ?? '—'}
+                      </span>
+                    </p>
+                  </div>
+                )}
               </div>
               <Button
                 type="button"
@@ -1541,6 +1701,85 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                 <CategoryAgeSexChart
                   data={categoryChartData}
                   categoryName={categoryChart.name}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {ageThresholdRow && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/45"
+            aria-label="Fermer"
+            onClick={closeAgeThreshold}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border bg-white shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
+              <div>
+                <h2 className="font-display text-lg font-semibold text-judo-navy">
+                  Seuil d’âge — {ageThresholdRow.name}
+                </h2>
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  Afficher les judokas de cette catégorie selon le seuil
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={closeAgeThreshold}
+                aria-label="Fermer"
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+            <div className="space-y-3 border-b px-5 py-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="age-threshold">Seuil (ans)</Label>
+                  <Input
+                    id="age-threshold"
+                    type="number"
+                    min={0}
+                    max={120}
+                    value={ageThreshold}
+                    onChange={(e) => setAgeThreshold(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="age-threshold-mode">Comparaison</Label>
+                  <select
+                    id="age-threshold-mode"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={ageThresholdMode}
+                    onChange={(e) => setAgeThresholdMode(e.target.value as AgeThresholdMode)}
+                  >
+                    <option value="eq">Âge = seuil</option>
+                    <option value="gte">Âge ≥ seuil</option>
+                    <option value="lte">Âge ≤ seuil</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto px-3 py-3">
+              {ageThresholdLoading && (
+                <p className="px-2 py-6 text-center text-sm text-muted-foreground">Chargement…</p>
+              )}
+              {ageThresholdError && (
+                <p className="px-2 text-sm text-destructive">{ageThresholdError}</p>
+              )}
+              {!ageThresholdLoading && !ageThresholdError && (
+                <AgeThresholdList
+                  pool={ageThresholdPool}
+                  threshold={ageThreshold}
+                  mode={ageThresholdMode}
                 />
               )}
             </div>

@@ -152,7 +152,7 @@ export function App() {
         <header className="header">
           <div>
             <h1>JVac-Chrono</h1>
-            <p>Chronométrage des combats liés à un tatami JudoVACapp</p>
+            <p>Chronométrage des combats</p>
           </div>
         </header>
         <div className="login">
