@@ -2,6 +2,8 @@
  * Paramètres applicatifs persistés (table settings + cache fichier).
  */
 
+import type { CombatSession } from '@shared/types/combats'
+
 /** Tranche d'âge → catégorie judoka. */
 export interface CategoryAgeRange {
   name: string
@@ -58,6 +60,11 @@ export interface AppSettings {
   clubs: string[]
   /** Libellés de poids partagés (Tirage / Triage). */
   weightClasses: WeightClassRange[]
+  /**
+   * Session Combats (import Tirage → tatamis → confirmation → suivi).
+   * null = aucune session.
+   */
+  combatSession: CombatSession | null
   updatedAt: string
 }
 
@@ -87,6 +94,7 @@ export function createDefaultSettings(): AppSettings {
     categories: createDefaultCategoryAgeRanges(),
     clubs: [],
     weightClasses: [],
+    combatSession: null,
     updatedAt: new Date().toISOString()
   }
 }

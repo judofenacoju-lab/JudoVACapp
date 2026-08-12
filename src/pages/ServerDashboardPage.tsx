@@ -20,6 +20,7 @@ import { JudokaListPage } from '@/pages/JudokaListPage'
 import { BadgeDesignerPage } from '@/pages/BadgeDesignerPage'
 import { PdfExportPage } from '@/pages/PdfExportPage'
 import { TiragePage } from '@/pages/TiragePage'
+import { CombatsPage } from '@/pages/CombatsPage'
 import { BackupPage } from '@/pages/BackupPage'
 import { AdminPage } from '@/pages/AdminPage'
 import { PrintPage } from '@/pages/PrintPage'
@@ -38,6 +39,7 @@ const TITLES: Record<ServerNavId, string> = {
   pdf: 'Export PDF',
   print: 'Impression',
   backup: 'Sauvegarde',
+  combats: 'Combats',
   admin: 'Configuration'
 }
 
@@ -514,6 +516,7 @@ export function ServerDashboardPage({ onResetMode }: Props) {
       {view === 'badge' && <BadgeDesignerPage embedded />}
       {view === 'pdf' && <PdfExportPage embedded onBack={() => setView('home')} />}
       {view === 'backup' && <BackupPage embedded onBack={() => setView('home')} />}
+      {view === 'combats' && <CombatsPage embedded onBack={() => setView('home')} />}
       {view === 'admin' && <AdminPage embedded onBack={() => setView('home')} />}
       {view === 'print' && <PrintPage embedded onBack={() => setView('home')} />}
     </WorkspaceLayout>

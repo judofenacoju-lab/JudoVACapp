@@ -41,6 +41,9 @@ export class SettingsStore {
       network: { ...current.network, ...(patch.network ?? {}) },
       categories: patch.categories ?? current.categories,
       clubs: patch.clubs ?? current.clubs,
+      weightClasses: patch.weightClasses ?? current.weightClasses,
+      combatSession:
+        patch.combatSession !== undefined ? patch.combatSession : current.combatSession,
       updatedAt: new Date().toISOString()
     }
 

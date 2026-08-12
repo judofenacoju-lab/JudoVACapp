@@ -125,6 +125,10 @@ export function mergeSettings(raw: Partial<AppSettings> | null): AppSettings {
             c.maxKg > 0
         )
     : defaults.weightClasses
+  const combatSession =
+    raw.combatSession && typeof raw.combatSession === 'object'
+      ? (raw.combatSession as AppSettings['combatSession'])
+      : defaults.combatSession
   return {
     event: { ...defaults.event, ...raw.event },
     print: { ...defaults.print, ...raw.print },
@@ -133,6 +137,7 @@ export function mergeSettings(raw: Partial<AppSettings> | null): AppSettings {
     categories: categories.length > 0 ? categories : defaults.categories,
     clubs,
     weightClasses,
+    combatSession,
     updatedAt: raw.updatedAt ?? defaults.updatedAt
   }
 }

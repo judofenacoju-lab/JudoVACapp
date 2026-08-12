@@ -15,6 +15,7 @@ import {
   type TirageResult,
   type TirageWeightClass
 } from '@shared/utils/tirage'
+import { combatSessionFromTirage } from '@shared/types/combats'
 import { getActiveCategoryNames } from '@shared/utils/judoka'
 
 interface Props {
@@ -156,7 +157,26 @@ export function TiragePage({ onBack, embedded = false }: Props) {
         )
         return
       }
+
+      const settingsRes = await window.judovac.getSettings()
+      if (
+        settingsRes.ok &&
+        settingsRes.data.combatSession?.confirmedAt &&
+        !window.confirm(
+          'Une session Combats confirmée existe déjà. Le nouveau tirage la remplacera (brouillon). Continuer ?'
+        )
+      ) {
+        setResult(generated)
+        return
+      }
+
       setResult(generated)
+      // Alimente le menu Combats (brouillon) pour tatamis + confirmation.
+      const combatDraft = combatSessionFromTirage(generated)
+      await window.judovac.setSettings({ combatSession: combatDraft })
+      setExportMessage(
+        `${generated.fightCount} combat(s) envoyés vers le menu Combats (à confirmer après répartition tatamis).`
+      )
     } catch (e) {
       setResult(null)
       setError(e instanceof Error ? e.message : 'Tirage impossible')

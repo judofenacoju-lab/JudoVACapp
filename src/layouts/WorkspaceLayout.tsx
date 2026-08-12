@@ -12,6 +12,7 @@ import {
   Printer,
   RefreshCw,
   Settings,
+  Swords,
   X
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -27,6 +28,7 @@ export type ServerNavId =
   | 'pdf'
   | 'print'
   | 'backup'
+  | 'combats'
   | 'admin'
 
 export type ClientNavId = 'home' | 'form' | 'list' | 'sync'
@@ -46,6 +48,7 @@ const SERVER_NAV: NavDef[] = [
   { id: 'pdf', label: 'Export PDF', icon: <FileDown className="h-4 w-4" /> },
   { id: 'print', label: 'Impression', icon: <Printer className="h-4 w-4" /> },
   { id: 'backup', label: 'Sauvegarde', icon: <Archive className="h-4 w-4" /> },
+  { id: 'combats', label: 'Combats', icon: <Swords className="h-4 w-4" /> },
   { id: 'admin', label: 'Configuration', icon: <Settings className="h-4 w-4" /> }
 ]
 
