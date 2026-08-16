@@ -17,12 +17,19 @@ interface Props {
   createdBy: string
   createdWorkstation: string
   onBack: () => void
-  onSaved: (result?: { synced?: boolean; queueSize?: number; local?: boolean }) => void
+  onSaved: (result?: {
+    synced?: boolean
+    queueSize?: number
+    local?: boolean
+    judoka?: Judoka
+  }) => void
   /** Mode édition */
   editing?: Judoka | null
   embedded?: boolean
   /** Mettre le focus sur le champ Poids (pesée rapide). */
   focusWeight?: boolean
+  /** Club imposé (ex. création depuis Nouvelle équipe). */
+  forcedClub?: string
 }
 
 type FormState = {
@@ -83,7 +90,8 @@ export function JudokaFormPage({
   onSaved,
   editing = null,
   embedded = false,
-  focusWeight = false
+  focusWeight = false,
+  forcedClub
 }: Props) {
   const [form, setForm] = useState<FormState>(empty)
   const [photoPath, setPhotoPath] = useState<string | null>(null)
@@ -103,14 +111,21 @@ export function JudokaFormPage({
       if (cancelled) return
       const fromSettings = settingsRes.ok ? settingsRes.data.clubs : []
       const fromJudokas = clubsRes.ok ? clubsRes.data.items : []
-      const merged = mergeRegisteredClubNames(fromSettings, fromJudokas)
+      const merged = mergeRegisteredClubNames(
+        fromSettings,
+        fromJudokas,
+        forcedClub ? [forcedClub] : []
+      )
       setActiveRegisteredClubs(merged)
       setClubOptions(getActiveRegisteredClubNames())
+      if (forcedClub?.trim()) {
+        setForm((prev) => ({ ...prev, club: forcedClub.trim() }))
+      }
     })()
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [forcedClub])
 
   useEffect(() => {
     if (!editing) return
@@ -210,11 +225,20 @@ export function JudokaFormPage({
       queueSize?: number
       local?: boolean
       queued?: boolean
+      judoka?: Judoka
+      id?: string
+      lastName?: string
     } | null
+    const created =
+      data?.judoka ??
+      (data && typeof data.id === 'string' && typeof data.lastName === 'string'
+        ? (data as Judoka)
+        : undefined)
     onSaved({
       synced: Boolean(data?.synced),
       queueSize: data?.queueSize,
-      local: Boolean(data?.local ?? data?.queued)
+      local: Boolean(data?.local ?? data?.queued),
+      judoka: created
     })
   }
 
@@ -319,7 +343,7 @@ export function JudokaFormPage({
               <select
                 id="club"
                 required
-                disabled={clubOptions.length === 0}
+                disabled={Boolean(forcedClub) || clubOptions.length === 0}
                 className="flex h-10 w-full rounded-md border border-input bg-white/80 px-3 text-sm disabled:opacity-60"
                 value={
                   clubOptions.some((c) => c.toLowerCase() === form.club.trim().toLowerCase())

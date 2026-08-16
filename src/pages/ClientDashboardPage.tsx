@@ -295,6 +295,7 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
         <TeamFormPage
           embedded
           createdBy={mode.username ?? 'client'}
+          createdWorkstation={mode.workstation ?? 'poste'}
           onBack={() => setView('home')}
         />
       )}

@@ -486,6 +486,7 @@ export function ServerDashboardPage({ onResetMode }: Props) {
         <TeamFormPage
           embedded
           createdBy="serveur"
+          createdWorkstation="local"
           onBack={() => setView('home')}
         />
       )}
