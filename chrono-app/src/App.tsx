@@ -196,6 +196,7 @@ export function App() {
         <div>
           <h1>JVac-Chrono · {session.tatamiName || `Tatami-${session.tatamiIndex + 1}`}</h1>
           <p>
+            {session.kind === 'team' ? 'Par équipe · ' : 'Individuel · '}
             {session.combats.length} combat(s) · {base.replace(/^http:\/\//, '')}
           </p>
         </div>
@@ -211,6 +212,9 @@ export function App() {
           ) : (
             <>
               <p style={{ marginTop: 0, color: 'var(--muted)' }}>
+                {current.kind === 'team' && current.teamMatchLabel
+                  ? `${current.teamMatchLabel} · `
+                  : ''}
                 {current.label} · {current.poolLabel} · Tour {current.round + 1}
               </p>
               <div className="fighters">
@@ -312,7 +316,15 @@ export function App() {
                   }}
                 >
                   <strong>{c.label}</strong>{' '}
-                  <span className="badge">{c.status === 'completed' ? 'Terminé' : `Tour ${c.round + 1}`}</span>
+                  <span className="badge">
+                    {c.kind === 'team' ? 'Équipe · ' : ''}
+                    {c.status === 'completed' ? 'Terminé' : `Tour ${c.round + 1}`}
+                  </span>
+                  {c.teamMatchLabel && (
+                    <div style={{ fontSize: '0.78rem', color: 'var(--muted)', marginTop: 2 }}>
+                      {c.teamMatchLabel}
+                    </div>
+                  )}
                   <div style={{ fontSize: '0.85rem', marginTop: 4 }}>
                     {fighterName(c, 'top')} vs {fighterName(c, 'bottom')}
                   </div>

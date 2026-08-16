@@ -2,11 +2,15 @@ import { Router } from 'express'
 import { SettingsStore } from '@core/infrastructure/settings/settings-store'
 import {
   applyCombatWinner,
+  combatSessionKind,
   hasAtLeastOneJudoka,
   type CombatSession,
   type CombatStatus
 } from '@shared/types/combats'
 import { toChronoCombat, type ChronoConnectResponse } from '@shared/types/chrono'
+import { resolveTeamMatches } from '@shared/utils/team-tirage'
+import { createDefaultCategoryAgeRanges } from '@shared/types/settings'
+import { getContainer } from '../container'
 import { SocketEvents } from '@shared/constants/socket-events'
 
 function normalizePassword(raw: unknown): string {
@@ -56,6 +60,7 @@ function payload(session: CombatSession, tatamiId: string, index: number): Chron
     tatamiIndex: index,
     sessionId: session.id,
     confirmedAt: session.confirmedAt,
+    kind: combatSessionKind(session),
     combats: combatsForTatami(session, tatamiId)
   }
 }
@@ -149,7 +154,21 @@ export function createChronoRouter(): Router {
       res.status(404).json({ ok: false, error: 'Combat introuvable sur ce tatami.' })
       return
     }
-    const saved = await saveSession(applyCombatWinner(session, combatId, winnerId))
+    let next = applyCombatWinner(session, combatId, winnerId)
+    if (combatSessionKind(next) === 'team') {
+      const settings = await new SettingsStore().get()
+      const listed = getContainer().listJudoka
+        ? await getContainer().listJudoka.execute(1_000_000, 0)
+        : []
+      next = resolveTeamMatches(next, {
+        teams: settings.teams ?? [],
+        judokas: listed,
+        ranges: settings.categories?.length
+          ? settings.categories
+          : createDefaultCategoryAgeRanges()
+      })
+    }
+    const saved = await saveSession(next)
     res.json(payload(saved, found.tatami.id, found.index))
   })
 

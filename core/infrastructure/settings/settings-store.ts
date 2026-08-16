@@ -44,6 +44,7 @@ export class SettingsStore {
       weightClasses: patch.weightClasses ?? current.weightClasses,
       combatSession:
         patch.combatSession !== undefined ? patch.combatSession : current.combatSession,
+      teams: patch.teams !== undefined ? patch.teams : current.teams,
       updatedAt: new Date().toISOString()
     }
 

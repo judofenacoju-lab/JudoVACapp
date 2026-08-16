@@ -3,6 +3,7 @@
  */
 
 import type { CombatSession } from '@shared/types/combats'
+import type { Team } from '@shared/types/teams'
 
 /** Tranche d'âge → catégorie judoka. */
 export interface CategoryAgeRange {
@@ -65,6 +66,8 @@ export interface AppSettings {
    * null = aucune session.
    */
   combatSession: CombatSession | null
+  /** Équipes (club + judokas) pour les combats par équipe. */
+  teams: Team[]
   updatedAt: string
 }
 
@@ -95,6 +98,7 @@ export function createDefaultSettings(): AppSettings {
     clubs: [],
     weightClasses: [],
     combatSession: null,
+    teams: [],
     updatedAt: new Date().toISOString()
   }
 }

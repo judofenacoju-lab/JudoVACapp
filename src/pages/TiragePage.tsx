@@ -17,6 +17,7 @@ import {
 } from '@shared/utils/tirage'
 import { mergeTirageIntoCombatSession, listTatamisWithoutCombats, isCombatSchedulableOnTatami } from '@shared/types/combats'
 import { getActiveCategoryNames } from '@shared/utils/judoka'
+import { TirageTeamPanel } from '@/components/TirageTeamPanel'
 
 interface Props {
   onBack: () => void
@@ -53,6 +54,7 @@ export function TiragePage({ onBack, embedded = false }: Props) {
   const [sendBusy, setSendBusy] = useState(false)
   /** Tatamis déjà créés sur la page Combats (requis pour activer l’envoi). */
   const [tatamiCount, setTatamiCount] = useState(0)
+  const [mode, setMode] = useState<'individual' | 'team'>('individual')
 
   async function refreshTatamiCount(): Promise<number> {
     const settingsRes = await window.judovac.getSettings()
@@ -261,7 +263,11 @@ export function TiragePage({ onBack, embedded = false }: Props) {
     <AppShell
       embedded={embedded}
       title="Tirage"
-      subtitle="Classement aléatoire des combats par sexe, catégorie d’âge, catégories de poids."
+      subtitle={
+        mode === 'team'
+          ? 'Tirage par club : rencontres d’équipes selon les catégories des judokas.'
+          : 'Classement aléatoire des combats par sexe, catégorie d’âge, catégories de poids.'
+      }
       actions={
         !embedded ? (
           <Button variant="outline" onClick={onBack}>
@@ -272,6 +278,31 @@ export function TiragePage({ onBack, embedded = false }: Props) {
       }
     >
       <div className="space-y-6 animate-fade-in">
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="lg"
+            variant={mode === 'individual' ? 'accent' : 'outline'}
+            onClick={() => setMode('individual')}
+          >
+            Individuel
+          </Button>
+          <Button
+            type="button"
+            size="lg"
+            variant={mode === 'team' ? 'accent' : 'outline'}
+            onClick={() => setMode('team')}
+          >
+            Par équipe
+          </Button>
+        </div>
+
+        {mode === 'team' && (
+          <TirageTeamPanel tatamiCount={tatamiCount} onTatamiCount={setTatamiCount} />
+        )}
+
+        {mode === 'individual' && (
+        <>
         <div className="rounded-xl border bg-white/75 p-5 space-y-5 max-w-3xl">
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-2">
@@ -515,6 +546,8 @@ export function TiragePage({ onBack, embedded = false }: Props) {
               {exportBusy ? 'Export…' : 'Exporter Grille'}
             </Button>
           </div>
+        )}
+        </>
         )}
       </div>
     </AppShell>

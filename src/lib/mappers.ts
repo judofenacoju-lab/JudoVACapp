@@ -2,6 +2,7 @@ import type { Judoka } from '@shared/types/judoka'
 import type { BadgeTemplate } from '@shared/types/badge'
 import type { AppSettings } from '@shared/types/settings'
 import { createDefaultSettings } from '@shared/types/settings'
+import { normalizeTeams } from '@shared/types/teams'
 import { mergeRegisteredClubNames } from '@shared/utils/clubs'
 import type { UserAccount } from '@shared/types/user-account'
 import type { SystemLogEntry } from '@shared/types/dashboard'
@@ -129,6 +130,7 @@ export function mergeSettings(raw: Partial<AppSettings> | null): AppSettings {
     raw.combatSession && typeof raw.combatSession === 'object'
       ? (raw.combatSession as AppSettings['combatSession'])
       : defaults.combatSession
+  const teams = normalizeTeams(raw.teams)
   return {
     event: { ...defaults.event, ...raw.event },
     print: { ...defaults.print, ...raw.print },
@@ -138,6 +140,7 @@ export function mergeSettings(raw: Partial<AppSettings> | null): AppSettings {
     clubs,
     weightClasses,
     combatSession,
+    teams,
     updatedAt: raw.updatedAt ?? defaults.updatedAt
   }
 }

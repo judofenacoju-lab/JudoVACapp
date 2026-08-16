@@ -5,6 +5,9 @@ import { formatTirageCategoryName } from '@shared/utils/tirage'
 /** Statut d’un combat suivi sur le terrain. */
 export type CombatStatus = 'pending' | 'ready' | 'in_progress' | 'completed'
 
+/** Nature de la session Combats (tirage individuel ou par club). */
+export type CombatSessionKind = 'individual' | 'team'
+
 export interface CombatFighterRef {
   id: string
   displayId: string
@@ -47,6 +50,27 @@ export interface ManagedCombat {
   /** Combat suivant alimenté par le vainqueur. */
   feedsInto: { combatId: string; slot: 'top' | 'bottom' } | null
   updatedAt: string
+  /** Défaut : individuel (sessions anciennes). */
+  kind?: CombatSessionKind
+  /** Rencontre club vs club (combats par équipe). */
+  teamMatchId?: string
+  teamMatchLabel?: string
+  homeClub?: string
+  awayClub?: string
+}
+
+/** Rencontre entre deux clubs (plusieurs combats de catégorie). */
+export interface TeamMatch {
+  id: string
+  label: string
+  round: number
+  matchIndex: number
+  homeTeamId: string | null
+  awayTeamId: string | null
+  homeClub: string
+  awayClub: string
+  winnerTeamId: string | null
+  feedsInto: { teamMatchId: string; slot: 'home' | 'away' } | null
 }
 
 /** Session Combats : brouillon depuis Tirage, puis confirmée pour le suivi. */
@@ -58,6 +82,13 @@ export interface CombatSession {
   tatamis: Tatami[]
   combats: ManagedCombat[]
   updatedAt: string
+  /** Défaut : individuel si absent (anciennes sessions). */
+  kind?: CombatSessionKind
+  teamMatches?: TeamMatch[]
+}
+
+export function combatSessionKind(session: CombatSession | null | undefined): CombatSessionKind {
+  return session?.kind === 'team' ? 'team' : 'individual'
 }
 
 export function createEmptyCombatSession(): CombatSession {
@@ -68,6 +99,8 @@ export function createEmptyCombatSession(): CombatSession {
     confirmedAt: null,
     tatamis: [],
     combats: [],
+    kind: 'individual',
+    teamMatches: [],
     updatedAt: now
   }
 }
@@ -254,6 +287,8 @@ export function combatSessionFromTirage(result: TirageResult): CombatSession {
   }
 
   session.combats = combats
+  session.kind = 'individual'
+  session.teamMatches = []
   return session
 }
 

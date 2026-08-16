@@ -2070,6 +2070,7 @@ export const judovacClient = {
       weightClasses: patch.weightClasses ?? current.data.weightClasses,
       combatSession:
         patch.combatSession !== undefined ? patch.combatSession : current.data.combatSession,
+      teams: patch.teams !== undefined ? patch.teams : current.data.teams,
       updatedAt: new Date().toISOString()
     }
     const { error } = await supabase.from('app_settings').upsert({

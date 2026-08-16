@@ -15,6 +15,7 @@ import { Label } from '@/components/ui/label'
 import { AppShell } from '@/layouts/AppShell'
 import {
   applyCombatWinner,
+  combatSessionKind,
   createEmptyCombatSession,
   createTatamiId,
   distributeCombatsAcrossTatamis,
@@ -27,6 +28,9 @@ import {
   type ManagedCombat,
   type Tatami
 } from '@shared/types/combats'
+import { resolveTeamMatches, teamMatchScore } from '@shared/utils/team-tirage'
+import { createDefaultCategoryAgeRanges } from '@shared/types/settings'
+import { normalizeTeams } from '@shared/types/teams'
 import { TatamiAccessModals } from '@/components/TatamiAccessModals'
 
 interface Props {
@@ -69,6 +73,115 @@ function fighterLine(c: ManagedCombat, side: 'top' | 'bottom'): string {
   if (!f) return 'À déterminer'
   const meta = [f.club, f.age > 0 ? `${f.age} ans` : null].filter(Boolean).join(' · ')
   return meta ? `${f.name} (${meta})` : f.name
+}
+
+function CombatRow({
+  c,
+  session,
+  confirmed,
+  busy,
+  assignCombat,
+  setCombatStatus,
+  declareWinner
+}: {
+  c: ManagedCombat
+  session: CombatSession
+  confirmed: boolean
+  busy: boolean
+  assignCombat: (id: string, tatamiId: string | null) => void
+  setCombatStatus: (id: string, status: CombatStatus) => void
+  declareWinner: (id: string, winnerId: string) => void
+}) {
+  return (
+    <li className="rounded-lg border bg-slate-50/60 p-3 space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <span className="text-sm font-semibold">{c.label}</span>
+          <span className="text-xs text-muted-foreground ml-2">{c.poolLabel}</span>
+          <span className="text-xs text-muted-foreground ml-2">
+            Tour {c.round + 1}
+            {c.tatamiId != null ? ` · n°${c.orderOnTatami + 1}` : ''}
+          </span>
+        </div>
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusClass(c.status)}`}>
+          {statusLabel(c.status)}
+          {c.bye ? ' · bye' : ''}
+        </span>
+      </div>
+      <div className="grid gap-1 text-sm sm:grid-cols-2">
+        <p>
+          <span className="text-muted-foreground">Rouge · </span>
+          {fighterLine(c, 'top')}
+          {c.winnerId && c.top?.id === c.winnerId && (
+            <span className="ml-1 text-emerald-700 font-medium">✓</span>
+          )}
+        </p>
+        <p>
+          <span className="text-muted-foreground">Blanc · </span>
+          {fighterLine(c, 'bottom')}
+          {c.winnerId && c.bottom?.id === c.winnerId && (
+            <span className="ml-1 text-emerald-700 font-medium">✓</span>
+          )}
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        <Label className="text-xs text-muted-foreground">Tatami</Label>
+        <select
+          className="flex h-8 rounded-md border border-input bg-background px-2 text-sm"
+          value={c.tatamiId ?? ''}
+          disabled={busy}
+          onChange={(e) => assignCombat(c.id, e.target.value ? e.target.value : null)}
+        >
+          <option value="">Non assigné</option>
+          {session.tatamis.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      {confirmed && c.status !== 'completed' && c.top && c.bottom && (
+        <div className="flex flex-wrap gap-2 pt-1">
+          {c.status === 'ready' && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => setCombatStatus(c.id, 'in_progress')}
+            >
+              Démarrer
+            </Button>
+          )}
+          {(c.status === 'ready' || c.status === 'in_progress') && (
+            <>
+              <Button
+                size="sm"
+                variant="accent"
+                disabled={busy}
+                onClick={() => declareWinner(c.id, c.top!.id)}
+              >
+                Vainqueur : {c.top.name.split(',')[0]}
+              </Button>
+              <Button
+                size="sm"
+                variant="accent"
+                disabled={busy}
+                onClick={() => declareWinner(c.id, c.bottom!.id)}
+              >
+                Vainqueur : {c.bottom.name.split(',')[0]}
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+      {confirmed && c.tatamiId && (
+        <p className="text-xs text-muted-foreground">
+          {session.tatamis.find((t) => t.id === c.tatamiId)?.name ?? 'Tatami'} · ordre{' '}
+          {c.orderOnTatami + 1}
+        </p>
+      )}
+    </li>
+  )
 }
 
 /**
@@ -284,7 +397,22 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
 
   function declareWinner(combatId: string, winnerId: string): void {
     if (!session?.confirmedAt) return
-    void persist(applyCombatWinner(session, combatId, winnerId), 'Vainqueur enregistré')
+    void (async () => {
+      let next = applyCombatWinner(session, combatId, winnerId)
+      if (combatSessionKind(next) === 'team') {
+        const settingsRes = await window.judovac.getSettings()
+        const listed = await window.judovac.listJudokas({ limit: 5000, offset: 0 })
+        next = resolveTeamMatches(next, {
+          teams: settingsRes.ok ? normalizeTeams(settingsRes.data.teams) : [],
+          judokas: listed.ok ? listed.data.items : [],
+          ranges:
+            settingsRes.ok && settingsRes.data.categories?.length
+              ? settingsRes.data.categories
+              : createDefaultCategoryAgeRanges()
+        })
+      }
+      await persist(next, 'Vainqueur enregistré')
+    })()
   }
 
   async function clearSession(): Promise<void> {
@@ -297,7 +425,11 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
     <AppShell
       embedded={embedded}
       title="Combats"
-      subtitle="Tatamis, confirmation des grilles Tirage et suivi d’évolution des combats."
+      subtitle={
+        combatSessionKind(session) === 'team'
+          ? 'Combats par équipe : rencontres de clubs, score par catégorie, tatamis et Chrono.'
+          : 'Tatamis, confirmation des grilles Tirage et suivi d’évolution des combats.'
+      }
       actions={
         !embedded ? (
           <Button variant="outline" onClick={onBack}>
@@ -368,6 +500,17 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-sm font-medium">
+                    {session.combats.length > 0 && (
+                      <span
+                        className={`mr-2 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
+                          combatSessionKind(session) === 'team'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-sky-100 text-sky-800'
+                        }`}
+                      >
+                        {combatSessionKind(session) === 'team' ? 'Par équipe' : 'Individuel'}
+                      </span>
+                    )}
                     {session.combats.length === 0 ? (
                       <span className="text-sky-800">Tatamis prêts — en attente des combats</span>
                     ) : confirmed ? (
@@ -588,105 +731,62 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
 
               {visibleCombats.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Aucun combat pour ce filtre.</p>
+              ) : combatSessionKind(session) === 'team' &&
+                (session.teamMatches ?? []).some((m) =>
+                  visibleCombats.some((c) => c.teamMatchId === m.id)
+                ) ? (
+                <div className="space-y-5">
+                  {(session.teamMatches ?? [])
+                    .filter((m) => visibleCombats.some((c) => c.teamMatchId === m.id))
+                    .map((m) => {
+                      const bouts = visibleCombats.filter((c) => c.teamMatchId === m.id)
+                      const score = teamMatchScore(session, m.id)
+                      return (
+                        <div key={m.id} className="space-y-2">
+                          <div className="rounded-lg border bg-judo-navy/95 px-3 py-2 text-white">
+                            <p className="text-sm font-semibold">
+                              {m.label} · {m.homeClub} vs {m.awayClub}
+                            </p>
+                            <p className="text-xs text-white/70">
+                              Score {score.home}–{score.away}
+                              {m.winnerTeamId
+                                ? ` · vainqueur ${
+                                    m.winnerTeamId === m.homeTeamId ? m.homeClub : m.awayClub
+                                  }`
+                                : ''}
+                            </p>
+                          </div>
+                          <ul className="space-y-3">
+                            {bouts.map((c) => (
+                              <CombatRow
+                                key={c.id}
+                                c={c}
+                                session={session}
+                                confirmed={confirmed}
+                                busy={busy}
+                                assignCombat={assignCombat}
+                                setCombatStatus={setCombatStatus}
+                                declareWinner={declareWinner}
+                              />
+                            ))}
+                          </ul>
+                        </div>
+                      )
+                    })}
+                </div>
               ) : (
                 <ul className="space-y-3">
                   {visibleCombats.map((c) => (
-                    <li key={c.id} className="rounded-lg border bg-slate-50/60 p-3 space-y-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <span className="text-sm font-semibold">{c.label}</span>
-                          <span className="text-xs text-muted-foreground ml-2">{c.poolLabel}</span>
-                          <span className="text-xs text-muted-foreground ml-2">
-                            Tour {c.round + 1}
-                            {c.tatamiId != null ? ` · n°${c.orderOnTatami + 1}` : ''}
-                          </span>
-                        </div>
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusClass(c.status)}`}
-                        >
-                          {statusLabel(c.status)}
-                          {c.bye ? ' · bye' : ''}
-                        </span>
-                      </div>
-
-                      <div className="grid gap-1 text-sm sm:grid-cols-2">
-                        <p>
-                          <span className="text-muted-foreground">Rouge · </span>
-                          {fighterLine(c, 'top')}
-                          {c.winnerId && c.top?.id === c.winnerId && (
-                            <span className="ml-1 text-emerald-700 font-medium">✓</span>
-                          )}
-                        </p>
-                        <p>
-                          <span className="text-muted-foreground">Blanc · </span>
-                          {fighterLine(c, 'bottom')}
-                          {c.winnerId && c.bottom?.id === c.winnerId && (
-                            <span className="ml-1 text-emerald-700 font-medium">✓</span>
-                          )}
-                        </p>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2 pt-1">
-                        <Label className="text-xs text-muted-foreground">Tatami</Label>
-                        <select
-                          className="flex h-8 rounded-md border border-input bg-background px-2 text-sm"
-                          value={c.tatamiId ?? ''}
-                          disabled={busy}
-                          onChange={(e) =>
-                            assignCombat(c.id, e.target.value ? e.target.value : null)
-                          }
-                        >
-                          <option value="">Non assigné</option>
-                          {session.tatamis.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {confirmed && c.status !== 'completed' && c.top && c.bottom && (
-                        <div className="flex flex-wrap gap-2 pt-1">
-                          {c.status === 'ready' && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={busy}
-                              onClick={() => setCombatStatus(c.id, 'in_progress')}
-                            >
-                              Démarrer
-                            </Button>
-                          )}
-                          {(c.status === 'ready' || c.status === 'in_progress') && (
-                            <>
-                              <Button
-                                size="sm"
-                                variant="accent"
-                                disabled={busy}
-                                onClick={() => declareWinner(c.id, c.top!.id)}
-                              >
-                                Vainqueur : {c.top.name.split(',')[0]}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="accent"
-                                disabled={busy}
-                                onClick={() => declareWinner(c.id, c.bottom!.id)}
-                              >
-                                Vainqueur : {c.bottom.name.split(',')[0]}
-                              </Button>
-                            </>
-                          )}
-                        </div>
-                      )}
-
-                      {confirmed && c.tatamiId && (
-                        <p className="text-xs text-muted-foreground">
-                          {session.tatamis.find((t) => t.id === c.tatamiId)?.name ?? 'Tatami'} ·
-                          ordre {c.orderOnTatami + 1}
-                        </p>
-                      )}
-                    </li>
+                    <CombatRow
+                      key={c.id}
+                      c={c}
+                      session={session}
+                      confirmed={confirmed}
+                      busy={busy}
+                      assignCombat={assignCombat}
+                      setCombatStatus={setCombatStatus}
+                      declareWinner={declareWinner}
+                    />
                   ))}
                 </ul>
               )}

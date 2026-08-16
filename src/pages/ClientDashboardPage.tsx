@@ -11,6 +11,7 @@ import { UnphotographedJudokasModal } from '@/components/UnphotographedJudokasMo
 import { RegisteredJudokasMenuModal } from '@/components/RegisteredJudokasMenuModal'
 import { WorkspaceLayout, type ClientNavId } from '@/layouts/WorkspaceLayout'
 import { JudokaFormPage } from '@/pages/JudokaFormPage'
+import { TeamFormPage } from '@/pages/TeamFormPage'
 import { JudokaListPage } from '@/pages/JudokaListPage'
 
 interface Props {
@@ -162,11 +163,13 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
       ? editing
         ? `Modifier ${editing.displayId}`
         : 'Nouveau judoka'
-      : view === 'home'
-        ? clientName
-        : view === 'list'
-          ? 'Liste / Recherche'
-          : 'Synchronisation'
+      : view === 'team'
+        ? 'Nouvelle équipe'
+        : view === 'home'
+          ? clientName
+          : view === 'list'
+            ? 'Liste / Recherche'
+            : 'Synchronisation'
 
   const male = stats?.maleJudokas ?? 0
   const female = stats?.femaleJudokas ?? 0
@@ -288,6 +291,13 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
         />
       )}
 
+      {view === 'team' && (
+        <TeamFormPage
+          embedded
+          createdBy={mode.username ?? 'client'}
+          onBack={() => setView('home')}
+        />
+      )}
       {view === 'form' && (
         <JudokaFormPage
           embedded

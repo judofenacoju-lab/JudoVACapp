@@ -21,6 +21,7 @@ import { BadgeDesignerPage } from '@/pages/BadgeDesignerPage'
 import { PdfExportPage } from '@/pages/PdfExportPage'
 import { TiragePage } from '@/pages/TiragePage'
 import { CombatsPage } from '@/pages/CombatsPage'
+import { TeamFormPage } from '@/pages/TeamFormPage'
 import { BackupPage } from '@/pages/BackupPage'
 import { AdminPage } from '@/pages/AdminPage'
 import { PrintPage } from '@/pages/PrintPage'
@@ -33,6 +34,7 @@ interface Props {
 const TITLES: Record<ServerNavId, string> = {
   home: 'Tableau de bord',
   form: 'Judoka',
+  team: 'Nouvelle équipe',
   list: 'Liste / Recherche',
   tirage: 'Tirage',
   badge: 'Designer de badge',
@@ -480,6 +482,13 @@ export function ServerDashboardPage({ onResetMode }: Props) {
         <UnphotographedJudokasModal onClose={() => setUnphotoOpen(false)} />
       )}
 
+      {view === 'team' && (
+        <TeamFormPage
+          embedded
+          createdBy="serveur"
+          onBack={() => setView('home')}
+        />
+      )}
       {view === 'form' && (
         <JudokaFormPage
           embedded

@@ -1,4 +1,9 @@
-import type { CombatFighterRef, CombatStatus, ManagedCombat } from '@shared/types/combats'
+import type {
+  CombatFighterRef,
+  CombatSessionKind,
+  CombatStatus,
+  ManagedCombat
+} from '@shared/types/combats'
 
 /** Combat exposé à JVac-Chrono (sans cases vides). */
 export interface ChronoCombat {
@@ -13,6 +18,10 @@ export interface ChronoCombat {
   top: CombatFighterRef | null
   bottom: CombatFighterRef | null
   winnerId: string | null
+  kind?: CombatSessionKind
+  teamMatchLabel?: string
+  homeClub?: string
+  awayClub?: string
 }
 
 export interface ChronoConnectResponse {
@@ -22,6 +31,7 @@ export interface ChronoConnectResponse {
   tatamiIndex: number
   sessionId: string
   confirmedAt: string | null
+  kind: CombatSessionKind
   combats: ChronoCombat[]
 }
 
@@ -42,6 +52,10 @@ export function toChronoCombat(c: ManagedCombat): ChronoCombat {
     bye: c.bye,
     top: c.top,
     bottom: c.bottom,
-    winnerId: c.winnerId
+    winnerId: c.winnerId,
+    kind: c.kind === 'team' ? 'team' : 'individual',
+    teamMatchLabel: c.teamMatchLabel,
+    homeClub: c.homeClub,
+    awayClub: c.awayClub
   }
 }
