@@ -125,7 +125,7 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
       if (registered.length < 2) {
         setResult(null)
         setError(
-          'Validez au moins deux équipes (menu Nouvelle équipe → Équipes validées) avant le tirage.'
+          'Validez au moins deux équipes (menu Par Équipe → Équipes validées) avant le tirage.'
         )
         return
       }

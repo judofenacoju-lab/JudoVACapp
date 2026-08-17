@@ -168,6 +168,7 @@ const api = {
     perPage?: 4 | 6 | 8 | 'custom'
     customCols?: number
     customRows?: number
+    teamBadge?: boolean
   }): Promise<IpcResult<{ path: string; count: number }>> =>
     ipcRenderer.invoke(IpcChannels.PDF_EXPORT_BADGES, opts),
 

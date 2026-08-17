@@ -6,7 +6,7 @@ import { PDFDocument, rgb, StandardFonts, type PDFFont, type PDFImage, type PDFP
 import QRCode from 'qrcode'
 import type { BadgeTemplate } from '@shared/types/badge'
 import type { Judoka } from '@shared/types/judoka'
-import { formatBadgeJudokaName } from '@shared/utils/judoka'
+import { formatBadgeCategory, formatBadgeJudokaName } from '@shared/utils/judoka'
 import { pdfSafeText } from '@shared/utils/pdf-winansi-text'
 import brandLogoUrl from '@/assets/brand-logo.png'
 
@@ -230,6 +230,54 @@ function drawText(
   })
 }
 
+function drawCategoryClubLine(
+  page: PDFPage,
+  category: string,
+  club: string,
+  x: number,
+  yBottom: number,
+  font: PDFFont,
+  fontBold: PDFFont,
+  size: number,
+  color: ReturnType<typeof rgb>,
+  opts?: { maxWidth?: number; align?: 'left' | 'center' | 'right' }
+): void {
+  const cat = pdfSafeText(formatBadgeCategory(category) || category)
+  const clubText = pdfSafeText(club.trim())
+  if (!cat && !clubText) return
+  if (!clubText) {
+    drawText(page, cat, x, yBottom, fontBold, size, color, opts)
+    return
+  }
+  if (!cat) {
+    drawText(page, clubText, x, yBottom, font, size, color, opts)
+    return
+  }
+  const sep = ' - '
+  const catW = fontBold.widthOfTextAtSize(cat, size)
+  const rest = sep + clubText
+  const restW = font.widthOfTextAtSize(rest, size)
+  const total = catW + restW
+  const width = opts?.maxWidth
+  let startX = x
+  if (width != null && opts?.align === 'center') startX = x + (width - total) / 2
+  else if (width != null && opts?.align === 'right') startX = x + width - total
+  page.drawText(cat, {
+    x: Math.max(0, startX),
+    y: yBottom,
+    size,
+    font: fontBold,
+    color
+  })
+  page.drawText(rest, {
+    x: Math.max(0, startX + catW),
+    y: yBottom,
+    size,
+    font,
+    color
+  })
+}
+
 export interface BrowserPdfExportOptions {
   template: BadgeTemplate
   judokas: Judoka[]
@@ -237,6 +285,8 @@ export interface BrowserPdfExportOptions {
   customCols?: number
   customRows?: number
   readDataUrl: (path: string) => Promise<string | null>
+  /** Export par équipe : champ catégorie = « Catégorie - Club » (catégorie en gras). */
+  categoryClubLine?: boolean
 }
 
 export async function exportBadgesPdfBytes(options: BrowserPdfExportOptions): Promise<Uint8Array> {
@@ -336,7 +386,8 @@ export async function exportBadgesPdfBytes(options: BrowserPdfExportOptions): Pr
       logoImg,
       logoSide,
       readDataUrl,
-      pdf
+      pdf,
+      categoryClubLine: options.categoryClubLine === true
     })
   }
 
@@ -361,6 +412,7 @@ async function drawBadge(
     logoSide: number
     readDataUrl: (path: string) => Promise<string | null>
     pdf: PDFDocument
+    categoryClubLine?: boolean
   }
 ): Promise<void> {
   const {
@@ -378,7 +430,8 @@ async function drawBadge(
     logoImg,
     logoSide,
     readDataUrl,
-    pdf
+    pdf,
+    categoryClubLine
   } = ctx
 
   if (bgImg) {
@@ -455,19 +508,36 @@ async function drawBadge(
   const fields = template.layout.fields
   const values: Record<string, string> = {
     fullName: pdfSafeText(formatName(judoka)),
-    category: pdfSafeText(judoka.category || ''),
+    category: pdfSafeText(formatBadgeCategory(judoka.category || '') || judoka.category || ''),
     weight: judoka.weightKg != null ? pdfSafeText(`${judoka.weightKg} kg`) : '',
     sex: pdfSafeText(judoka.sex || ''),
     displayId: pdfSafeText(judoka.displayId || '')
   }
 
   for (const [key, style] of Object.entries(fields)) {
-    const text = values[key] ?? ''
-    if (!text) continue
     const size = style.fontSize * Math.min(sx, sy)
     const maxW = (style.maxWidth ?? band.width) * sx
     const textX = ox + style.x * sx
     const textY = oy + badgeH - style.y * sy - size
+
+    if (key === 'category' && categoryClubLine) {
+      drawCategoryClubLine(
+        page,
+        judoka.category || '',
+        judoka.club || '',
+        textX,
+        textY,
+        font,
+        fontBold,
+        size,
+        hexRgb(style.color || template.colors.text),
+        { maxWidth: maxW, align: style.align }
+      )
+      continue
+    }
+
+    const text = values[key] ?? ''
+    if (!text) continue
 
     if (key === 'displayId') {
       drawText(page, text, textX, textY, font, size, hexRgb(template.colors.bandText), {

@@ -8,9 +8,10 @@ import type { AppSettings } from '@shared/types/settings'
 import type { UserAccount } from '@shared/types/user-account'
 import { createDefaultBadgeTemplate } from '@shared/types/badge'
 import { createDefaultSettings } from '@shared/types/settings'
-import { computeAge, hasRecordedWeight, isSameJudokaIdentity, resolveJudokaCategory, setActiveCategoryAgeRanges } from '@shared/utils/judoka'
+import { computeAge, formatBadgeCategory, hasRecordedWeight, isSameJudokaIdentity, resolveJudokaCategory, setActiveCategoryAgeRanges } from '@shared/utils/judoka'
 import { setActiveRegisteredClubs } from '@shared/utils/clubs'
 import { formatCreatorLabel, matchesCreatorLabel, resolveCreatedByStorageValue } from '@shared/utils/creator'
+import { matchTeamWeightClass, normalizeTeamWeightClasses } from '@shared/utils/team-tirage'
 import { judokaFormSchema } from '@shared/validation/judoka'
 import { createId } from './create-id'
 import { supabase, type JudokaRow, type ProfileRow } from './supabase'
@@ -1020,6 +1021,7 @@ export const judovacClient = {
         return fail('Données judoka invalides', 'VALIDATION', parsed.error.flatten())
       }
 
+      const force = Boolean((body as { force?: boolean }).force)
       const duplicates = await findDuplicates({
         lastName: parsed.data.lastName,
         middleName: parsed.data.middleName,
@@ -1027,7 +1029,7 @@ export const judovacClient = {
         birthDate: parsed.data.birthDate,
         club: parsed.data.club
       })
-      if (duplicates.length > 0) {
+      if (duplicates.length > 0 && !force) {
         const ids = duplicates.map((d) => d.judoka.displayId).join(', ')
         return fail(
           `Doublon bloqué : un judoka avec le même Nom, Postnom, Prénom, Date de naissance et Club existe déjà (${ids}).`,
@@ -1093,11 +1095,12 @@ export const judovacClient = {
         birthDate,
         club: patch.club ?? (existing as JudokaRow).club
       }
+      const force = Boolean((body as { force?: boolean }).force)
       const duplicates = await findDuplicates({
         ...nextIdentity,
         excludeId: id
       })
-      if (duplicates.length > 0) {
+      if (duplicates.length > 0 && !force) {
         const ids = duplicates.map((d) => d.judoka.displayId).join(', ')
         return fail(
           `Doublon bloqué : un judoka avec le même Nom, Postnom, Prénom, Date de naissance et Club existe déjà (${ids}).`,
@@ -1781,6 +1784,8 @@ export const judovacClient = {
     perPage?: 4 | 6 | 8 | 'custom'
     customCols?: number
     customRows?: number
+    /** Badges par équipe : catégorie (gras) - club (regular). */
+    teamBadge?: boolean
   }): Promise<IpcResult<{ path: string; count: number }>> => {
     try {
       await requireProfile()
@@ -1814,6 +1819,20 @@ export const judovacClient = {
 
       if (opts.weighedOnly) {
         items = items.filter((j) => hasRecordedWeight(j.weightKg))
+      }
+
+      if (opts.teamBadge) {
+        const settingsRes = await judovacClient.getSettings()
+        const classes = settingsRes.ok
+          ? normalizeTeamWeightClasses(settingsRes.data.teamWeightClasses ?? [])
+          : []
+        items = items.map((j) => {
+          const wc = matchTeamWeightClass(j, classes)
+          return {
+            ...j,
+            category: wc?.label || formatBadgeCategory(j.category || '') || j.category
+          }
+        })
       }
 
       if (items.length === 0) {
@@ -1850,6 +1869,7 @@ export const judovacClient = {
         perPage: opts.perPage ?? 4,
         customCols: opts.customCols,
         customRows: opts.customRows,
+        categoryClubLine: opts.teamBadge === true,
         readDataUrl: async (path) => {
           try {
             // API serveur d'abord (fiable pour les photos Storage)

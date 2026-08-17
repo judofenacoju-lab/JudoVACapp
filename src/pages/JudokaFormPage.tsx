@@ -28,8 +28,10 @@ interface Props {
   embedded?: boolean
   /** Mettre le focus sur le champ Poids (pesée rapide). */
   focusWeight?: boolean
-  /** Club imposé (ex. création depuis Nouvelle équipe). */
+  /** Club imposé (ex. création depuis Par Équipe). */
   forcedClub?: string
+  /** Depuis Par Équipe : un judoka déjà inscrit en individuel n’est pas un doublon. */
+  skipDuplicateCheck?: boolean
 }
 
 type FormState = {
@@ -91,7 +93,8 @@ export function JudokaFormPage({
   editing = null,
   embedded = false,
   focusWeight = false,
-  forcedClub
+  forcedClub,
+  skipDuplicateCheck = false
 }: Props) {
   const [form, setForm] = useState<FormState>(empty)
   const [photoPath, setPhotoPath] = useState<string | null>(null)
@@ -199,7 +202,7 @@ export function JudokaFormPage({
       photoPath,
       createdBy,
       createdWorkstation,
-      force
+      force: skipDuplicateCheck || force
     }
 
     const res = isEdit
@@ -208,7 +211,7 @@ export function JudokaFormPage({
     setBusy(false)
 
     if (!res.ok) {
-      if (res.code === 'DUPLICATE') {
+      if (res.code === 'DUPLICATE' && !skipDuplicateCheck) {
         setDuplicateHint(
           res.error ||
             'Doublon bloqué : Nom, Postnom, Prénom, Date de naissance et Club déjà enregistrés.'

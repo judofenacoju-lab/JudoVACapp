@@ -164,7 +164,7 @@ export function ClientDashboardPage({ mode, onResetMode }: Props) {
         ? `Modifier ${editing.displayId}`
         : 'Nouveau judoka'
       : view === 'team'
-        ? 'Nouvelle équipe'
+        ? 'Par Équipe'
         : view === 'home'
           ? clientName
           : view === 'list'

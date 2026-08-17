@@ -44,7 +44,7 @@ interface NavDef {
 const SERVER_NAV: NavDef[] = [
   { id: 'home', label: 'Tableau de bord', icon: <Home className="h-4 w-4" /> },
   { id: 'form', label: 'Nouveau judoka', icon: <Plus className="h-4 w-4" /> },
-  { id: 'team', label: 'Nouvelle équipe', icon: <Users className="h-4 w-4" /> },
+  { id: 'team', label: 'Par Équipe', icon: <Users className="h-4 w-4" /> },
   { id: 'list', label: 'Liste / Recherche', icon: <List className="h-4 w-4" /> },
   { id: 'tirage', label: 'Tirage', icon: <Dices className="h-4 w-4" /> },
   { id: 'badge', label: 'Badges', icon: <IdCard className="h-4 w-4" /> },
@@ -58,7 +58,7 @@ const SERVER_NAV: NavDef[] = [
 const CLIENT_NAV: NavDef[] = [
   { id: 'home', label: 'Tableau de bord', icon: <Home className="h-4 w-4" /> },
   { id: 'form', label: 'Nouveau judoka', icon: <Plus className="h-4 w-4" /> },
-  { id: 'team', label: 'Nouvelle équipe', icon: <Users className="h-4 w-4" /> },
+  { id: 'team', label: 'Par Équipe', icon: <Users className="h-4 w-4" /> },
   { id: 'list', label: 'Liste / Recherche', icon: <List className="h-4 w-4" /> },
   { id: 'sync', label: 'Forcer la synchronisation', icon: <RefreshCw className="h-4 w-4" /> }
 ]

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Check, FolderOpen, Pencil, Plus, Search, Trash2, UserPlus, Users, X } from 'lucide-react'
-import type { Judoka } from '@shared/types/judoka'
+import { ArrowLeft, Check, FolderOpen, Pencil, Plus, Trash2, UserPlus, Users, X } from 'lucide-react'
+import type { Judoka, Sex } from '@shared/types/judoka'
 import type { TeamWeightClassRange } from '@shared/types/settings'
 import {
   createTeamId,
@@ -12,6 +12,7 @@ import {
 import { formatJudokaFullName } from '@shared/utils/judoka'
 import { mergeRegisteredClubNames } from '@shared/utils/clubs'
 import { normalizeTeamWeightClasses } from '@shared/utils/team-tirage'
+import { createWeightClassId, suggestWeightClassLabel } from '@shared/utils/tirage'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -37,8 +38,18 @@ function inWeightClass(j: Judoka, wc: TeamWeightClassRange): boolean {
   return w >= wc.minKg - 1e-9 && w <= wc.maxKg + 1e-9
 }
 
+function emptyDraftClass(): TeamWeightClassRange {
+  return {
+    id: createWeightClassId(),
+    label: '-66 kg',
+    minKg: 0,
+    maxKg: 66,
+    sex: 'M'
+  }
+}
+
 /**
- * Enregistrement d’une équipe : valider un club, puis y importer ou créer des judokas.
+ * Inscription d’une équipe : club + judokas, catégories de poids indépendantes du tirage.
  */
 export function TeamFormPage({
   createdBy,
@@ -47,23 +58,18 @@ export function TeamFormPage({
   embedded = false
 }: Props) {
   const [teams, setTeams] = useState<Team[]>([])
-  const [clubs, setClubs] = useState<string[]>([])
   const [judokas, setJudokas] = useState<Judoka[]>([])
   const [weightClasses, setWeightClasses] = useState<TeamWeightClassRange[]>([])
-  const [clubMode, setClubMode] = useState<'existing' | 'new'>('existing')
-  const [club, setClub] = useState('')
-  const [newClub, setNewClub] = useState('')
+  const [clubName, setClubName] = useState('')
   const [name, setName] = useState('')
   const [activeTeam, setActiveTeam] = useState<Team | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
-  const [query, setQuery] = useState('')
-  const [hits, setHits] = useState<Judoka[]>([])
-  const [searching, setSearching] = useState(false)
   const [creating, setCreating] = useState(false)
   const [editingJudoka, setEditingJudoka] = useState<Judoka | null>(null)
+  const [draftClass, setDraftClass] = useState<TeamWeightClassRange>(emptyDraftClass)
 
   async function reload(teamId?: string): Promise<void> {
     const [settingsRes, listed] = await Promise.all([
@@ -74,10 +80,6 @@ export function TeamFormPage({
       const nextTeams = normalizeTeams(settingsRes.data.teams)
       setTeams(nextTeams)
       setWeightClasses(normalizeTeamWeightClasses(settingsRes.data.teamWeightClasses ?? []))
-      const fromJudokas = listed.ok
-        ? listed.data.items.map((j) => j.club).filter(Boolean)
-        : []
-      setClubs(mergeRegisteredClubNames([...(settingsRes.data.clubs ?? []), ...fromJudokas]))
       const id = teamId ?? activeTeam?.id
       if (id) {
         setActiveTeam(nextTeams.find((t) => t.id === id) ?? null)
@@ -93,7 +95,7 @@ export function TeamFormPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- chargement initial
   }, [])
 
-  const chosenClub = (clubMode === 'new' ? newClub : club).trim()
+  const chosenClub = clubName.trim()
 
   const members = useMemo(() => {
     if (!activeTeam) return []
@@ -115,28 +117,20 @@ export function TeamFormPage({
   }, [members, weightClasses])
 
   function resetClubForm(): void {
-    setClub('')
-    setNewClub('')
+    setClubName('')
     setName('')
-    setClubMode('existing')
     setActiveTeam(null)
     setModalOpen(false)
-    setHits([])
-    setQuery('')
     setCreating(false)
     setEditingJudoka(null)
   }
 
   function openTeam(team: Team): void {
     setActiveTeam(team)
-    setClubMode('existing')
-    setClub(team.club)
-    setNewClub('')
+    setClubName(team.club)
     setName(team.name === team.club ? '' : team.name)
     setError(null)
     setMessage(null)
-    setHits([])
-    setQuery('')
     setCreating(false)
     setEditingJudoka(null)
     setModalOpen(true)
@@ -167,17 +161,23 @@ export function TeamFormPage({
     }
     const stored = normalizeTeams(saved.data.teams)
     setTeams(stored)
-    setClubs(mergeRegisteredClubNames([...(saved.data.clubs ?? []), ...judokas.map((j) => j.club)]))
     return stored.find((t) => t.id === nextTeam.id) ?? nextTeam
+  }
+
+  async function persistWeightClasses(classes: TeamWeightClassRange[]): Promise<boolean> {
+    const normalized = normalizeTeamWeightClasses(classes)
+    const saved = await window.judovac.setSettings({ teamWeightClasses: normalized })
+    if (!saved.ok) {
+      setError(saved.error)
+      return false
+    }
+    setWeightClasses(normalizeTeamWeightClasses(saved.data.teamWeightClasses ?? normalized))
+    return true
   }
 
   async function validateClub(): Promise<void> {
     if (!chosenClub) {
-      setError(
-        clubMode === 'new'
-          ? 'Saisissez le nom du nouveau club.'
-          : 'Sélectionnez un club existant.'
-      )
+      setError('Saisissez le nom du club.')
       return
     }
     setBusy(true)
@@ -192,14 +192,11 @@ export function TeamFormPage({
       }
       const current = normalizeTeams(settingsRes.data.teams)
       const existing = current.find((t) => t.club.trim().toLowerCase() === chosenClub.toLowerCase())
-      const alreadyInClub = judokas
-        .filter((j) => (j.club ?? '').trim().toLowerCase() === chosenClub.toLowerCase())
-        .map((j) => j.id)
       const nextTeam: Team = {
         id: existing?.id ?? createTeamId(),
         club: existing?.club ?? chosenClub,
         name: name.trim() || existing?.name || chosenClub,
-        judokaIds: [...new Set([...(existing?.judokaIds ?? []), ...alreadyInClub])],
+        judokaIds: existing?.judokaIds ?? [],
         lineups: existing?.lineups ?? [],
         createdBy: existing?.createdBy || createdBy,
         createdAt: existing?.createdAt ?? now,
@@ -208,15 +205,9 @@ export function TeamFormPage({
       const saved = await persistTeam(nextTeam)
       if (!saved) return
       setActiveTeam(saved)
-      setClub(saved.club)
-      setClubMode('existing')
-      setNewClub('')
+      setClubName(saved.club)
       setModalOpen(true)
-      setMessage(
-        `Club « ${teamDisplayName(saved)} » validé comme équipe${
-          saved.judokaIds.length ? ` (${saved.judokaIds.length} judoka(s) du club)` : ''
-        }.`
-      )
+      setMessage(`Club « ${teamDisplayName(saved)} » inscrit comme équipe.`)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Validation impossible')
     } finally {
@@ -230,18 +221,6 @@ export function TeamFormPage({
     setError(null)
     setMessage(null)
     try {
-      const sameClub =
-        (judoka.club ?? '').trim().toLowerCase() === activeTeam.club.trim().toLowerCase()
-      if (!sameClub) {
-        const up = await window.judovac.updateJudoka(judoka.id, {
-          ...judoka,
-          club: activeTeam.club
-        })
-        if (!up.ok) {
-          setError(up.error)
-          return
-        }
-      }
       const nextTeam: Team = {
         ...activeTeam,
         judokaIds: [...new Set([...activeTeam.judokaIds, judoka.id])],
@@ -251,13 +230,12 @@ export function TeamFormPage({
       if (!saved) return
       setActiveTeam(saved)
       setJudokas((prev) =>
-        prev.map((j) => (j.id === judoka.id ? { ...j, club: activeTeam.club } : j))
+        prev.some((j) => j.id === judoka.id) ? prev : [...prev, judoka]
       )
-      setHits((prev) => prev.filter((j) => j.id !== judoka.id))
-      setMessage(`${formatJudokaFullName(judoka)} importé dans ${teamDisplayName(saved)}.`)
-      await reload()
+      setMessage(`${formatJudokaFullName(judoka)} inscrit dans ${teamDisplayName(saved)}.`)
+      await reload(saved.id)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Import impossible')
+      setError(e instanceof Error ? e.message : 'Inscription impossible')
     } finally {
       setBusy(false)
     }
@@ -294,7 +272,9 @@ export function TeamFormPage({
     setBusy(true)
     setError(null)
     try {
-      const saved = await persistTeam(upsertTeamLineup(activeTeam, wc, patch))
+      const saved = await persistTeam(
+        upsertTeamLineup(activeTeam, { sex: wc.sex, label: wc.label, minKg: wc.minKg, maxKg: wc.maxKg }, patch)
+      )
       if (!saved) return
       setActiveTeam(saved)
     } finally {
@@ -302,33 +282,33 @@ export function TeamFormPage({
     }
   }
 
-  async function search(): Promise<void> {
-    const q = query.trim()
-    if (q.length < 2) {
-      setError('Saisissez au moins 2 caractères pour chercher un judoka.')
-      return
-    }
-    setSearching(true)
+  async function addWeightClass(): Promise<void> {
+    const next = normalizeTeamWeightClasses([...weightClasses, draftClass])
+    setBusy(true)
     setError(null)
     try {
-      const res = await window.judovac.searchJudokas(q)
-      if (!res.ok) {
-        setError(res.error)
-        setHits([])
-        return
-      }
-      const inTeam = new Set(activeTeam?.judokaIds ?? [])
-      setHits(
-        res.data.items
-          .filter((j) => !inTeam.has(j.id))
-          .sort((a, b) => formatJudokaFullName(a).localeCompare(formatJudokaFullName(b), 'fr'))
-          .slice(0, 40)
-      )
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Recherche impossible')
+      if (!(await persistWeightClasses(next))) return
+      setDraftClass(emptyDraftClass())
     } finally {
-      setSearching(false)
+      setBusy(false)
     }
+  }
+
+  async function updateWeightClass(id: string, patch: Partial<TeamWeightClassRange>): Promise<void> {
+    const next = weightClasses.map((row) => {
+      if (row.id !== id) return row
+      const updated = { ...row, ...patch }
+      if (patch.maxKg != null && /^-\s*[\d.,]+\s*kg$/i.test(row.label.trim())) {
+        updated.label = suggestWeightClassLabel(Number(patch.maxKg) || 0)
+      }
+      return updated
+    })
+    setWeightClasses(next)
+    await persistWeightClasses(next)
+  }
+
+  async function removeWeightClass(id: string): Promise<void> {
+    await persistWeightClasses(weightClasses.filter((c) => c.id !== id))
   }
 
   async function remove(team: Team): Promise<void> {
@@ -401,6 +381,7 @@ export function TeamFormPage({
         createdWorkstation={createdWorkstation}
         editing={editingJudoka}
         forcedClub={activeTeam.club}
+        skipDuplicateCheck
         onBack={() => {
           setCreating(false)
           setEditingJudoka(null)
@@ -408,7 +389,7 @@ export function TeamFormPage({
         onSaved={async (result) => {
           const created = result?.judoka
           if (editingJudoka) {
-            await reload()
+            await reload(activeTeam.id)
             setEditingJudoka(null)
             setMessage('Fiche judoka enregistrée.')
             return
@@ -416,22 +397,10 @@ export function TeamFormPage({
           if (created) {
             await addMember(created)
           } else {
-            await reload()
-            const listed = await window.judovac.listJudokas({ limit: 1_000_000, offset: 0 })
-            if (listed.ok && activeTeam) {
-              const newest = listed.data.items
-                .filter(
-                  (j) =>
-                    (j.club ?? '').trim().toLowerCase() === activeTeam.club.trim().toLowerCase()
-                )
-                .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
-              if (newest && !activeTeam.judokaIds.includes(newest.id)) {
-                await addMember(newest)
-              }
-            }
+            await reload(activeTeam.id)
           }
           setCreating(false)
-          setMessage('Judoka créé et ajouté à l’équipe.')
+          setMessage('Judoka inscrit dans l’équipe.')
         }}
       />
     )
@@ -440,8 +409,8 @@ export function TeamFormPage({
   return (
     <AppShell
       embedded={embedded}
-      title="Nouvelle équipe"
-      subtitle="Validez un club comme équipe, puis importez ou créez ses judokas."
+      title="Par Équipe"
+      subtitle="Inscrivez un club comme équipe, puis ajoutez ses judokas et catégories de poids."
       actions={
         !embedded ? (
           <Button variant="outline" onClick={onBack}>
@@ -453,59 +422,22 @@ export function TeamFormPage({
     >
       <div className="space-y-6 animate-fade-in">
         <div className="rounded-xl border bg-white/75 p-5 space-y-4 max-w-3xl">
-          <Label className="text-base">1. Club à valider comme équipe</Label>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant={clubMode === 'existing' ? 'accent' : 'outline'}
-              disabled={busy}
-              onClick={() => setClubMode('existing')}
-            >
-              Club existant
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={clubMode === 'new' ? 'accent' : 'outline'}
-              disabled={busy}
-              onClick={() => setClubMode('new')}
-            >
-              Nouveau club
-            </Button>
-          </div>
-
+          <Label className="text-base">1. Club à inscrire comme équipe</Label>
+          <p className="text-sm text-muted-foreground">
+            Un club déjà présent en individuel peut être inscrit ici : ce n’est pas un doublon, et
+            ses judokas individuels ne sont pas importés.
+          </p>
           <div className="grid gap-4 sm:grid-cols-2">
-            {clubMode === 'existing' ? (
-              <div className="space-y-1">
-                <Label htmlFor="team-club">Club existant</Label>
-                <select
-                  id="team-club"
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  value={club}
-                  disabled={busy}
-                  onChange={(e) => setClub(e.target.value)}
-                >
-                  <option value="">— Sélectionner un club —</option>
-                  {clubs.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                <Label htmlFor="team-new-club">Nom du nouveau club</Label>
-                <Input
-                  id="team-new-club"
-                  value={newClub}
-                  placeholder="Ex. Judo Kinshasa"
-                  disabled={busy}
-                  onChange={(e) => setNewClub(e.target.value)}
-                />
-              </div>
-            )}
+            <div className="space-y-1">
+              <Label htmlFor="team-club">Nom du club</Label>
+              <Input
+                id="team-club"
+                value={clubName}
+                placeholder="Ex. Judo Kinshasa"
+                disabled={busy}
+                onChange={(e) => setClubName(e.target.value)}
+              />
+            </div>
             <div className="space-y-1">
               <Label htmlFor="team-name">Nom d’équipe (optionnel)</Label>
               <Input
@@ -521,7 +453,7 @@ export function TeamFormPage({
           <div className="flex flex-wrap gap-2">
             <Button variant="accent" disabled={busy} onClick={() => void validateClub()}>
               <Check className="h-4 w-4" />
-              {busy ? 'Validation…' : 'Valider comme équipe'}
+              {busy ? 'Inscription…' : 'Valider comme équipe'}
             </Button>
             {activeTeam && (
               <Button variant="outline" disabled={busy} onClick={resetClubForm}>
@@ -541,7 +473,7 @@ export function TeamFormPage({
           </div>
           {teams.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              Aucune équipe. Validez un club existant ou créez-en un nouveau.
+              Aucune équipe. Inscrivez un club pour commencer.
             </p>
           ) : (
             <ul className="space-y-2">
@@ -595,8 +527,9 @@ export function TeamFormPage({
                   Judokas de {teamDisplayName(activeTeam)}
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Importez ou créez des judokas, puis désignez le titulaire et le remplaçant de
-                  chaque catégorie de poids.
+                  Créez les catégories (seuil de poids et sexe). Chaque judoka inscrit se place
+                  automatiquement. Le titulaire et le remplaçant sont choisis ici ; le tirage les
+                  reprend tels quels.
                 </p>
               </div>
               <Button
@@ -611,90 +544,105 @@ export function TeamFormPage({
             </div>
 
             <div className="space-y-4">
-              <div className="flex flex-wrap gap-2">
-                <Input
-                  className="min-w-[12rem] flex-1"
-                  value={query}
-                  placeholder="Nom, prénom, n°…"
-                  disabled={busy || searching}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      void search()
-                    }
-                  }}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={busy || searching}
-                  onClick={() => void search()}
-                >
-                  <Search className="h-4 w-4" />
-                  {searching ? 'Recherche…' : 'Chercher'}
-                </Button>
-                <Button
-                  type="button"
-                  variant="accent"
-                  disabled={busy}
-                  onClick={() => setCreating(true)}
-                >
-                  <UserPlus className="h-4 w-4" />
-                  Nouveau judoka
-                </Button>
+              <div className="rounded-lg border bg-slate-50/80 p-3 space-y-3">
+                <Label className="text-sm">Catégories de poids</Label>
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,0.7fr)_minmax(0,0.7fr)_auto]">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Libellé</Label>
+                    <Input
+                      value={draftClass.label}
+                      placeholder="-66 kg"
+                      disabled={busy}
+                      onChange={(e) => setDraftClass((c) => ({ ...c, label: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Sexe</Label>
+                    <select
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      value={draftClass.sex}
+                      disabled={busy}
+                      onChange={(e) =>
+                        setDraftClass((c) => ({ ...c, sex: e.target.value as Sex }))
+                      }
+                    >
+                      <option value="M">Garçons</option>
+                      <option value="F">Filles</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Min (kg)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={0.5}
+                      value={draftClass.minKg}
+                      disabled={busy}
+                      onChange={(e) =>
+                        setDraftClass((c) => ({ ...c, minKg: Number(e.target.value) || 0 }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Max (kg)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={0.5}
+                      value={draftClass.maxKg}
+                      disabled={busy}
+                      onChange={(e) => {
+                        const maxKg = Number(e.target.value) || 0
+                        setDraftClass((c) => ({
+                          ...c,
+                          maxKg,
+                          label: /^-\s*[\d.,]+\s*kg$/i.test(c.label.trim())
+                            ? suggestWeightClassLabel(maxKg)
+                            : c.label
+                        }))
+                      }}
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => void addWeightClass()}
+                    >
+                      <Plus className="h-4 w-4" />
+                      Ajouter
+                    </Button>
+                  </div>
+                </div>
+                {weightClasses.length === 0 && (
+                  <p className="text-xs text-amber-800">
+                    Ajoutez au moins une catégorie pour classer les judokas et désigner titulaire /
+                    remplaçant.
+                  </p>
+                )}
               </div>
 
-              {hits.length > 0 && (
-                <ul className="space-y-1 rounded-lg border bg-slate-50/80 p-2">
-                  {hits.map((j) => (
-                    <li
-                      key={j.id}
-                      className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm"
-                    >
-                      <div>
-                        <p className="font-medium text-judo-navy">{formatJudokaFullName(j)}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {[j.displayId, j.club || 'Sans club', j.category || null]
-                            .filter(Boolean)
-                            .join(' · ')}
-                        </p>
-                      </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={busy}
-                        onClick={() => void addMember(j)}
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        Importer
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {hits.length === 0 && query.trim().length >= 2 && !searching && (
-                <p className="text-xs text-muted-foreground">
-                  Aucun judoka trouvé hors de cette équipe. Créez-en un nouveau si besoin.
-                </p>
-              )}
+              <Button
+                type="button"
+                variant="accent"
+                disabled={busy}
+                onClick={() => setCreating(true)}
+              >
+                <UserPlus className="h-4 w-4" />
+                Nouveau judoka
+              </Button>
 
               {members.length === 0 ? (
                 <p className="text-sm text-amber-800">
-                  Aucun judoka dans cette équipe. Importez un judoka existant ou créez-en un.
+                  Aucun judoka dans cette équipe. Inscrivez-en un : il sera classé selon son sexe et
+                  son poids.
                 </p>
               ) : (
                 <div className="space-y-3">
                   <p className="text-xs text-muted-foreground">
                     {members.length} judoka(s) dans l’équipe
                   </p>
-                  {weightClasses.length === 0 && (
-                    <p className="text-xs text-amber-800">
-                      Définissez les catégories de poids (avec sexe) dans Tirage → Par équipe pour
-                      classer les titulaires et remplaçants.
-                    </p>
-                  )}
                   {classified.blocks.map(({ wc, items }) => {
                     const lineup = (activeTeam.lineups ?? []).find(
                       (l) =>
@@ -706,10 +654,60 @@ export function TeamFormPage({
                     const sexLabel = wc.sex === 'F' ? 'Filles' : 'Garçons'
                     return (
                       <div key={wc.id} className="rounded-lg border bg-slate-50/80 p-3 space-y-2">
-                        <p className="text-xs font-medium text-muted-foreground">
-                          {sexLabel} · {wc.label}
-                          {` (${wc.minKg}–${wc.maxKg} kg)`}
-                        </p>
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <p className="text-xs font-medium text-muted-foreground">
+                            {sexLabel} · {wc.label}
+                            {` (${wc.minKg}–${wc.maxKg} kg)`}
+                          </p>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            title="Supprimer la catégorie"
+                            disabled={busy}
+                            onClick={() => void removeWeightClass(wc.id)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                          </Button>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-4">
+                          <Input
+                            value={wc.label}
+                            disabled={busy}
+                            onChange={(e) => void updateWeightClass(wc.id, { label: e.target.value })}
+                          />
+                          <select
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-2 text-sm"
+                            value={wc.sex}
+                            disabled={busy}
+                            onChange={(e) =>
+                              void updateWeightClass(wc.id, { sex: e.target.value as Sex })
+                            }
+                          >
+                            <option value="M">Garçons</option>
+                            <option value="F">Filles</option>
+                          </select>
+                          <Input
+                            type="number"
+                            min={0}
+                            step={0.5}
+                            value={wc.minKg}
+                            disabled={busy}
+                            onChange={(e) =>
+                              void updateWeightClass(wc.id, { minKg: Number(e.target.value) || 0 })
+                            }
+                          />
+                          <Input
+                            type="number"
+                            min={0}
+                            step={0.5}
+                            value={wc.maxKg}
+                            disabled={busy}
+                            onChange={(e) =>
+                              void updateWeightClass(wc.id, { maxKg: Number(e.target.value) || 0 })
+                            }
+                          />
+                        </div>
                         {items.length > 0 && (
                           <div className="grid gap-2 sm:grid-cols-2">
                             <div className="space-y-1">
@@ -757,7 +755,9 @@ export function TeamFormPage({
                           </div>
                         )}
                         {items.length === 0 ? (
-                          <p className="text-xs text-muted-foreground">Aucun judoka dans cette catégorie.</p>
+                          <p className="text-xs text-muted-foreground">
+                            Aucun judoka dans cette catégorie pour le moment.
+                          </p>
                         ) : (
                           <ul className="space-y-1">{items.map((j) => memberRow(j))}</ul>
                         )}
@@ -766,7 +766,9 @@ export function TeamFormPage({
                   })}
                   {classified.uncategorized.length > 0 && (
                     <div className="rounded-lg border bg-slate-50/80 p-3 space-y-2">
-                      <p className="text-xs font-medium text-muted-foreground">Non classés</p>
+                      <p className="text-xs font-medium text-muted-foreground">
+                        Non classés (poids ou sexe hors seuils)
+                      </p>
                       <ul className="space-y-1">
                         {classified.uncategorized.map((j) => memberRow(j))}
                       </ul>

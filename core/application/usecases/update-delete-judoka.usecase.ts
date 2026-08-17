@@ -40,7 +40,7 @@ export class UpdateJudokaUseCase {
       excludeId: id
     })
 
-    if (duplicates.length > 0) {
+    if (duplicates.length > 0 && !options.force) {
       const ids = duplicates.map((d) => d.judoka.displayId).join(', ')
       throw new DuplicateError(
         `Doublon bloqué : un judoka avec le même Nom, Postnom, Prénom, Date de naissance et Club existe déjà (${ids}).`,

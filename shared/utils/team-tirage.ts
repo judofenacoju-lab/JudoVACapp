@@ -54,6 +54,18 @@ export function normalizeTeamWeightClasses(
     )
 }
 
+export function matchTeamWeightClass(
+  j: Judoka,
+  classes: TeamWeightClassRange[]
+): TeamWeightClassRange | null {
+  const w = Number(j.weightKg)
+  if (!Number.isFinite(w) || w <= 0) return null
+  for (const c of normalizeTeamWeightClasses(classes)) {
+    if (j.sex === c.sex && w >= c.minKg - 1e-9 && w <= c.maxKg + 1e-9) return c
+  }
+  return null
+}
+
 function shuffle<T>(items: T[]): T[] {
   const a = [...items]
   for (let i = a.length - 1; i > 0; i--) {

@@ -125,6 +125,7 @@ export function PdfExportPage({ onBack, embedded = false }: Props) {
       judokaIds?: string[]
       weighedOnly: true
       perPage: 4 | 6 | 8
+      teamBadge?: boolean
     } = {
       weighedOnly: true,
       perPage
@@ -143,6 +144,7 @@ export function PdfExportPage({ onBack, embedded = false }: Props) {
         }
       }
       opts.judokaIds = ids
+      opts.teamBadge = true
     } else if (selectedUser) {
       opts.createdBy = selectedUser
     } else {
@@ -237,7 +239,7 @@ export function PdfExportPage({ onBack, embedded = false }: Props) {
         </p>
         {tab === 'team' && teamCount === 0 && (
           <p className="text-sm text-amber-800">
-            Aucune équipe validée. Enregistrez d’abord des équipes dans Nouvelle équipe.
+            Aucune équipe validée. Enregistrez d’abord des équipes dans Par Équipe.
           </p>
         )}
 

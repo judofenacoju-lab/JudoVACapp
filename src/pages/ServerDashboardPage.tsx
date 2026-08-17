@@ -34,7 +34,7 @@ interface Props {
 const TITLES: Record<ServerNavId, string> = {
   home: 'Tableau de bord',
   form: 'Judoka',
-  team: 'Nouvelle équipe',
+  team: 'Par Équipe',
   list: 'Liste / Recherche',
   tirage: 'Tirage',
   badge: 'Designer de badge',
