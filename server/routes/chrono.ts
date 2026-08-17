@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { SettingsStore } from '@core/infrastructure/settings/settings-store'
 import {
+  applyCombatSubstitute,
   applyCombatWinner,
   combatSessionKind,
   hasAtLeastOneJudoka,
@@ -8,8 +9,8 @@ import {
   type CombatStatus
 } from '@shared/types/combats'
 import { toChronoCombat, type ChronoConnectResponse } from '@shared/types/chrono'
-import { resolveTeamMatches } from '@shared/utils/team-tirage'
-import { createDefaultCategoryAgeRanges } from '@shared/types/settings'
+import { normalizeTeamWeightClasses, resolveTeamMatches } from '@shared/utils/team-tirage'
+import { normalizeTeams } from '@shared/types/teams'
 import { getContainer } from '../container'
 import { SocketEvents } from '@shared/constants/socket-events'
 
@@ -161,13 +162,38 @@ export function createChronoRouter(): Router {
         ? await getContainer().listJudoka.execute(1_000_000, 0)
         : []
       next = resolveTeamMatches(next, {
-        teams: settings.teams ?? [],
+        teams: normalizeTeams(settings.teams ?? []),
         judokas: listed,
-        ranges: settings.categories?.length
-          ? settings.categories
-          : createDefaultCategoryAgeRanges()
+        weightClasses: normalizeTeamWeightClasses(settings.teamWeightClasses ?? [])
       })
     }
+    const saved = await saveSession(next)
+    res.json(payload(saved, found.tatami.id, found.index))
+  })
+
+  router.post('/combat/substitute', async (req, res) => {
+    const session = await loadSession()
+    if (!session?.confirmedAt) {
+      res.status(409).json({ ok: false, error: 'Session Combats non confirmée.' })
+      return
+    }
+    const found = resolveTatami(session, req.body?.password)
+    if (!found) {
+      res.status(401).json({ ok: false, error: 'Mot de passe tatami incorrect.' })
+      return
+    }
+    const combatId = String(req.body?.combatId ?? '')
+    const slot = req.body?.slot === 'bottom' ? 'bottom' : req.body?.slot === 'top' ? 'top' : null
+    if (!slot) {
+      res.status(400).json({ ok: false, error: 'Côté invalide.' })
+      return
+    }
+    const combat = session.combats.find((c) => c.id === combatId && c.tatamiId === found.tatami.id)
+    if (!combat) {
+      res.status(404).json({ ok: false, error: 'Combat introuvable sur ce tatami.' })
+      return
+    }
+    const next = applyCombatSubstitute(session, combatId, slot)
     const saved = await saveSession(next)
     res.json(payload(saved, found.tatami.id, found.index))
   })

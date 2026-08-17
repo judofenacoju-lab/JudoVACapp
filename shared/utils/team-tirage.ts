@@ -1,6 +1,6 @@
 import type { Judoka, Sex } from '@shared/types/judoka'
-import type { CategoryAgeRange } from '@shared/types/settings'
-import type { Team } from '@shared/types/teams'
+import type { TeamWeightClassRange } from '@shared/types/settings'
+import type { Team, TeamCategoryLineup } from '@shared/types/teams'
 import { teamDisplayName } from '@shared/types/teams'
 import {
   createEmptyCombatSession,
@@ -12,7 +12,8 @@ import {
   type ManagedCombat,
   type TeamMatch
 } from '@shared/types/combats'
-import { formatJudokaFullName, resolveJudokaCategory } from '@shared/utils/judoka'
+import { formatJudokaFullName } from '@shared/utils/judoka'
+import { createWeightClassId, suggestWeightClassLabel } from '@shared/utils/tirage'
 
 export interface TeamTirageResult {
   generatedAt: string
@@ -20,6 +21,37 @@ export interface TeamTirageResult {
   matchCount: number
   boutCount: number
   session: CombatSession
+}
+
+export function normalizeTeamWeightClasses(
+  classes: Array<Partial<TeamWeightClassRange> | TeamWeightClassRange>
+): TeamWeightClassRange[] {
+  return classes
+    .map((c) => {
+      const minKg = Number(c.minKg)
+      const maxKg = Number(c.maxKg)
+      const sex: Sex | null = c.sex === 'F' ? 'F' : c.sex === 'M' ? 'M' : null
+      const label = String(c.label ?? '').trim() || suggestWeightClassLabel(maxKg)
+      return {
+        id: String(c.id ?? '').trim() || createWeightClassId(),
+        label,
+        minKg: Number.isFinite(minKg) ? Math.min(minKg, maxKg) : 0,
+        maxKg: Number.isFinite(maxKg) ? Math.max(minKg, maxKg) : 0,
+        sex: sex ?? 'M'
+      }
+    })
+    .filter(
+      (c) =>
+        (c.sex === 'M' || c.sex === 'F') &&
+        Number.isFinite(c.minKg) &&
+        Number.isFinite(c.maxKg) &&
+        c.maxKg > 0 &&
+        c.label
+    )
+    .sort(
+      (a, b) =>
+        a.sex.localeCompare(b.sex) || a.maxKg - b.maxKg || a.minKg - b.minKg || a.label.localeCompare(b.label, 'fr')
+    )
 }
 
 function shuffle<T>(items: T[]): T[] {
@@ -49,7 +81,7 @@ function judokaWeight(j: Judoka): number {
   return Number.isFinite(n) && n > 0 ? n : 0
 }
 
-function toFighter(j: Judoka, category: string, ranges: CategoryAgeRange[]): CombatFighterRef {
+function toFighter(j: Judoka, category: string): CombatFighterRef {
   return {
     id: j.id,
     displayId: j.displayId,
@@ -57,7 +89,7 @@ function toFighter(j: Judoka, category: string, ranges: CategoryAgeRange[]): Com
     club: j.club?.trim() || '',
     age: judokaAge(j),
     sex: j.sex,
-    category: resolveJudokaCategory(j.birthDate, j.category, ranges) || category,
+    category,
     weightKg: judokaWeight(j)
   }
 }
@@ -66,21 +98,50 @@ function membersOf(team: Team, byId: Map<string, Judoka>): Judoka[] {
   return team.judokaIds.map((id) => byId.get(id)).filter((j): j is Judoka => Boolean(j))
 }
 
-function groupKey(j: Judoka, ranges: CategoryAgeRange[]): string {
-  const cat = resolveJudokaCategory(j.birthDate, j.category, ranges) || 'Sans catégorie'
-  return `${j.sex}|${cat}`
+function matchesWeightClass(j: Judoka, wc: TeamWeightClassRange): boolean {
+  if (j.sex !== wc.sex) return false
+  const w = judokaWeight(j)
+  if (w <= 0) return false
+  return w >= wc.minKg - 1e-9 && w <= wc.maxKg + 1e-9
 }
 
-function parseKey(key: string): { sex: Sex; category: string } {
-  const i = key.indexOf('|')
-  const sex = (key.slice(0, i) === 'F' ? 'F' : 'M') as Sex
-  return { sex, category: key.slice(i + 1) || 'Sans catégorie' }
+function lineupForClass(team: Team, wc: TeamWeightClassRange): TeamCategoryLineup | undefined {
+  return (team.lineups ?? []).find((l) => {
+    if (l.sex !== wc.sex) return false
+    if (l.weightLabel.trim().toLowerCase() === wc.label.trim().toLowerCase()) return true
+    return Math.abs(l.minKg - wc.minKg) < 1e-6 && Math.abs(l.maxKg - wc.maxKg) < 1e-6
+  })
 }
 
 function sortJudokas(a: Judoka, b: Judoka): number {
   const w = judokaWeight(a) - judokaWeight(b)
   if (w !== 0) return w
   return formatJudokaFullName(a).localeCompare(formatJudokaFullName(b), 'fr')
+}
+
+function pickPrincipalAndSub(
+  team: Team,
+  wc: TeamWeightClassRange,
+  byId: Map<string, Judoka>
+): { principal: Judoka | null; substitute: Judoka | null } {
+  const candidates = membersOf(team, byId)
+    .filter((j) => matchesWeightClass(j, wc))
+    .slice()
+    .sort(sortJudokas)
+  const lineup = lineupForClass(team, wc)
+  let principal: Judoka | null = null
+  let substitute: Judoka | null = null
+  if (lineup?.principalId) {
+    principal = candidates.find((j) => j.id === lineup.principalId) ?? null
+  }
+  if (!principal) principal = candidates[0] ?? null
+  if (lineup?.substituteId && lineup.substituteId !== principal?.id) {
+    substitute = candidates.find((j) => j.id === lineup.substituteId) ?? null
+  }
+  if (!substitute) {
+    substitute = candidates.find((j) => j.id !== principal?.id) ?? null
+  }
+  return { principal, substitute }
 }
 
 function boutStatus(top: CombatFighterRef | null, bottom: CombatFighterRef | null): {
@@ -100,90 +161,76 @@ export function buildTeamBouts(
   home: Team,
   away: Team,
   byId: Map<string, Judoka>,
-  ranges: CategoryAgeRange[],
+  weightClasses: TeamWeightClassRange[],
   now: string
 ): ManagedCombat[] {
-  const homeMembers = membersOf(home, byId)
-  const awayMembers = membersOf(away, byId)
-  const groups = new Map<string, { home: Judoka[]; away: Judoka[] }>()
-  for (const j of homeMembers) {
-    const key = groupKey(j, ranges)
-    const g = groups.get(key) ?? { home: [], away: [] }
-    g.home.push(j)
-    groups.set(key, g)
-  }
-  for (const j of awayMembers) {
-    const key = groupKey(j, ranges)
-    const g = groups.get(key) ?? { home: [], away: [] }
-    g.away.push(j)
-    groups.set(key, g)
-  }
-
-  const keys = [...groups.keys()].sort((a, b) => a.localeCompare(b, 'fr'))
+  const classes = normalizeTeamWeightClasses(weightClasses)
   const combats: ManagedCombat[] = []
-  let index = 0
   const homeLabel = teamDisplayName(home)
   const awayLabel = teamDisplayName(away)
   const teamMatchLabel = `${homeLabel} vs ${awayLabel}`
 
-  for (const key of keys) {
-    const { sex, category } = parseKey(key)
-    const g = groups.get(key)!
-    const homeList = g.home.slice().sort(sortJudokas)
-    const awayList = g.away.slice().sort(sortJudokas)
-    const n = Math.max(homeList.length, awayList.length)
-    for (let i = 0; i < n; i++) {
-      const hj = homeList[i]
-      const aj = awayList[i]
-      const top = hj ? toFighter(hj, category, ranges) : null
-      const bottom = aj ? toFighter(aj, category, ranges) : null
-      const { status, winnerId, bye } = boutStatus(top, bottom)
-      const sexLabel = sex === 'F' ? 'Filles' : 'Garçons'
-      index += 1
-      combats.push({
-        id: `${match.id}::bout-${index}`,
-        matchId: `bout-${index}`,
-        label: `Combat ${index}`,
-        round: match.round,
-        matchIndex: index - 1,
-        poolKey: `${match.id}|${key}`,
-        poolLabel: `${sexLabel} · ${category}`,
-        sex,
-        category,
-        weightLabel: '',
-        top,
-        bottom,
-        bye,
-        tatamiId: null,
-        orderOnTatami: 0,
-        status,
-        winnerId,
-        feedsInto: null,
-        updatedAt: now,
-        kind: 'team',
-        teamMatchId: match.id,
-        teamMatchLabel,
-        homeClub: home.club,
-        awayClub: away.club
-      })
-    }
-  }
-  return combats
+  classes.forEach((wc, index) => {
+    const homePick = pickPrincipalAndSub(home, wc, byId)
+    const awayPick = pickPrincipalAndSub(away, wc, byId)
+    const top = homePick.principal ? toFighter(homePick.principal, wc.label) : null
+    const bottom = awayPick.principal ? toFighter(awayPick.principal, wc.label) : null
+    if (!top && !bottom) return
+    const topSubstitute = homePick.substitute ? toFighter(homePick.substitute, wc.label) : null
+    const bottomSubstitute = awayPick.substitute ? toFighter(awayPick.substitute, wc.label) : null
+    const { status, winnerId, bye } = boutStatus(top, bottom)
+    const sexLabel = wc.sex === 'F' ? 'Filles' : 'Garçons'
+    combats.push({
+      id: `${match.id}::bout-${wc.sex}-${wc.id}`,
+      matchId: `bout-${wc.id}`,
+      label: `Combat ${index + 1}`,
+      round: match.round,
+      matchIndex: index,
+      poolKey: `${match.id}|${wc.sex}|${wc.id}`,
+      poolLabel: `${sexLabel} · ${wc.label}`,
+      sex: wc.sex,
+      category: wc.label,
+      weightLabel: wc.label,
+      top,
+      bottom,
+      topSubstitute,
+      bottomSubstitute,
+      bye,
+      tatamiId: null,
+      orderOnTatami: 0,
+      status,
+      winnerId,
+      feedsInto: null,
+      updatedAt: now,
+      kind: 'team',
+      teamMatchId: match.id,
+      teamMatchLabel,
+      homeClub: home.club,
+      awayClub: away.club
+    })
+  })
+
+  return combats.map((c, i) => ({ ...c, label: `Combat ${i + 1}`, matchIndex: i }))
 }
 
 export function generateTeamTirage(
   teams: Team[],
   judokas: Judoka[],
-  ranges: CategoryAgeRange[]
+  weightClasses: TeamWeightClassRange[]
 ): TeamTirageResult {
   const now = new Date().toISOString()
-  const eligible = teams.filter((t) => t.club.trim() && t.judokaIds.length > 0)
+  const classes = normalizeTeamWeightClasses(weightClasses)
+  const registered = teams.filter((t) => t.club.trim() && t.judokaIds.length > 0)
+  const allowed = new Set(registered.flatMap((t) => t.judokaIds))
+  const byId = new Map(judokas.filter((j) => allowed.has(j.id)).map((j) => [j.id, j]))
+  const eligible = registered.filter((t) => membersOf(t, byId).length > 0)
+
   const session = createEmptyCombatSession()
   session.kind = 'team'
   session.sourceTirageAt = now
   session.updatedAt = now
 
-  if (eligible.length < 2) {
+  if (eligible.length < 2 || classes.length === 0) {
     session.teamMatches = []
     session.combats = []
     return {
@@ -195,7 +242,6 @@ export function generateTeamTirage(
     }
   }
 
-  const byId = new Map(judokas.map((j) => [j.id, j]))
   const shuffled = shuffle(eligible)
   const size = nextPow2(shuffled.length)
   const slots: Array<Team | null> = [...shuffled]
@@ -257,7 +303,7 @@ export function generateTeamTirage(
     const home = teamById.get(m.homeTeamId)
     const away = teamById.get(m.awayTeamId)
     if (!home || !away) continue
-    combats.push(...buildTeamBouts(m, home, away, byId, ranges, now))
+    combats.push(...buildTeamBouts(m, home, away, byId, classes, now))
   }
 
   session.teamMatches = matches
@@ -267,7 +313,7 @@ export function generateTeamTirage(
     teamCount: eligible.length,
     matchCount: first.filter((m) => m.homeTeamId && m.awayTeamId).length,
     boutCount: combats.filter(hasAtLeastOneJudoka).length,
-    session: resolveTeamMatches(session, { teams: eligible, judokas, ranges })
+    session: resolveTeamMatches(session, { teams: eligible, judokas: [...byId.values()], weightClasses: classes })
   }
 }
 
@@ -301,10 +347,10 @@ export function teamMatchScore(
   return { home, away }
 }
 
-interface TeamResolveCtx {
+export interface TeamResolveCtx {
   teams: Team[]
   judokas: Judoka[]
-  ranges: CategoryAgeRange[]
+  weightClasses: TeamWeightClassRange[]
 }
 
 function fillSlot(match: TeamMatch, slot: 'home' | 'away', team: Team): void {
@@ -329,8 +375,11 @@ export function resolveTeamMatches(
   const matches = session.teamMatches.map((m) => ({ ...m }))
   let combats = session.combats.map((c) => ({ ...c }))
   const teamById = new Map((ctx?.teams ?? []).map((t) => [t.id, t]))
-  const byId = new Map((ctx?.judokas ?? []).map((j) => [j.id, j]))
-  const ranges = ctx?.ranges ?? []
+  const allowed = new Set((ctx?.teams ?? []).flatMap((t) => t.judokaIds))
+  const byId = new Map(
+    (ctx?.judokas ?? []).filter((j) => allowed.size === 0 || allowed.has(j.id)).map((j) => [j.id, j])
+  )
+  const weightClasses = normalizeTeamWeightClasses(ctx?.weightClasses ?? [])
 
   let changed = true
   while (changed) {
@@ -384,8 +433,8 @@ export function resolveTeamMatches(
       if (combats.some((c) => c.teamMatchId === match.id)) continue
       const home = teamById.get(match.homeTeamId)
       const away = teamById.get(match.awayTeamId)
-      if (!home || !away || ranges.length === 0) continue
-      const created = buildTeamBouts(match, home, away, byId, ranges, now)
+      if (!home || !away || weightClasses.length === 0) continue
+      const created = buildTeamBouts(match, home, away, byId, weightClasses, now)
       if (created.length === 0) continue
       combats = [...combats, ...created]
       changed = true

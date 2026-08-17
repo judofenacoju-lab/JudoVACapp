@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Check, Pencil, Plus, Search, Trash2, UserPlus, Users } from 'lucide-react'
+import { ArrowLeft, Check, FolderOpen, Pencil, Plus, Search, Trash2, UserPlus, Users, X } from 'lucide-react'
 import type { Judoka } from '@shared/types/judoka'
-import { createTeamId, normalizeTeams, teamDisplayName, type Team } from '@shared/types/teams'
-import { formatJudokaFullName, resolveJudokaCategory } from '@shared/utils/judoka'
+import type { TeamWeightClassRange } from '@shared/types/settings'
+import {
+  createTeamId,
+  normalizeTeams,
+  teamDisplayName,
+  upsertTeamLineup,
+  type Team
+} from '@shared/types/teams'
+import { formatJudokaFullName } from '@shared/utils/judoka'
 import { mergeRegisteredClubNames } from '@shared/utils/clubs'
+import { normalizeTeamWeightClasses } from '@shared/utils/team-tirage'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -15,6 +23,18 @@ interface Props {
   createdWorkstation?: string
   onBack: () => void
   embedded?: boolean
+}
+
+function judokaWeight(j: Judoka): number {
+  const n = Number(j.weightKg)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+function inWeightClass(j: Judoka, wc: TeamWeightClassRange): boolean {
+  if (j.sex !== wc.sex) return false
+  const w = judokaWeight(j)
+  if (w <= 0) return false
+  return w >= wc.minKg - 1e-9 && w <= wc.maxKg + 1e-9
 }
 
 /**
@@ -29,11 +49,13 @@ export function TeamFormPage({
   const [teams, setTeams] = useState<Team[]>([])
   const [clubs, setClubs] = useState<string[]>([])
   const [judokas, setJudokas] = useState<Judoka[]>([])
+  const [weightClasses, setWeightClasses] = useState<TeamWeightClassRange[]>([])
   const [clubMode, setClubMode] = useState<'existing' | 'new'>('existing')
   const [club, setClub] = useState('')
   const [newClub, setNewClub] = useState('')
   const [name, setName] = useState('')
   const [activeTeam, setActiveTeam] = useState<Team | null>(null)
+  const [modalOpen, setModalOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -41,8 +63,9 @@ export function TeamFormPage({
   const [hits, setHits] = useState<Judoka[]>([])
   const [searching, setSearching] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [editingJudoka, setEditingJudoka] = useState<Judoka | null>(null)
 
-  async function reload(): Promise<void> {
+  async function reload(teamId?: string): Promise<void> {
     const [settingsRes, listed] = await Promise.all([
       window.judovac.getSettings(),
       window.judovac.listJudokas({ limit: 1_000_000, offset: 0 })
@@ -50,13 +73,14 @@ export function TeamFormPage({
     if (settingsRes.ok) {
       const nextTeams = normalizeTeams(settingsRes.data.teams)
       setTeams(nextTeams)
+      setWeightClasses(normalizeTeamWeightClasses(settingsRes.data.teamWeightClasses ?? []))
       const fromJudokas = listed.ok
         ? listed.data.items.map((j) => j.club).filter(Boolean)
         : []
       setClubs(mergeRegisteredClubNames([...(settingsRes.data.clubs ?? []), ...fromJudokas]))
-      if (activeTeam) {
-        const fresh = nextTeams.find((t) => t.id === activeTeam.id) ?? null
-        setActiveTeam(fresh)
+      const id = teamId ?? activeTeam?.id
+      if (id) {
+        setActiveTeam(nextTeams.find((t) => t.id === id) ?? null)
       }
     }
     if (listed.ok) setJudokas(listed.data.items)
@@ -79,17 +103,16 @@ export function TeamFormPage({
       .sort((a, b) => formatJudokaFullName(a).localeCompare(formatJudokaFullName(b), 'fr'))
   }, [judokas, activeTeam])
 
-  const grouped = useMemo(() => {
-    const map = new Map<string, Judoka[]>()
-    for (const j of members) {
-      const cat = resolveJudokaCategory(j.birthDate, j.category) || 'Sans catégorie'
-      const label = `${j.sex === 'F' ? 'Filles' : 'Garçons'} · ${cat}`
-      const list = map.get(label) ?? []
-      list.push(j)
-      map.set(label, list)
-    }
-    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0], 'fr'))
-  }, [members])
+  const classified = useMemo(() => {
+    const used = new Set<string>()
+    const blocks = weightClasses.map((wc) => {
+      const items = members.filter((j) => inWeightClass(j, wc))
+      for (const j of items) used.add(j.id)
+      return { wc, items }
+    })
+    const uncategorized = members.filter((j) => !used.has(j.id))
+    return { blocks, uncategorized }
+  }, [members, weightClasses])
 
   function resetClubForm(): void {
     setClub('')
@@ -97,12 +120,14 @@ export function TeamFormPage({
     setName('')
     setClubMode('existing')
     setActiveTeam(null)
+    setModalOpen(false)
     setHits([])
     setQuery('')
     setCreating(false)
+    setEditingJudoka(null)
   }
 
-  function loadTeam(team: Team): void {
+  function openTeam(team: Team): void {
     setActiveTeam(team)
     setClubMode('existing')
     setClub(team.club)
@@ -113,6 +138,9 @@ export function TeamFormPage({
     setHits([])
     setQuery('')
     setCreating(false)
+    setEditingJudoka(null)
+    setModalOpen(true)
+    void reload(team.id)
   }
 
   async function persistTeam(nextTeam: Team, extraClubs: string[] = []): Promise<Team | null> {
@@ -172,6 +200,7 @@ export function TeamFormPage({
         club: existing?.club ?? chosenClub,
         name: name.trim() || existing?.name || chosenClub,
         judokaIds: [...new Set([...(existing?.judokaIds ?? []), ...alreadyInClub])],
+        lineups: existing?.lineups ?? [],
         createdBy: existing?.createdBy || createdBy,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now
@@ -182,6 +211,7 @@ export function TeamFormPage({
       setClub(saved.club)
       setClubMode('existing')
       setNewClub('')
+      setModalOpen(true)
       setMessage(
         `Club « ${teamDisplayName(saved)} » validé comme équipe${
           saved.judokaIds.length ? ` (${saved.judokaIds.length} judoka(s) du club)` : ''
@@ -241,9 +271,30 @@ export function TeamFormPage({
       const nextTeam: Team = {
         ...activeTeam,
         judokaIds: activeTeam.judokaIds.filter((id) => id !== judokaId),
+        lineups: (activeTeam.lineups ?? []).map((l) => ({
+          ...l,
+          principalId: l.principalId === judokaId ? null : l.principalId,
+          substituteId: l.substituteId === judokaId ? null : l.substituteId
+        })),
         updatedAt: new Date().toISOString()
       }
       const saved = await persistTeam(nextTeam)
+      if (!saved) return
+      setActiveTeam(saved)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function saveLineup(
+    wc: TeamWeightClassRange,
+    patch: { principalId?: string | null; substituteId?: string | null }
+  ): Promise<void> {
+    if (!activeTeam) return
+    setBusy(true)
+    setError(null)
+    try {
+      const saved = await persistTeam(upsertTeamLineup(activeTeam, wc, patch))
       if (!saved) return
       setActiveTeam(saved)
     } finally {
@@ -307,16 +358,61 @@ export function TeamFormPage({
     }
   }
 
-  if (creating && activeTeam) {
+  function memberRow(j: Judoka) {
+    return (
+      <li key={j.id} className="flex items-center justify-between gap-2 text-sm">
+        <span>
+          <span className="font-medium text-judo-navy">{formatJudokaFullName(j)}</span>
+          <span className="ml-2 text-xs text-muted-foreground">
+            {j.displayId}
+            {j.weightKg ? ` · ${j.weightKg} kg` : ''}
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1">
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            title="Modifier"
+            disabled={busy}
+            onClick={() => setEditingJudoka(j)}
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => void removeMember(j.id)}
+          >
+            Retirer
+          </Button>
+        </span>
+      </li>
+    )
+  }
+
+  if ((creating || editingJudoka) && activeTeam) {
     return (
       <JudokaFormPage
         embedded={embedded}
         createdBy={createdBy}
         createdWorkstation={createdWorkstation}
+        editing={editingJudoka}
         forcedClub={activeTeam.club}
-        onBack={() => setCreating(false)}
+        onBack={() => {
+          setCreating(false)
+          setEditingJudoka(null)
+        }}
         onSaved={async (result) => {
           const created = result?.judoka
+          if (editingJudoka) {
+            await reload()
+            setEditingJudoka(null)
+            setMessage('Fiche judoka enregistrée.')
+            return
+          }
           if (created) {
             await addMember(created)
           } else {
@@ -435,129 +531,7 @@ export function TeamFormPage({
           </div>
         </div>
 
-        {activeTeam && (
-          <div className="rounded-xl border bg-white/75 p-5 space-y-4 max-w-3xl">
-            <div>
-              <Label className="text-base">2. Judokas de {teamDisplayName(activeTeam)}</Label>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Cherchez un judoka déjà enregistré pour l’importer, ou créez-en un nouveau dans ce
-                club.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <Input
-                className="min-w-[12rem] flex-1"
-                value={query}
-                placeholder="Nom, prénom, n°…"
-                disabled={busy || searching}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    void search()
-                  }
-                }}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                disabled={busy || searching}
-                onClick={() => void search()}
-              >
-                <Search className="h-4 w-4" />
-                {searching ? 'Recherche…' : 'Chercher'}
-              </Button>
-              <Button
-                type="button"
-                variant="accent"
-                disabled={busy}
-                onClick={() => setCreating(true)}
-              >
-                <UserPlus className="h-4 w-4" />
-                Nouveau judoka
-              </Button>
-            </div>
-
-            {hits.length > 0 && (
-              <ul className="space-y-1 rounded-lg border bg-slate-50/80 p-2">
-                {hits.map((j) => (
-                  <li
-                    key={j.id}
-                    className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm"
-                  >
-                    <div>
-                      <p className="font-medium text-judo-navy">{formatJudokaFullName(j)}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {[j.displayId, j.club || 'Sans club', j.category || null]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() => void addMember(j)}
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      Importer
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {hits.length === 0 && query.trim().length >= 2 && !searching && (
-              <p className="text-xs text-muted-foreground">
-                Aucun judoka trouvé hors de cette équipe. Créez-en un nouveau si besoin.
-              </p>
-            )}
-
-            {grouped.length === 0 ? (
-              <p className="text-sm text-amber-800">
-                Aucun judoka dans cette équipe. Importez un judoka existant ou créez-en un.
-              </p>
-            ) : (
-              <div className="space-y-3">
-                <p className="text-xs text-muted-foreground">{members.length} judoka(s) dans l’équipe</p>
-                {grouped.map(([label, items]) => (
-                  <div key={label} className="rounded-lg border bg-slate-50/80 p-3 space-y-2">
-                    <p className="text-xs font-medium text-muted-foreground">{label}</p>
-                    <ul className="space-y-1">
-                      {items.map((j) => (
-                        <li key={j.id} className="flex items-center justify-between gap-2 text-sm">
-                          <span>
-                            <span className="font-medium text-judo-navy">
-                              {formatJudokaFullName(j)}
-                            </span>
-                            <span className="ml-2 text-xs text-muted-foreground">
-                              {j.displayId}
-                              {j.weightKg ? ` · ${j.weightKg} kg` : ''}
-                            </span>
-                          </span>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            disabled={busy}
-                            onClick={() => void removeMember(j.id)}
-                          >
-                            Retirer
-                          </Button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {error && (
-          <p className="max-w-3xl text-sm text-destructive">{error}</p>
-        )}
+        {error && <p className="max-w-3xl text-sm text-destructive">{error}</p>}
         {message && <p className="max-w-3xl text-sm text-emerald-700">{message}</p>}
 
         <div className="rounded-xl border bg-white/75 p-5 space-y-3 max-w-3xl">
@@ -590,9 +564,9 @@ export function TeamFormPage({
                       variant="ghost"
                       title="Ouvrir"
                       disabled={busy}
-                      onClick={() => loadTeam(t)}
+                      onClick={() => openTeam(t)}
                     >
-                      <Pencil className="h-4 w-4" />
+                      <FolderOpen className="h-4 w-4" />
                     </Button>
                     <Button
                       type="button"
@@ -611,6 +585,199 @@ export function TeamFormPage({
           )}
         </div>
       </div>
+
+      {modalOpen && activeTeam && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 sm:p-8">
+          <div className="relative my-4 w-full max-w-3xl rounded-xl border bg-white p-5 shadow-xl">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-display text-lg font-semibold text-judo-navy">
+                  Judokas de {teamDisplayName(activeTeam)}
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Importez ou créez des judokas, puis désignez le titulaire et le remplaçant de
+                  chaque catégorie de poids.
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                title="Fermer"
+                onClick={() => setModalOpen(false)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                <Input
+                  className="min-w-[12rem] flex-1"
+                  value={query}
+                  placeholder="Nom, prénom, n°…"
+                  disabled={busy || searching}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      void search()
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy || searching}
+                  onClick={() => void search()}
+                >
+                  <Search className="h-4 w-4" />
+                  {searching ? 'Recherche…' : 'Chercher'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="accent"
+                  disabled={busy}
+                  onClick={() => setCreating(true)}
+                >
+                  <UserPlus className="h-4 w-4" />
+                  Nouveau judoka
+                </Button>
+              </div>
+
+              {hits.length > 0 && (
+                <ul className="space-y-1 rounded-lg border bg-slate-50/80 p-2">
+                  {hits.map((j) => (
+                    <li
+                      key={j.id}
+                      className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm"
+                    >
+                      <div>
+                        <p className="font-medium text-judo-navy">{formatJudokaFullName(j)}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {[j.displayId, j.club || 'Sans club', j.category || null]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => void addMember(j)}
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Importer
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {hits.length === 0 && query.trim().length >= 2 && !searching && (
+                <p className="text-xs text-muted-foreground">
+                  Aucun judoka trouvé hors de cette équipe. Créez-en un nouveau si besoin.
+                </p>
+              )}
+
+              {members.length === 0 ? (
+                <p className="text-sm text-amber-800">
+                  Aucun judoka dans cette équipe. Importez un judoka existant ou créez-en un.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    {members.length} judoka(s) dans l’équipe
+                  </p>
+                  {weightClasses.length === 0 && (
+                    <p className="text-xs text-amber-800">
+                      Définissez les catégories de poids (avec sexe) dans Tirage → Par équipe pour
+                      classer les titulaires et remplaçants.
+                    </p>
+                  )}
+                  {classified.blocks.map(({ wc, items }) => {
+                    const lineup = (activeTeam.lineups ?? []).find(
+                      (l) =>
+                        l.sex === wc.sex &&
+                        (l.weightLabel.trim().toLowerCase() === wc.label.trim().toLowerCase() ||
+                          (Math.abs(l.minKg - wc.minKg) < 1e-6 &&
+                            Math.abs(l.maxKg - wc.maxKg) < 1e-6))
+                    )
+                    const sexLabel = wc.sex === 'F' ? 'Filles' : 'Garçons'
+                    return (
+                      <div key={wc.id} className="rounded-lg border bg-slate-50/80 p-3 space-y-2">
+                        <p className="text-xs font-medium text-muted-foreground">
+                          {sexLabel} · {wc.label}
+                          {` (${wc.minKg}–${wc.maxKg} kg)`}
+                        </p>
+                        {items.length > 0 && (
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <div className="space-y-1">
+                              <Label className="text-xs">Judoka principal</Label>
+                              <select
+                                className="flex h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                                value={lineup?.principalId ?? ''}
+                                disabled={busy}
+                                onChange={(e) =>
+                                  void saveLineup(wc, {
+                                    principalId: e.target.value || null
+                                  })
+                                }
+                              >
+                                <option value="">— Choisir —</option>
+                                {items.map((j) => (
+                                  <option key={j.id} value={j.id}>
+                                    {formatJudokaFullName(j)}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Remplaçant</Label>
+                              <select
+                                className="flex h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                                value={lineup?.substituteId ?? ''}
+                                disabled={busy}
+                                onChange={(e) =>
+                                  void saveLineup(wc, {
+                                    substituteId: e.target.value || null
+                                  })
+                                }
+                              >
+                                <option value="">— Aucun —</option>
+                                {items
+                                  .filter((j) => j.id !== (lineup?.principalId ?? ''))
+                                  .map((j) => (
+                                    <option key={j.id} value={j.id}>
+                                      {formatJudokaFullName(j)}
+                                    </option>
+                                  ))}
+                              </select>
+                            </div>
+                          </div>
+                        )}
+                        {items.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">Aucun judoka dans cette catégorie.</p>
+                        ) : (
+                          <ul className="space-y-1">{items.map((j) => memberRow(j))}</ul>
+                        )}
+                      </div>
+                    )
+                  })}
+                  {classified.uncategorized.length > 0 && (
+                    <div className="rounded-lg border bg-slate-50/80 p-3 space-y-2">
+                      <p className="text-xs font-medium text-muted-foreground">Non classés</p>
+                      <ul className="space-y-1">
+                        {classified.uncategorized.map((j) => memberRow(j))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </AppShell>
   )
 }

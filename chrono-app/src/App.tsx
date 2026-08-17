@@ -6,6 +6,7 @@ import {
   parseHostPort,
   refreshChrono,
   setChronoStatus,
+  setChronoSubstitute,
   setChronoWinner
 } from './lib/api'
 
@@ -138,6 +139,20 @@ export function App() {
     }
   }
 
+  async function useSubstitute(slot: 'top' | 'bottom'): Promise<void> {
+    if (!session || !current || !base) return
+    setBusy(true)
+    setError(null)
+    try {
+      const data = await setChronoSubstitute(base, pwd, current.id, slot)
+      setSession(data)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Impossible de placer le remplaçant')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   function disconnect(): void {
     setSession(null)
     setBase('')
@@ -221,11 +236,17 @@ export function App() {
                 <div className="fighter red">
                   <div className="name">{fighterName(current, 'top')}</div>
                   <div className="meta">{fighterMeta(current, 'top')}</div>
+                  {current.topSubstitute && (
+                    <div className="meta">Rempl. {current.topSubstitute.name}</div>
+                  )}
                 </div>
                 <div className="vs">VS</div>
                 <div className="fighter white">
                   <div className="name">{fighterName(current, 'bottom')}</div>
                   <div className="meta">{fighterMeta(current, 'bottom')}</div>
+                  {current.bottomSubstitute && (
+                    <div className="meta">Rempl. {current.bottomSubstitute.name}</div>
+                  )}
                 </div>
               </div>
               <div className="chrono">{formatClock(remaining)}</div>
@@ -271,6 +292,30 @@ export function App() {
                   Reset
                 </button>
               </div>
+              {current.status !== 'completed' && (current.topSubstitute || current.bottomSubstitute) && (
+                <div className="actions" style={{ marginTop: 14 }}>
+                  {current.topSubstitute && (
+                    <button
+                      className="btn btn-outline"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void useSubstitute('top')}
+                    >
+                      Remplaçant rouge
+                    </button>
+                  )}
+                  {current.bottomSubstitute && (
+                    <button
+                      className="btn btn-outline"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void useSubstitute('bottom')}
+                    >
+                      Remplaçant blanc
+                    </button>
+                  )}
+                </div>
+              )}
               {current.status !== 'completed' && current.top && current.bottom && (
                 <div className="actions" style={{ marginTop: 14 }}>
                   <button

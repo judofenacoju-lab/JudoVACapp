@@ -2068,6 +2068,7 @@ export const judovacClient = {
       categories: patch.categories ?? current.data.categories,
       clubs: patch.clubs ?? current.data.clubs,
       weightClasses: patch.weightClasses ?? current.data.weightClasses,
+      teamWeightClasses: patch.teamWeightClasses ?? current.data.teamWeightClasses,
       combatSession:
         patch.combatSession !== undefined ? patch.combatSession : current.data.combatSession,
       teams: patch.teams !== undefined ? patch.teams : current.data.teams,

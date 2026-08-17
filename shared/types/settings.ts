@@ -3,6 +3,7 @@
  */
 
 import type { CombatSession } from '@shared/types/combats'
+import type { Sex } from '@shared/types/judoka'
 import type { Team } from '@shared/types/teams'
 
 /** Tranche d'âge → catégorie judoka. */
@@ -18,6 +19,15 @@ export interface WeightClassRange {
   label: string
   minKg: number
   maxKg: number
+}
+
+/** Catégorie de poids pour le tirage par équipe (sexe obligatoire, sans filtre d’âge). */
+export interface TeamWeightClassRange {
+  id: string
+  label: string
+  minKg: number
+  maxKg: number
+  sex: Sex
 }
 
 export function createDefaultCategoryAgeRanges(): CategoryAgeRange[] {
@@ -61,6 +71,8 @@ export interface AppSettings {
   clubs: string[]
   /** Libellés de poids partagés (Tirage / Triage). */
   weightClasses: WeightClassRange[]
+  /** Catégories de poids du tirage par équipe (libellé + sexe, sans âge). */
+  teamWeightClasses: TeamWeightClassRange[]
   /**
    * Session Combats (import Tirage → tatamis → confirmation → suivi).
    * null = aucune session.
@@ -97,6 +109,7 @@ export function createDefaultSettings(): AppSettings {
     categories: createDefaultCategoryAgeRanges(),
     clubs: [],
     weightClasses: [],
+    teamWeightClasses: [],
     combatSession: null,
     teams: [],
     updatedAt: new Date().toISOString()

@@ -56,3 +56,12 @@ export function setChronoWinner(
 ): Promise<ChronoConnectResponse> {
   return post(`${base}/api/chrono/combat/winner`, { password, combatId, winnerId })
 }
+
+export function setChronoSubstitute(
+  base: string,
+  password: string,
+  combatId: string,
+  slot: 'top' | 'bottom'
+): Promise<ChronoConnectResponse> {
+  return post(`${base}/api/chrono/combat/substitute`, { password, combatId, slot })
+}

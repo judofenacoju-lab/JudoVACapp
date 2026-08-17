@@ -2,6 +2,7 @@ import type { Judoka } from '@shared/types/judoka'
 import type { BadgeTemplate } from '@shared/types/badge'
 import type { AppSettings } from '@shared/types/settings'
 import { createDefaultSettings } from '@shared/types/settings'
+import { normalizeTeamWeightClasses } from '@shared/utils/team-tirage'
 import { normalizeTeams } from '@shared/types/teams'
 import { mergeRegisteredClubNames } from '@shared/utils/clubs'
 import type { UserAccount } from '@shared/types/user-account'
@@ -126,6 +127,9 @@ export function mergeSettings(raw: Partial<AppSettings> | null): AppSettings {
             c.maxKg > 0
         )
     : defaults.weightClasses
+  const teamWeightClasses = Array.isArray(raw.teamWeightClasses)
+    ? normalizeTeamWeightClasses(raw.teamWeightClasses)
+    : defaults.teamWeightClasses
   const combatSession =
     raw.combatSession && typeof raw.combatSession === 'object'
       ? (raw.combatSession as AppSettings['combatSession'])
@@ -139,6 +143,7 @@ export function mergeSettings(raw: Partial<AppSettings> | null): AppSettings {
     categories: categories.length > 0 ? categories : defaults.categories,
     clubs,
     weightClasses,
+    teamWeightClasses,
     combatSession,
     teams,
     updatedAt: raw.updatedAt ?? defaults.updatedAt

@@ -5,6 +5,7 @@ import {
   LayoutGrid,
   Plus,
   RefreshCw,
+  Replace,
   Swords,
   Timer,
   Trash2
@@ -14,6 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { AppShell } from '@/layouts/AppShell'
 import {
+  applyCombatSubstitute,
   applyCombatWinner,
   combatSessionKind,
   createEmptyCombatSession,
@@ -28,8 +30,7 @@ import {
   type ManagedCombat,
   type Tatami
 } from '@shared/types/combats'
-import { resolveTeamMatches, teamMatchScore } from '@shared/utils/team-tirage'
-import { createDefaultCategoryAgeRanges } from '@shared/types/settings'
+import { normalizeTeamWeightClasses, resolveTeamMatches, teamMatchScore } from '@shared/utils/team-tirage'
 import { normalizeTeams } from '@shared/types/teams'
 import { TatamiAccessModals } from '@/components/TatamiAccessModals'
 
@@ -82,7 +83,8 @@ function CombatRow({
   busy,
   assignCombat,
   setCombatStatus,
-  declareWinner
+  declareWinner,
+  applySubstitute
 }: {
   c: ManagedCombat
   session: CombatSession
@@ -91,6 +93,7 @@ function CombatRow({
   assignCombat: (id: string, tatamiId: string | null) => void
   setCombatStatus: (id: string, status: CombatStatus) => void
   declareWinner: (id: string, winnerId: string) => void
+  applySubstitute: (id: string, slot: 'top' | 'bottom') => void
 }) {
   return (
     <li className="rounded-lg border bg-slate-50/60 p-3 space-y-2">
@@ -115,12 +118,22 @@ function CombatRow({
           {c.winnerId && c.top?.id === c.winnerId && (
             <span className="ml-1 text-emerald-700 font-medium">✓</span>
           )}
+          {c.topSubstitute && (
+            <span className="block text-xs text-muted-foreground">
+              Remplaçant : {c.topSubstitute.name}
+            </span>
+          )}
         </p>
         <p>
           <span className="text-muted-foreground">Blanc · </span>
           {fighterLine(c, 'bottom')}
           {c.winnerId && c.bottom?.id === c.winnerId && (
             <span className="ml-1 text-emerald-700 font-medium">✓</span>
+          )}
+          {c.bottomSubstitute && (
+            <span className="block text-xs text-muted-foreground">
+              Remplaçant : {c.bottomSubstitute.name}
+            </span>
           )}
         </p>
       </div>
@@ -140,6 +153,34 @@ function CombatRow({
           ))}
         </select>
       </div>
+      {confirmed && c.status !== 'completed' && (c.topSubstitute || c.bottomSubstitute) && (
+        <div className="flex flex-wrap gap-2 pt-1">
+          {c.topSubstitute && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              title={`Faire combattre ${c.topSubstitute.name}`}
+              onClick={() => applySubstitute(c.id, 'top')}
+            >
+              <Replace className="h-3.5 w-3.5" />
+              Remplaçant rouge
+            </Button>
+          )}
+          {c.bottomSubstitute && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              title={`Faire combattre ${c.bottomSubstitute.name}`}
+              onClick={() => applySubstitute(c.id, 'bottom')}
+            >
+              <Replace className="h-3.5 w-3.5" />
+              Remplaçant blanc
+            </Button>
+          )}
+        </div>
+      )}
       {confirmed && c.status !== 'completed' && c.top && c.bottom && (
         <div className="flex flex-wrap gap-2 pt-1">
           {c.status === 'ready' && (
@@ -405,14 +446,18 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
         next = resolveTeamMatches(next, {
           teams: settingsRes.ok ? normalizeTeams(settingsRes.data.teams) : [],
           judokas: listed.ok ? listed.data.items : [],
-          ranges:
-            settingsRes.ok && settingsRes.data.categories?.length
-              ? settingsRes.data.categories
-              : createDefaultCategoryAgeRanges()
+          weightClasses: settingsRes.ok
+            ? normalizeTeamWeightClasses(settingsRes.data.teamWeightClasses ?? [])
+            : []
         })
       }
       await persist(next, 'Vainqueur enregistré')
     })()
+  }
+
+  function applySubstitute(combatId: string, slot: 'top' | 'bottom'): void {
+    if (!session?.confirmedAt) return
+    void persist(applyCombatSubstitute(session, combatId, slot), 'Remplaçant sur le combat')
   }
 
   async function clearSession(): Promise<void> {
@@ -767,6 +812,7 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
                                 assignCombat={assignCombat}
                                 setCombatStatus={setCombatStatus}
                                 declareWinner={declareWinner}
+                                applySubstitute={applySubstitute}
                               />
                             ))}
                           </ul>
@@ -786,6 +832,7 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
                       assignCombat={assignCombat}
                       setCombatStatus={setCombatStatus}
                       declareWinner={declareWinner}
+                      applySubstitute={applySubstitute}
                     />
                   ))}
                 </ul>

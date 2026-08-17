@@ -40,6 +40,9 @@ export interface ManagedCombat {
   weightLabel: string
   top: CombatFighterRef | null
   bottom: CombatFighterRef | null
+  /** Remplaçant du titulaire (combats par équipe). */
+  topSubstitute?: CombatFighterRef | null
+  bottomSubstitute?: CombatFighterRef | null
   bye: boolean
   /** Tatami assigné (null = non réparti). */
   tatamiId: string | null
@@ -338,6 +341,32 @@ export function applyCombatWinner(
   }
 
   combats[idx] = combat
+  return { ...session, combats, updatedAt: now }
+}
+
+/** Place le remplaçant sur le combat (le titulaire passe en remplaçant). */
+export function applyCombatSubstitute(
+  session: CombatSession,
+  combatId: string,
+  slot: 'top' | 'bottom'
+): CombatSession {
+  const now = new Date().toISOString()
+  const idx = session.combats.findIndex((c) => c.id === combatId)
+  if (idx < 0) return session
+  const combat = { ...session.combats[idx]! }
+  if (combat.status === 'completed') return session
+  const sub = slot === 'top' ? combat.topSubstitute : combat.bottomSubstitute
+  if (!sub) return session
+  const current = slot === 'top' ? combat.top : combat.bottom
+  if (slot === 'top') {
+    combat.top = sub
+    combat.topSubstitute = current
+  } else {
+    combat.bottom = sub
+    combat.bottomSubstitute = current
+  }
+  combat.updatedAt = now
+  const combats = session.combats.map((c, i) => (i === idx ? combat : c))
   return { ...session, combats, updatedAt: now }
 }
 

@@ -17,6 +17,8 @@ export interface ChronoCombat {
   bye: boolean
   top: CombatFighterRef | null
   bottom: CombatFighterRef | null
+  topSubstitute?: CombatFighterRef | null
+  bottomSubstitute?: CombatFighterRef | null
   winnerId: string | null
   kind?: CombatSessionKind
   teamMatchLabel?: string
@@ -52,6 +54,8 @@ export function toChronoCombat(c: ManagedCombat): ChronoCombat {
     bye: c.bye,
     top: c.top,
     bottom: c.bottom,
+    topSubstitute: c.topSubstitute ?? null,
+    bottomSubstitute: c.bottomSubstitute ?? null,
     winnerId: c.winnerId,
     kind: c.kind === 'team' ? 'team' : 'individual',
     teamMatchLabel: c.teamMatchLabel,

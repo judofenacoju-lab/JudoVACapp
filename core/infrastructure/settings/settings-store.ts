@@ -42,6 +42,7 @@ export class SettingsStore {
       categories: patch.categories ?? current.categories,
       clubs: patch.clubs ?? current.clubs,
       weightClasses: patch.weightClasses ?? current.weightClasses,
+      teamWeightClasses: patch.teamWeightClasses ?? current.teamWeightClasses,
       combatSession:
         patch.combatSession !== undefined ? patch.combatSession : current.combatSession,
       teams: patch.teams !== undefined ? patch.teams : current.teams,

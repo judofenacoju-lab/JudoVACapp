@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { AppShell } from '@/layouts/AppShell'
 import { hasRecordedWeight } from '@shared/utils/judoka'
+import { normalizeTeams, teamMemberIdSet } from '@shared/types/teams'
 
 interface Props {
   onBack: () => void
@@ -14,11 +15,15 @@ interface Props {
  * Export PDF badges — judokas pesés uniquement, filtrables par utilisateur puis par club.
  */
 export function PdfExportPage({ onBack, embedded = false }: Props) {
+  const [tab, setTab] = useState<'individual' | 'team'>('individual')
   const [perPage, setPerPage] = useState<4 | 6 | 8>(4)
   const [creators, setCreators] = useState<string[]>(['Serveur'])
   const [clubs, setClubs] = useState<string[]>([])
   const [clubCounts, setClubCounts] = useState<Record<string, number>>({})
   const [weighedTotal, setWeighedTotal] = useState(0)
+  const [exportIds, setExportIds] = useState<string[]>([])
+  const [teamIds, setTeamIds] = useState<Set<string>>(new Set())
+  const [teamCount, setTeamCount] = useState(0)
   const [selectedUser, setSelectedUser] = useState('')
   const [selectedClub, setSelectedClub] = useState('')
   const [clubsLoading, setClubsLoading] = useState(false)
@@ -41,6 +46,25 @@ export function PdfExportPage({ onBack, embedded = false }: Props) {
     }
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      if (tab !== 'team') {
+        setTeamIds(new Set())
+        setTeamCount(0)
+        return
+      }
+      const res = await window.judovac.getSettings()
+      if (cancelled || !res.ok) return
+      const teams = normalizeTeams(res.data.teams)
+      setTeamIds(teamMemberIdSet(teams))
+      setTeamCount(teams.length)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [tab])
+
   /** Clubs des judokas pesés — recalculés dès qu’on change d’utilisateur. */
   useEffect(() => {
     let cancelled = false
@@ -60,13 +84,17 @@ export function PdfExportPage({ onBack, embedded = false }: Props) {
         }
 
         const counts = new Map<string, number>()
+        const ids: string[] = []
         let total = 0
         for (const j of res.data.items) {
           if (!hasRecordedWeight(j.weightKg)) continue
+          if (tab === 'team' && !teamIds.has(j.id)) continue
           total += 1
+          ids.push(j.id)
           const name = j.club.trim() || 'Sans club'
           counts.set(name, (counts.get(name) ?? 0) + 1)
         }
+        setExportIds(ids)
 
         const names = [...counts.keys()].sort((a, b) => {
           if (a === 'Sans club') return 1
@@ -83,7 +111,7 @@ export function PdfExportPage({ onBack, embedded = false }: Props) {
     return () => {
       cancelled = true
     }
-  }, [selectedUser])
+  }, [selectedUser, tab, teamIds])
 
   async function exportBadges(): Promise<void> {
     setBusy(true)
@@ -94,6 +122,7 @@ export function PdfExportPage({ onBack, embedded = false }: Props) {
       all?: boolean
       createdBy?: string
       club?: string
+      judokaIds?: string[]
       weighedOnly: true
       perPage: 4 | 6 | 8
     } = {
@@ -101,12 +130,25 @@ export function PdfExportPage({ onBack, embedded = false }: Props) {
       perPage
     }
 
-    if (selectedUser) {
+    if (tab === 'team') {
+      let ids = exportIds
+      if (selectedClub) {
+        const clubKey = selectedClub.toLowerCase()
+        const listed = await window.judovac.listJudokas({ limit: 5000, offset: 0 })
+        if (listed.ok) {
+          ids = listed.data.items
+            .filter((j) => exportIds.includes(j.id))
+            .filter((j) => (j.club.trim() || 'Sans club').toLowerCase() === clubKey)
+            .map((j) => j.id)
+        }
+      }
+      opts.judokaIds = ids
+    } else if (selectedUser) {
       opts.createdBy = selectedUser
     } else {
       opts.all = true
     }
-    if (selectedClub) {
+    if (tab !== 'team' && selectedClub) {
       opts.club = selectedClub
     }
 
@@ -124,7 +166,7 @@ export function PdfExportPage({ onBack, embedded = false }: Props) {
       return
     }
 
-    const scopeParts: string[] = ['pesés']
+    const scopeParts: string[] = [tab === 'team' ? 'par équipe' : 'individuel', 'pesés']
     if (selectedUser) scopeParts.push(`utilisateur « ${selectedUser} »`)
     if (selectedClub) scopeParts.push(`club « ${selectedClub} »`)
     setMessage(
@@ -155,7 +197,11 @@ export function PdfExportPage({ onBack, embedded = false }: Props) {
     <AppShell
       embedded={embedded}
       title="Export PDF"
-      subtitle="Badges des judokas pesés — choisissez un utilisateur, puis un club"
+      subtitle={
+        tab === 'team'
+          ? 'Badges des judokas inscrits dans les équipes validées'
+          : 'Badges des judokas pesés — choisissez un utilisateur, puis un club'
+      }
       actions={
         !embedded ? (
           <Button variant="outline" onClick={onBack}>
@@ -166,10 +212,34 @@ export function PdfExportPage({ onBack, embedded = false }: Props) {
       }
     >
       <div className="mx-auto max-w-lg space-y-6 animate-fade-in rounded-xl border bg-white/75 p-6">
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant={tab === 'individual' ? 'accent' : 'outline'}
+            onClick={() => setTab('individual')}
+            disabled={busy}
+          >
+            Individuel
+          </Button>
+          <Button
+            type="button"
+            variant={tab === 'team' ? 'accent' : 'outline'}
+            onClick={() => setTab('team')}
+            disabled={busy}
+          >
+            Par équipe
+          </Button>
+        </div>
         <p className="text-sm text-muted-foreground">
-          Seuls les judokas avec un poids enregistré sont inclus. Après l’utilisateur, choisissez un
-          club pour limiter l’export.
+          {tab === 'team'
+            ? `Seuls les judokas pesés inscrits dans les équipes validées (${teamCount} équipe(s)) sont inclus.`
+            : 'Seuls les judokas avec un poids enregistré sont inclus. Après l’utilisateur, choisissez un club pour limiter l’export.'}
         </p>
+        {tab === 'team' && teamCount === 0 && (
+          <p className="text-sm text-amber-800">
+            Aucune équipe validée. Enregistrez d’abord des équipes dans Nouvelle équipe.
+          </p>
+        )}
 
         <div className="space-y-2">
           <Label>Disposition</Label>
@@ -229,7 +299,8 @@ export function PdfExportPage({ onBack, embedded = false }: Props) {
           </select>
           {!clubsLoading && clubs.length === 0 && (
             <p className="text-xs text-amber-700">
-              Aucun club avec judoka pesé pour {userLabel}.
+              Aucun club avec judoka pesé
+              {tab === 'team' ? ' inscrit en équipe' : ''} pour {userLabel}.
             </p>
           )}
           {!clubsLoading && clubs.length > 0 && (
@@ -266,7 +337,7 @@ export function PdfExportPage({ onBack, embedded = false }: Props) {
             variant="accent"
             size="lg"
             className="w-full"
-            disabled={busy || clubsLoading || weighedTotal === 0}
+            disabled={busy || clubsLoading || weighedTotal === 0 || (tab === 'team' && teamCount === 0)}
             onClick={() => void exportBadges()}
           >
             <FileDown className="h-4 w-4" />
