@@ -903,11 +903,14 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       const save = await dialog.showSaveDialog(win ?? undefined!, {
         title: 'Exporter sauvegarde',
         defaultPath: `judovac-${new Date().toISOString().slice(0, 10)}.jvac`,
-        filters: [{ name: 'JudoVACapp Backup', extensions: ['jvac'] }]
+        filters: [{ name: 'Sauvegarde JudoVACapp (*.jvac)', extensions: ['jvac'] }]
       })
       if (save.canceled || !save.filePath) {
         return { ok: false as const, error: 'Export annulé' }
       }
+      const outputPath = save.filePath.toLowerCase().endsWith('.jvac')
+        ? save.filePath
+        : `${save.filePath}.jvac`
 
       const { getContainer } = await import('@server/container')
       const c = getContainer()
@@ -934,7 +937,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         badgeTemplates = []
       }
       const manifest = await exportJvacFromTables({
-        outputPath: save.filePath,
+        outputPath,
         photosDir,
         assetsDir,
         appVersion: APP_VERSION,
@@ -948,10 +951,10 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       })
 
       await c.logger.log('info', 'backup.export', `Sauvegarde créée`, {
-        meta: { path: save.filePath, ...manifest.counts }
+        meta: { path: outputPath, ...manifest.counts }
       })
 
-      return { ok: true as const, data: { path: save.filePath, manifest } }
+      return { ok: true as const, data: { path: outputPath, manifest } }
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
     }
@@ -1015,10 +1018,23 @@ export function registerIpcHandlers(ctx: IpcContext): void {
           '@core/infrastructure/backup/jvac-format'
         )
         const { computeAge } = await import('@shared/utils/judoka')
+        const { photoBasename } = await import('@shared/utils/jvac-codec')
         const bundle = readJvacBundle(filePath)
         restoreJvacFiles(bundle, photosDir, assetsDir)
 
-        const items = bundle.tables.judokas.map((row) => normalizeImportedJudoka(row, computeAge))
+        const photoNames = new Set(
+          (bundle.files ?? [])
+            .filter((f) => f.relativePath.startsWith('photos/'))
+            .map((f) => f.relativePath.slice('photos/'.length))
+        )
+        const items = bundle.tables.judokas.map((row) => {
+          const judoka = normalizeImportedJudoka(row, computeAge)
+          const base = photoBasename(judoka.photoPath)
+          if (base && photoNames.has(base)) {
+            return { ...judoka, photoPath: join(photosDir, base) }
+          }
+          return judoka
+        })
         let mergeStats: { added: number; skipped: number } | undefined
         if (importMode === 'merge') {
           mergeStats = c.jsonRepo.mergeAll(items)

@@ -23,8 +23,19 @@ import {
   logRowToEntry
 } from './mappers'
 import { readDurableSession, saveDurableSession, isAccessTokenExpired } from './durable-session'
-import { downloadBlob, downloadBytes } from './download-blob'
+import { downloadBytes, downloadJvacFile } from './download-blob'
 import { detectLanIpv4Addresses, fetchLanFromLocalServer } from './detect-lan-ip'
+import { encodeJvacBundle, decodeJvacBundle } from './jvac-web'
+import {
+  attachJvacChecksum,
+  createJvacDraft,
+  extractJudokas,
+  extractSettingsValue,
+  isJvacBytes,
+  photoBasename,
+  type JvacBundle,
+  type JvacFileEntry
+} from '@shared/utils/jvac-codec'
 
 export type IpcResult<T> =
   | { ok: true; data: T }
@@ -44,7 +55,7 @@ const BADGE_ASSETS_BUCKET = 'badge-assets'
 let cachedProfile: ProfileRow | null = null
 let cachedMode: ModeConfig | null = null
 let cachedAccessToken: string | null = null
-let pendingBackupJson: Record<string, unknown> | null = null
+let pendingBackup: { name: string; bundle: JvacBundle } | null = null
 /** Évite les refresh concurrents (Mac ouvre souvent plusieurs requêtes en parallèle). */
 let ensureSessionInFlight: Promise<boolean> | null = null
 
@@ -443,6 +454,162 @@ async function readAnyStorageDataUrl(path: string): Promise<string> {
   } catch (e) {
     throw lastError ?? (e instanceof Error ? e : new Error(String(e)))
   }
+}
+
+function dataUrlToBase64(dataUrl: string): string | null {
+  const i = dataUrl.indexOf(',')
+  if (i < 0) return null
+  const b64 = dataUrl.slice(i + 1).trim()
+  return b64 || null
+}
+
+async function collectBackupPhotoFiles(judokas: Judoka[]): Promise<JvacFileEntry[]> {
+  const files: JvacFileEntry[] = []
+  const seen = new Set<string>()
+  for (const j of judokas) {
+    const path = j.photoPath?.trim()
+    if (!path) continue
+    let name = photoBasename(path)
+    let data: string | null = null
+    try {
+      if (path.startsWith('data:')) {
+        data = dataUrlToBase64(path)
+        name = name && name !== path ? name : `${j.id}.jpg`
+      } else {
+        const dataUrl = await readAnyStorageDataUrl(path)
+        data = dataUrlToBase64(dataUrl)
+      }
+    } catch {
+      continue
+    }
+    if (!name || !data || seen.has(name)) continue
+    seen.add(name)
+    files.push({ relativePath: `photos/${name}`, encoding: 'base64', data })
+  }
+  return files
+}
+
+function legacyJsonToBundle(data: Record<string, unknown>): JvacBundle {
+  const tables = (data.tables ?? null) as JvacBundle['tables'] | null
+  const judokas = Array.isArray(tables?.judokas)
+    ? tables.judokas
+    : Array.isArray(data.judokas)
+      ? data.judokas
+      : []
+  const logs = Array.isArray(tables?.system_logs)
+    ? tables.system_logs
+    : Array.isArray(data.logs)
+      ? data.logs
+      : []
+  const templates = Array.isArray(tables?.badge_templates)
+    ? tables.badge_templates
+    : Array.isArray(data.badgeTemplates)
+      ? data.badgeTemplates
+      : []
+  const accounts = Array.isArray(tables?.user_accounts)
+    ? tables.user_accounts
+    : Array.isArray(data.users)
+      ? data.users
+      : []
+  const settingsTable = Array.isArray(tables?.settings)
+    ? tables.settings
+    : Array.isArray(data.settings)
+      ? data.settings
+      : data.settings
+        ? [{ key: 'app.settings', value: data.settings }]
+        : []
+  const draft = createJvacDraft({
+    tables: {
+      judokas,
+      system_logs: logs,
+      settings: settingsTable,
+      badge_templates: templates,
+      user_accounts: accounts
+    },
+    files: Array.isArray((data as { files?: JvacFileEntry[] }).files)
+      ? ((data as { files: JvacFileEntry[] }).files)
+      : [],
+    appVersion: APP_VERSION,
+    createdAt: String(data.exportedAt ?? new Date().toISOString())
+  })
+  return attachJvacChecksum(draft, 'legacy-json')
+}
+
+function backupJudokaToRow(
+  row: Record<string, unknown>,
+  photoByName: Map<string, string>
+): Record<string, unknown> {
+  const pick = (camel: string, snake: string) =>
+    (row[camel] !== undefined ? row[camel] : row[snake]) as string | number | null | undefined
+  const photoRaw = (pick('photoPath', 'photo_path') as string | null) ?? null
+  const base = photoBasename(photoRaw)
+  const photoPath = base && photoByName.has(base) ? photoByName.get(base)! : photoRaw
+  const judoka = {
+    id: String(pick('id', 'id') ?? createId()),
+    displayId: String(pick('displayId', 'display_id') ?? 'JV-IMPORT'),
+    lastName: String(pick('lastName', 'last_name') ?? ''),
+    middleName: String(pick('middleName', 'middle_name') ?? ''),
+    firstName: String(pick('firstName', 'first_name') ?? ''),
+    sex: (pick('sex', 'sex') === 'F' ? 'F' : 'M') as 'M' | 'F',
+    birthDate: String(pick('birthDate', 'birth_date') ?? '').slice(0, 10),
+    age: Number(pick('age', 'age') ?? 0),
+    province: String(pick('province', 'province') ?? ''),
+    city: String(pick('city', 'city') ?? ''),
+    commune: String(pick('commune', 'commune') ?? ''),
+    address: String(pick('address', 'address') ?? ''),
+    phone: String(pick('phone', 'phone') ?? ''),
+    email: String(pick('email', 'email') ?? ''),
+    club: String(pick('club', 'club') ?? ''),
+    league: String(pick('league', 'league') ?? ''),
+    sportProvince: String(pick('sportProvince', 'sport_province') ?? ''),
+    grade: String(pick('grade', 'grade') ?? ''),
+    belt: String(pick('belt', 'belt') ?? ''),
+    category: String(pick('category', 'category') ?? ''),
+    weightKg: pick('weightKg', 'weight_kg') == null ? null : Number(pick('weightKg', 'weight_kg')),
+    heightCm: pick('heightCm', 'height_cm') == null ? null : Number(pick('heightCm', 'height_cm')),
+    licenseNumber: String(pick('licenseNumber', 'license_number') ?? ''),
+    affiliationYear:
+      pick('affiliationYear', 'affiliation_year') == null
+        ? null
+        : Number(pick('affiliationYear', 'affiliation_year')),
+    photoPath,
+    createdAt: String(pick('createdAt', 'created_at') ?? new Date().toISOString()),
+    updatedAt: String(pick('updatedAt', 'updated_at') ?? new Date().toISOString()),
+    createdBy: String(pick('createdBy', 'created_by') ?? 'import'),
+    createdWorkstation: String(pick('createdWorkstation', 'created_workstation') ?? 'import'),
+    syncStatus: 'synced' as const,
+    version: Number(pick('version', 'version') ?? 1)
+  }
+  return {
+    ...judokaToRow(judoka),
+    created_at: judoka.createdAt,
+    updated_at: judoka.updatedAt
+  }
+}
+
+async function restoreBackupPhotos(bundle: JvacBundle): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  for (const file of bundle.files ?? []) {
+    if (!file.relativePath.startsWith('photos/') || !file.data) continue
+    const name = file.relativePath.slice('photos/'.length)
+    const lower = name.toLowerCase()
+    const mime = lower.endsWith('.png')
+      ? 'image/png'
+      : lower.endsWith('.webp')
+        ? 'image/webp'
+        : 'image/jpeg'
+    try {
+      const path = await uploadDataUrl(
+        PHOTOS_BUCKET,
+        `data:${mime};base64,${file.data}`,
+        'restore'
+      )
+      map.set(name, path)
+    } catch {
+      /* photo optionnelle */
+    }
+  }
+  return map
 }
 
 /** Compresse / redimensionne une image data URL pour un upload rapide (max 1280px, JPEG ~0.82). */
@@ -1923,33 +2090,42 @@ export const judovacClient = {
         offset += batch.length
       }
 
+      const judokas = judokaRows.map((row) => rowToJudoka(row as JudokaRow))
       const [settings, templates, users, logs] = await Promise.all([
         supabase.from('app_settings').select('*').eq('id', 'default').single(),
         supabase.from('badge_templates').select('*'),
         supabase.from('profiles').select('*'),
         supabase.from('system_logs').select('*').order('created_at', { ascending: false }).limit(500)
       ])
-      const payload = {
-        version: 2,
-        exportedAt: new Date().toISOString(),
-        judokas: judokaRows,
-        settings: settings.data?.settings ?? createDefaultSettings(),
-        badgeTemplates: templates.data ?? [],
-        users: users.data ?? [],
-        logs: logs.data ?? []
+      const files = await collectBackupPhotoFiles(judokas)
+      const draft = createJvacDraft({
+        tables: {
+          judokas,
+          system_logs: logs.data ?? [],
+          settings: [
+            { key: 'app.settings', value: settings.data?.settings ?? createDefaultSettings() }
+          ],
+          badge_templates: templates.data ?? [],
+          user_accounts: (users.data ?? []).map((u) => profileToUserAccount(u as ProfileRow))
+        },
+        files,
+        appVersion: APP_VERSION
+      })
+      const { bytes, bundle } = await encodeJvacBundle(draft)
+      const filename = `judovac-${new Date().toISOString().slice(0, 10)}.jvac`
+      try {
+        await downloadJvacFile(bytes, filename)
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') {
+          return fail('Export annulé')
+        }
+        throw e
       }
-      const json = JSON.stringify(payload, null, 2)
-      const filename = `judovac-backup-${new Date().toISOString().slice(0, 10)}.json`
-      downloadBlob(new Blob([json], { type: 'application/json' }), filename)
       return ok({
         path: filename,
         manifest: {
-          counts: {
-            judokas: judokaRows.length,
-            logs: (logs.data ?? []).length,
-            users: (users.data ?? []).length
-          },
-          checksumSha256: 'web-export'
+          counts: bundle.manifest.counts,
+          checksumSha256: bundle.manifest.checksumSha256
         }
       })
     } catch (e) {
@@ -1963,26 +2139,34 @@ export const judovacClient = {
     return new Promise((resolve) => {
       const input = document.createElement('input')
       input.type = 'file'
-      input.accept = '.json,.jvac,application/json'
+      input.accept = '.jvac,application/octet-stream,.json,application/json'
       input.onchange = async () => {
         const file = input.files?.[0]
         if (!file) return resolve(fail('Aucun fichier sélectionné'))
-        const text = await file.text()
         try {
-          const data = JSON.parse(text) as { judokas?: unknown[]; exportedAt?: string }
-          pendingBackupJson = data as Record<string, unknown>
+          const raw = new Uint8Array(await file.arrayBuffer())
+          let bundle: JvacBundle
+          if (isJvacBytes(raw)) {
+            bundle = await decodeJvacBundle(raw)
+          } else {
+            const text = new TextDecoder().decode(raw)
+            bundle = legacyJsonToBundle(JSON.parse(text) as Record<string, unknown>)
+          }
+          pendingBackup = { name: file.name, bundle }
           resolve(
             ok({
               path: file.name,
               manifest: {
-                counts: { judokas: data.judokas?.length ?? 0 },
-                createdAt: data.exportedAt ?? new Date().toISOString()
+                counts: bundle.manifest.counts,
+                createdAt: bundle.manifest.createdAt
               }
             })
           )
-        } catch {
-          pendingBackupJson = null
-          resolve(fail('Fichier de sauvegarde invalide'))
+        } catch (e) {
+          pendingBackup = null
+          resolve(
+            fail(e instanceof Error ? e.message : 'Fichier .jvac invalide')
+          )
         }
       }
       input.click()
@@ -2000,11 +2184,12 @@ export const judovacClient = {
       mergeStats?: { added: number; skipped: number }
     }>
   > => {
-    if (!pendingBackupJson) return fail('Aucune sauvegarde en attente — sélectionnez un fichier')
+    if (!pendingBackup) return fail('Aucune sauvegarde en attente — sélectionnez un fichier')
     try {
       await requireProfile()
-      const raw = pendingBackupJson
-      const judokas = (raw.judokas as Record<string, unknown>[]) ?? []
+      const { bundle, name } = pendingBackup
+      const photoByName = await restoreBackupPhotos(bundle)
+      const judokas = extractJudokas(bundle.tables) as Record<string, unknown>[]
 
       if (opts.mode === 'replace') {
         const { data: existing } = await supabase.from('judokas').select('id')
@@ -2015,31 +2200,36 @@ export const judovacClient = {
       let added = 0
       let skipped = 0
       for (const row of judokas) {
-        const id = row.id as string
-        if (opts.mode === 'merge') {
+        const mapped = backupJudokaToRow(row, photoByName)
+        const id = String(mapped.id ?? '')
+        if (opts.mode === 'merge' && id) {
           const { data: found } = await supabase.from('judokas').select('id').eq('id', id).maybeSingle()
           if (found) {
             skipped++
             continue
           }
         }
-        const { error } = await supabase.from('judokas').upsert(row)
+        const { error } = await supabase.from('judokas').upsert(mapped)
         if (!error) added++
       }
 
-      if (raw.settings) {
+      const settingsValue = extractSettingsValue(bundle.tables)
+      if (settingsValue && typeof settingsValue === 'object') {
         await supabase.from('app_settings').upsert({
           id: 'default',
-          settings: raw.settings,
+          settings: settingsValue,
           updated_at: new Date().toISOString()
         })
       }
 
-      pendingBackupJson = null
+      pendingBackup = null
       return ok({
-        path: opts.path,
+        path: name || opts.path,
         mode: opts.mode,
-        manifest: { counts: { judokas: judokas.length }, checksumSha256: 'web-import' },
+        manifest: {
+          counts: bundle.manifest.counts,
+          checksumSha256: bundle.manifest.checksumSha256
+        },
         mergeStats: opts.mode === 'merge' ? { added, skipped } : undefined
       })
     } catch (e) {
@@ -2156,6 +2346,9 @@ export function installJudovacClient(): void {
   }
   window.judovac = {
     ...judovacClient,
+    exportBackup: electron.exportBackup,
+    pickBackupFile: electron.pickBackupFile,
+    importBackup: electron.importBackup,
     getLocalNetworkInfo: async () => {
       const res = await electron.getLocalNetworkInfo()
       if (res.ok && (res.data.preferredAddress || res.data.addresses.length > 0)) {

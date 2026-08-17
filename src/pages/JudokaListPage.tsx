@@ -449,6 +449,38 @@ export function JudokaListPage({
     setMessage(`${res.data.count} badge(s) envoyé(s) à l'imprimante.`)
   }
 
+  async function deleteSelected(): Promise<void> {
+    if (selected.size === 0) return
+    const n = selected.size
+    const okConfirm = window.confirm(
+      `Supprimer définitivement ${n} judoka(s) sélectionné(s) du système ? Cette action est irréversible.`
+    )
+    if (!okConfirm) return
+    setBusy(true)
+    setError(null)
+    setMessage(null)
+    const ids = Array.from(selected)
+    let deleted = 0
+    let lastError: string | null = null
+    for (const id of ids) {
+      const res = await window.judovac.deleteJudoka(id)
+      if (res.ok) deleted += 1
+      else lastError = res.error
+    }
+    setBusy(false)
+    setSelected(new Set())
+    if (lastError && deleted === 0) {
+      setError(lastError)
+      return
+    }
+    setMessage(
+      lastError
+        ? `${deleted} judoka(s) supprimé(s). Certaines suppressions ont échoué : ${lastError}`
+        : `${deleted} judoka(s) supprimé(s) du système.`
+    )
+    reload()
+  }
+
   return (
     <AppShell
       embedded={embedded}
@@ -534,6 +566,16 @@ export function JudokaListPage({
             >
               <Printer className="h-4 w-4" />
               Imprimer
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              disabled={busy}
+              onClick={() => void deleteSelected()}
+            >
+              <Trash2 className="h-4 w-4" />
+              Tout Supprimer
             </Button>
           </div>
         )}

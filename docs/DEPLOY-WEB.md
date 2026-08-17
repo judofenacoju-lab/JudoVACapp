@@ -90,7 +90,7 @@ Voir `mobile/README.md` et `mobile-app/README.md`.
 - Pas de mode LAN Serveur/Client — tout passe par le cloud
 - Authentification email/mot de passe (Supabase Auth)
 - Impression via PDF + navigateur (plus d'API imprimante native)
-- Sauvegarde en JSON téléchargeable (remplace les fichiers `.jvac` locaux)
+- Sauvegarde / restauration au format `.jvac` (identique à la version Offline)
 - Sync instantanée (plus de file d'attente offline)
 
 La version Electron reste disponible via `npm run dev` / `npm run dist` pour un usage offline/LAN.

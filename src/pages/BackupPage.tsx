@@ -97,8 +97,9 @@ export function BackupPage({ onBack, embedded = false }: Props) {
     >
       <div className="mx-auto max-w-lg space-y-4 animate-fade-in rounded-xl border bg-white/75 p-6">
         <p className="text-sm text-muted-foreground">
-          Réservé au mode Serveur. L’export inclut tous les judokas enregistrés sur le Serveur et
-          sur l’ensemble des comptes clients synchronisés, sans effacer les données existantes.
+          Réservé au mode Serveur. L’export produit un fichier `.jvac` (judokas, photos,
+          paramètres) utilisable aussi bien en version Online qu’Offline, sans effacer les
+          données existantes.
         </p>
         <div className="flex flex-wrap gap-3">
           <Button variant="accent" size="lg" disabled={busy} onClick={() => void doExport()}>
