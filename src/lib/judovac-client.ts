@@ -2311,6 +2311,12 @@ export const judovacClient = {
     })
   },
 
+  copyText: (text: string): boolean => {
+    const value = String(text ?? '')
+    void navigator.clipboard?.writeText(value).catch(() => undefined)
+    return Boolean(value)
+  },
+
   printBadges: async (opts: {
     all?: boolean
     judokaIds?: string[]
@@ -2355,6 +2361,10 @@ export function installJudovacClient(): void {
         return res
       }
       return judovacClient.getLocalNetworkInfo()
+    },
+    copyText: (text: string) => {
+      if (typeof electron.copyText === 'function') return electron.copyText(text)
+      return judovacClient.copyText(text)
     },
     getServerStatus: async () => {
       const res = await electron.getServerStatus()

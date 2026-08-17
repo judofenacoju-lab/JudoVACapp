@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, clipboard } from 'electron'
 import { IpcChannels } from '@shared/constants/ipc-channels'
 import type { ModeConfig, AppRuntimeInfo } from '@shared/types/mode'
 import type { ClientConnectionStatus, DashboardStats, ServerStatus } from '@shared/types/dashboard'
@@ -208,6 +208,11 @@ const api = {
       port: number
     }>
   > => ipcRenderer.invoke(IpcChannels.NETWORK_LOCAL_INFO),
+
+  copyText: (text: string): boolean => {
+    clipboard.writeText(String(text ?? ''))
+    return true
+  },
 
   printBadges: (opts: {
     all?: boolean

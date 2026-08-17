@@ -17,6 +17,7 @@ const MARGIN = 24
 
 const NAVY = rgb(0.043, 0.122, 0.227)
 const RED = rgb(0.784, 0.063, 0.18)
+const BLUE = rgb(0.114, 0.306, 0.847)
 const LINE = rgb(0.043, 0.122, 0.227)
 const MUTED = rgb(0.35, 0.4, 0.45)
 const WHITE = rgb(1, 1, 1)
@@ -66,6 +67,8 @@ function sliceBracketTree(
   const r0Count = rounds[0]?.length ?? 0
   return {
     rounds,
+    repechage: [],
+    bronze: [],
     size: Math.max(r0Count * 2, 2),
     entrantCount: bracket.entrantCount
   }
@@ -223,6 +226,14 @@ function drawMatchCard(
     borderWidth: 0.7,
     color: WHITE
   })
+  // BLEU en bas
+  page.drawRectangle({
+    x: x + 0.5,
+    y: y0 + 0.5,
+    width: nameW - 0.5,
+    height: boxH / 2 - 0.7,
+    color: BLUE
+  })
   page.drawRectangle({
     x: x + nameW,
     y: y0,
@@ -237,20 +248,23 @@ function drawMatchCard(
     color: NAVY
   })
 
-  const drawSlot = (fighter: TirageFighter | null, slotMid: number) => {
+  const drawSlot = (
+    fighter: TirageFighter | null,
+    slotMid: number,
+    color: typeof NAVY | typeof WHITE
+  ) => {
     if (!fighter) {
       page.drawText(EMPTY_SLOT, {
         x: x + 3,
         y: slotMid - nameSize / 3,
         size: nameSize,
         font: fontBold,
-        color: NAVY
+        color
       })
       return
     }
 
     const nameLines = wrapLines(fontBold, fighter.name, nameSize, textMaxW, 1)
-    // Toujours afficher club · âge comme sur la page Tirage
     const metaLine = wrapLines(font, formatFighterMeta(fighter), metaSize, textMaxW, 1)[0]
 
     const lineGap = 1.2
@@ -266,7 +280,7 @@ function drawMatchCard(
         y,
         size: nameSize,
         font: fontBold,
-        color: NAVY
+        color
       })
       y -= nameSize + lineGap
     }
@@ -276,13 +290,13 @@ function drawMatchCard(
         y: y - 0.5,
         size: metaSize,
         font,
-        color: MUTED
+        color: color === WHITE ? rgb(0.85, 0.9, 1) : MUTED
       })
     }
   }
 
-  drawSlot(match.top.fighter, cy + boxH / 4)
-  drawSlot(match.bottom.fighter, cy - boxH / 4)
+  drawSlot(match.top.fighter, cy + boxH / 4, NAVY)
+  drawSlot(match.bottom.fighter, cy - boxH / 4, WHITE)
 
   const label = pdfSafeText(match.label)
   const lw = fontBold.widthOfTextAtSize(label, labelSize)
@@ -361,7 +375,7 @@ function drawFullBracket(
         thickness: 0.9,
         color: LINE
       })
-      page.drawText(pdfSafeText('Vainqueur'), {
+      page.drawText(pdfSafeText('Finale Or'), {
         x: x0 + 26,
         y: cy - 2.5,
         size: Math.min(8, Math.max(5.5, boxH * 0.22)),
@@ -514,10 +528,70 @@ export async function exportTirageBracketPdfBytes(
 
       const layout = computeLayout(pageBracket, availableW, availableH)
       drawFullBracket(page, font, fontBold, pageBracket, layout, MARGIN, gridTop)
+
+      if (partIndex === slices.length - 1) {
+        drawRepechageBronzePages(doc, font, fontBold, pool)
+      }
     }
   }
 
   return doc.save()
+}
+
+function drawRepechageBronzePages(
+  doc: PDFDocument,
+  font: PdfFont,
+  fontBold: PdfFont,
+  pool: TiragePool
+): void {
+  const groups: Array<{ title: string; matches: BracketMatch[] }> = [
+    { title: 'Repechage', matches: pool.bracket.repechage ?? [] },
+    { title: 'Finale de Bronze', matches: pool.bracket.bronze ?? [] }
+  ].filter((g) => g.matches.length > 0)
+  if (groups.length === 0) return
+
+  const page = doc.addPage([PAGE_W, PAGE_H])
+  let y = PAGE_H - MARGIN
+  page.drawText(pdfSafeText('JudoVACapp - Repechage / Bronze'), {
+    x: MARGIN,
+    y: y - 12,
+    size: 14,
+    font: fontBold,
+    color: NAVY
+  })
+  y -= 28
+  const cat = pdfSafeText(
+    `${pool.sexLabel} · ${formatTirageCategoryName(pool.category)}${
+      pool.weightLabel?.trim() ? ` · ${pool.weightLabel.trim()}` : ''
+    }`
+  )
+  page.drawText(cat, { x: MARGIN, y: y - 8, size: 11, font: fontBold, color: NAVY })
+  y -= 28
+
+  const boxW = 190
+  const boxH = 40
+  const gap = 10
+  for (const group of groups) {
+    page.drawText(pdfSafeText(group.title), {
+      x: MARGIN,
+      y: y - 8,
+      size: 10,
+      font: fontBold,
+      color: RED
+    })
+    y -= 18
+    let x = MARGIN
+    for (const match of group.matches) {
+      if (x + boxW > PAGE_W - MARGIN) {
+        x = MARGIN
+        y -= boxH + gap
+      }
+      if (y - boxH < MARGIN) break
+      drawMatchCard(page, font, fontBold, match, x, y - boxH / 2, boxW, boxH)
+      x += boxW + gap
+    }
+    y -= boxH + 20
+  }
 }
 
 export async function exportAndDownloadTirageBracketPdf(

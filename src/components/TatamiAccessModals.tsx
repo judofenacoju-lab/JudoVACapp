@@ -4,6 +4,46 @@ import { Button } from '@/components/ui/button'
 import { tatamiDisplayLabel, type Tatami } from '@shared/types/combats'
 import { chronoListenPort, detectLanIpv4Addresses } from '@/lib/detect-lan-ip'
 
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  const value = String(text ?? '').trim()
+  if (!value || value === '—' || value === 'Non détectée' || value === 'Détection…') {
+    return false
+  }
+  try {
+    if (typeof window.judovac?.copyText === 'function') {
+      window.judovac.copyText(value)
+      return true
+    }
+  } catch {
+    /* fallback */
+  }
+  try {
+    await navigator.clipboard.writeText(value)
+    return true
+  } catch {
+    try {
+      const area = document.createElement('textarea')
+      area.value = value
+      area.setAttribute('readonly', '')
+      area.style.position = 'fixed'
+      area.style.top = '0'
+      area.style.left = '0'
+      area.style.width = '2px'
+      area.style.height = '2px'
+      area.style.opacity = '0'
+      document.body.appendChild(area)
+      area.focus()
+      area.select()
+      area.setSelectionRange(0, value.length)
+      const ok = document.execCommand('copy')
+      document.body.removeChild(area)
+      return ok
+    } catch {
+      return false
+    }
+  }
+}
+
 interface Props {
   tatamis: Tatami[]
   onClose: () => void
@@ -51,15 +91,13 @@ export function TatamiAccessModals({ tatamis, onClose }: Props) {
   }, [detectIp])
 
   const serverIp = lanIps[0] ?? null
+  const ipDisplay = detecting ? 'Détection…' : serverIp ? `${serverIp}:${serverPort}` : 'Non détectée'
 
   async function copy(text: string, key: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(key)
-      window.setTimeout(() => setCopied(null), 1600)
-    } catch {
-      /* ignore */
-    }
+    const ok = await copyTextToClipboard(text)
+    if (!ok) return
+    setCopied(key)
+    window.setTimeout(() => setCopied(null), 1600)
   }
 
   if (selected) {
@@ -96,11 +134,7 @@ export function TatamiAccessModals({ tatamis, onClose }: Props) {
               </p>
               <div className="mt-1 flex items-center justify-between gap-2">
                 <p className="font-mono text-lg font-semibold tracking-wide">
-                  {detecting
-                    ? 'Détection…'
-                    : serverIp
-                      ? `${serverIp}:${serverPort}`
-                      : 'Non détectée'}
+                  {ipDisplay}
                 </p>
                 <div className="flex shrink-0 items-center gap-1">
                   <Button
@@ -118,7 +152,7 @@ export function TatamiAccessModals({ tatamis, onClose }: Props) {
                       type="button"
                       size="sm"
                       variant="outline"
-                      onClick={() => void copy(`${serverIp}:${serverPort}`, 'ip')}
+                      onClick={() => void copy(ipDisplay, 'ip')}
                     >
                       <Copy className="h-3.5 w-3.5" />
                       {copied === 'ip' ? 'Copié' : 'Copier'}

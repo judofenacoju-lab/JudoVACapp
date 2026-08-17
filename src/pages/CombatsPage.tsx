@@ -18,6 +18,7 @@ import {
   applyCombatSubstitute,
   applyCombatWinner,
   assignManualOpponent,
+  combatPhaseDisplay,
   combatSessionKind,
   createEmptyCombatSession,
   createTatamiId,
@@ -110,7 +111,7 @@ function CombatRow({
           <span className="text-sm font-semibold">{c.label}</span>
           <span className="text-xs text-muted-foreground ml-2">{c.poolLabel}</span>
           <span className="text-xs text-muted-foreground ml-2">
-            Tour {c.round + 1}
+            {combatPhaseDisplay(c, session) || `Tour ${c.round + 1}`}
             {c.tatamiId != null ? ` · n°${c.orderOnTatami + 1}` : ''}
           </span>
         </div>
@@ -121,7 +122,7 @@ function CombatRow({
       </div>
       <div className="grid gap-1 text-sm sm:grid-cols-2">
         <p>
-          <span className="text-muted-foreground">Rouge · </span>
+          <span className="text-muted-foreground">Blanc · </span>
           {fighterLine(c, 'top')}
           {c.winnerId && c.top?.id === c.winnerId && (
             <span className="ml-1 text-emerald-700 font-medium">✓</span>
@@ -133,7 +134,7 @@ function CombatRow({
           )}
         </p>
         <p>
-          <span className="text-muted-foreground">Blanc · </span>
+          <span className="text-muted-foreground">Bleu · </span>
           {fighterLine(c, 'bottom')}
           {c.winnerId && c.bottom?.id === c.winnerId && (
             <span className="ml-1 text-emerald-700 font-medium">✓</span>
@@ -199,7 +200,7 @@ function CombatRow({
               onClick={() => applySubstitute(c.id, 'top')}
             >
               <Replace className="h-3.5 w-3.5" />
-              Remplaçant rouge
+              Remplaçant blanc
             </Button>
           )}
           {c.bottomSubstitute && (
@@ -211,7 +212,7 @@ function CombatRow({
               onClick={() => applySubstitute(c.id, 'bottom')}
             >
               <Replace className="h-3.5 w-3.5" />
-              Remplaçant blanc
+              Remplaçant bleu
             </Button>
           )}
         </div>

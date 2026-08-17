@@ -5,6 +5,7 @@ import {
   hasRecordedWeight,
   resolveJudokaCategory
 } from '@shared/utils/judoka'
+import { mainRoundPhase, type CombatPhase } from '@shared/utils/combat-phase'
 
 /** Catégorie de poids configurable pour le tirage (ex. −20 kg → 18–20). */
 export interface TirageWeightClass {
@@ -64,11 +65,18 @@ export interface BracketMatch {
   bottom: BracketSlot
   /** Un seul judoka → passe automatiquement. */
   bye: boolean
+  phase?: CombatPhase
+  feedsIntoMatch?: { matchId: string; slot: 'top' | 'bottom' } | null
+  feedsLoserInto?: { matchId: string; slot: 'top' | 'bottom' } | null
 }
 
 export interface BracketTree {
   /** rounds[0] = premier tour */
   rounds: BracketMatch[][]
+  /** Repêchage (perdants des quarts). */
+  repechage?: BracketMatch[]
+  /** Finales de bronze. */
+  bronze?: BracketMatch[]
   /** Taille du tableau (puissance de 2). */
   size: number
   entrantCount: number
@@ -330,7 +338,7 @@ export function buildBracket(
   const entrantCount = fighters.length
   if (entrantCount === 0) {
     return {
-      bracket: { rounds: [], size: 0, entrantCount: 0 },
+      bracket: { rounds: [], repechage: [], bronze: [], size: 0, entrantCount: 0 },
       nextFightNumber: opts.startFightNumber ?? 1,
       fightCount: 0,
       byeCount: 0
@@ -387,6 +395,16 @@ export function buildBracket(
   // Bye : passage unique 1er tour → 2e tour (pas jusqu’au vainqueur)
   propagateFirstRoundByes(rounds)
 
+  const n0 = r0.length
+  for (const round of rounds) {
+    for (const m of round) {
+      m.phase = mainRoundPhase(n0, m.round)
+    }
+  }
+
+  const extra = attachRepechageAndBronze(rounds, prefix, fightNumber)
+  fightNumber = extra.nextFightNumber
+
   let fightCount = 0
   let byeCount = 0
   for (const [ri, round] of rounds.entries()) {
@@ -398,11 +416,75 @@ export function buildBracket(
   }
 
   return {
-    bracket: { rounds, size, entrantCount },
+    bracket: {
+      rounds,
+      repechage: extra.repechage,
+      bronze: extra.bronze,
+      size,
+      entrantCount
+    },
     nextFightNumber: fightNumber,
     fightCount,
     byeCount
   }
+}
+
+function emptyMatch(
+  id: string,
+  round: number,
+  matchIndex: number,
+  label: string,
+  phase: CombatPhase
+): BracketMatch {
+  return {
+    id,
+    label,
+    round,
+    matchIndex,
+    top: { fighter: null, empty: true },
+    bottom: { fighter: null, empty: true },
+    bye: false,
+    phase
+  }
+}
+
+/** Perdants des quarts → repêchage ; vainqueurs de repêchage vs perdants de demi → bronze. */
+function attachRepechageAndBronze(
+  rounds: BracketMatch[][],
+  prefix: string,
+  fightNumber: number
+): { repechage: BracketMatch[]; bronze: BracketMatch[]; nextFightNumber: number } {
+  const quartIdx = rounds.findIndex((r) => r.length === 8)
+  if (quartIdx < 0) {
+    return { repechage: [], bronze: [], nextFightNumber: fightNumber }
+  }
+  const quart = rounds[quartIdx]!
+  const demi = rounds[quartIdx + 1]
+  if (!demi || demi.length !== 4) {
+    return { repechage: [], bronze: [], nextFightNumber: fightNumber }
+  }
+
+  const repechage: BracketMatch[] = []
+  const bronze: BracketMatch[] = []
+  for (let i = 0; i < 4; i++) {
+    const qA = quart[i * 2]!
+    const qB = quart[i * 2 + 1]!
+    const sf = demi[i]!
+    const repId = `${prefix}-rep-${i}`
+    const brId = `${prefix}-br-${i}`
+    fightNumber += 1
+    const rep = emptyMatch(repId, 20, i, `Rep. ${i + 1}`, 'repechage')
+    rep.feedsIntoMatch = { matchId: brId, slot: 'top' }
+    qA.feedsLoserInto = { matchId: repId, slot: 'top' }
+    qB.feedsLoserInto = { matchId: repId, slot: 'bottom' }
+    repechage.push(rep)
+
+    fightNumber += 1
+    const br = emptyMatch(brId, 21, i, `Br. ${i + 1}`, 'bronze')
+    sf.feedsLoserInto = { matchId: brId, slot: 'bottom' }
+    bronze.push(br)
+  }
+  return { repechage, bronze, nextFightNumber: fightNumber }
 }
 
 /**

@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ImageUp, Timer } from 'lucide-react'
 import type { ChronoCombat, ChronoConnectResponse } from '@shared/types/chrono'
+import { combatPhaseLabel } from '@shared/utils/combat-phase'
 import {
   chronoBaseUrl,
   connectChrono,
@@ -9,9 +11,11 @@ import {
   setChronoSubstitute,
   setChronoWinner
 } from './lib/api'
+import defaultLogo from './assets/judovac-logo.png'
 
 const DEFAULT_PORT = 3847
 const DEFAULT_SECONDS = 4 * 60
+const LOGO_STORAGE_KEY = 'jvac-chrono-logo'
 
 function formatClock(total: number): string {
   const s = Math.max(0, Math.floor(total))
@@ -31,6 +35,20 @@ function fighterMeta(c: ChronoCombat, side: 'top' | 'bottom'): string {
   return [f.club, f.age > 0 ? `${f.age} ans` : null].filter(Boolean).join(' · ')
 }
 
+function phaseForCombat(c: ChronoCombat | null): string {
+  if (!c || c.kind === 'team') return ''
+  return combatPhaseLabel(c.phase, 'chrono')
+}
+
+function readStoredLogo(): string {
+  try {
+    const stored = localStorage.getItem(LOGO_STORAGE_KEY)
+    return stored?.startsWith('data:image/') ? stored : defaultLogo
+  } catch {
+    return defaultLogo
+  }
+}
+
 export function App() {
   const [hostInput, setHostInput] = useState('')
   const [password, setPassword] = useState('')
@@ -43,6 +61,9 @@ export function App() {
   const [remaining, setRemaining] = useState(DEFAULT_SECONDS)
   const [running, setRunning] = useState(false)
   const [duration, setDuration] = useState(DEFAULT_SECONDS)
+  const [logoSrc, setLogoSrc] = useState(readStoredLogo)
+  const [view, setView] = useState<'board' | 'display'>('board')
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const current = useMemo(
     () => session?.combats.find((c) => c.id === currentId) ?? null,
@@ -86,6 +107,24 @@ export function App() {
     }, 4000)
     return () => window.clearInterval(t)
   }, [base, pwd])
+
+  function onLogoFile(e: React.ChangeEvent<HTMLInputElement>): void {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !file.type.startsWith('image/')) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : ''
+      if (!dataUrl.startsWith('data:image/')) return
+      try {
+        localStorage.setItem(LOGO_STORAGE_KEY, dataUrl)
+      } catch {
+        /* quota */
+      }
+      setLogoSrc(dataUrl)
+    }
+    reader.readAsDataURL(file)
+  }
 
   async function connect(): Promise<void> {
     setBusy(true)
@@ -159,6 +198,50 @@ export function App() {
     setPwd('')
     setRunning(false)
     setRemaining(duration)
+    setView('board')
+  }
+
+  const headerActions = (
+    <div className="header-actions">
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={onLogoFile}
+      />
+      <button
+        className="btn-icon"
+        type="button"
+        title="Charger un logo"
+        onClick={() => fileRef.current?.click()}
+      >
+        <ImageUp size={18} />
+        <span className="sr-only">Charger</span>
+      </button>
+      <button className="btn" type="button" onClick={() => setView('display')}>
+        <Timer size={16} />
+        Chrono
+      </button>
+      {session ? (
+        <button className="btn btn-outline" type="button" onClick={disconnect}>
+          Déconnecter
+        </button>
+      ) : null}
+    </div>
+  )
+
+  if (view === 'display') {
+    return (
+      <ChronoDisplay
+        combat={current}
+        remaining={remaining}
+        running={running}
+        logoSrc={logoSrc}
+        tatamiName={session?.tatamiName || (session ? `Tatami-${session.tatamiIndex + 1}` : '')}
+        onClose={() => setView('board')}
+      />
+    )
   }
 
   if (!session) {
@@ -169,6 +252,7 @@ export function App() {
             <h1>JVac-Chrono</h1>
             <p>Chronométrage des combats</p>
           </div>
+          {headerActions}
         </header>
         <div className="login">
           <form
@@ -215,9 +299,7 @@ export function App() {
             {session.combats.length} combat(s) · {base.replace(/^http:\/\//, '')}
           </p>
         </div>
-        <button className="btn btn-outline" type="button" onClick={disconnect}>
-          Déconnecter
-        </button>
+        {headerActions}
       </header>
       <div className="board">
         <section className="card">
@@ -230,10 +312,12 @@ export function App() {
                 {current.kind === 'team' && current.teamMatchLabel
                   ? `${current.teamMatchLabel} · `
                   : ''}
-                {current.label} · {current.poolLabel} · Tour {current.round + 1}
+                {current.label} · {current.poolLabel}
+                {phaseForCombat(current) ? ` · ${phaseForCombat(current)}` : ''}
               </p>
               <div className="fighters">
-                <div className="fighter red">
+                <div className="fighter white">
+                  <div className="side-tag">Blanc</div>
                   <div className="name">{fighterName(current, 'top')}</div>
                   <div className="meta">{fighterMeta(current, 'top')}</div>
                   {current.topSubstitute && (
@@ -241,7 +325,8 @@ export function App() {
                   )}
                 </div>
                 <div className="vs">VS</div>
-                <div className="fighter white">
+                <div className="fighter blue">
+                  <div className="side-tag">Bleu</div>
                   <div className="name">{fighterName(current, 'bottom')}</div>
                   <div className="meta">{fighterMeta(current, 'bottom')}</div>
                   {current.bottomSubstitute && (
@@ -301,7 +386,7 @@ export function App() {
                       disabled={busy}
                       onClick={() => void useSubstitute('top')}
                     >
-                      Remplaçant rouge
+                      Remplaçant blanc
                     </button>
                   )}
                   {current.bottomSubstitute && (
@@ -311,7 +396,7 @@ export function App() {
                       disabled={busy}
                       onClick={() => void useSubstitute('bottom')}
                     >
-                      Remplaçant blanc
+                      Remplaçant bleu
                     </button>
                   )}
                 </div>
@@ -320,22 +405,22 @@ export function App() {
                 <div className="actions" style={{ marginTop: 14 }}>
                   {current.top && (
                     <button
-                      className="btn"
+                      className="btn btn-navy"
                       type="button"
                       disabled={busy}
                       onClick={() => void declareWinner(current.top!.id)}
                     >
-                      {current.bottom ? 'Vainqueur rouge' : 'Confirmer la victoire'}
+                      {current.bottom ? 'Vainqueur blanc' : 'Confirmer la victoire'}
                     </button>
                   )}
                   {current.bottom && (
                     <button
-                      className="btn btn-navy"
+                      className="btn"
                       type="button"
                       disabled={busy}
                       onClick={() => void declareWinner(current.bottom!.id)}
                     >
-                      {current.top ? 'Vainqueur blanc' : 'Confirmer la victoire'}
+                      {current.top ? 'Vainqueur bleu' : 'Confirmer la victoire'}
                     </button>
                   )}
                 </div>
@@ -367,7 +452,9 @@ export function App() {
                   <strong>{c.label}</strong>{' '}
                   <span className="badge">
                     {c.kind === 'team' ? 'Équipe · ' : ''}
-                    {c.status === 'completed' ? 'Terminé' : `Tour ${c.round + 1}`}
+                    {c.status === 'completed'
+                      ? 'Terminé'
+                      : phaseForCombat(c) || `Tour ${c.round + 1}`}
                   </span>
                   {c.teamMatchLabel && (
                     <div style={{ fontSize: '0.78rem', color: 'var(--muted)', marginTop: 2 }}>
@@ -383,6 +470,64 @@ export function App() {
           </ul>
         </aside>
       </div>
+    </div>
+  )
+}
+
+function ChronoDisplay({
+  combat,
+  remaining,
+  running,
+  logoSrc,
+  tatamiName,
+  onClose
+}: {
+  combat: ChronoCombat | null
+  remaining: number
+  running: boolean
+  logoSrc: string
+  tatamiName: string
+  onClose: () => void
+}) {
+  const phase = phaseForCombat(combat)
+  const showPhase = Boolean(combat && phase)
+
+  return (
+    <div className="display-page">
+      <button className="display-back" type="button" onClick={onClose}>
+        Retour
+      </button>
+      <div className="display-brand">
+        <div className="logo-plate">
+          <img src={logoSrc} alt="Logo" />
+        </div>
+        {showPhase ? <div className="phase-banner">{phase}</div> : null}
+      </div>
+      {combat ? (
+        <>
+          <p className="display-meta">
+            {tatamiName ? `${tatamiName} · ` : ''}
+            {combat.kind === 'team' && combat.teamMatchLabel ? `${combat.teamMatchLabel} · ` : ''}
+            {combat.label} · {combat.poolLabel}
+            {running ? ' · En cours' : ''}
+          </p>
+          <div className="display-clock">{formatClock(remaining)}</div>
+          <div className="display-fighters">
+            <div className="fighter white">
+              <div className="side-tag">Blanc</div>
+              <div className="name">{fighterName(combat, 'top')}</div>
+              <div className="meta">{fighterMeta(combat, 'top')}</div>
+            </div>
+            <div className="fighter blue">
+              <div className="side-tag">Bleu</div>
+              <div className="name">{fighterName(combat, 'bottom')}</div>
+              <div className="meta">{fighterMeta(combat, 'bottom')}</div>
+            </div>
+          </div>
+        </>
+      ) : (
+        <p className="display-wait">En attente de combat</p>
+      )}
     </div>
   )
 }

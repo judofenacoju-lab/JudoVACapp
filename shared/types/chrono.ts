@@ -4,6 +4,7 @@ import type {
   CombatStatus,
   ManagedCombat
 } from '@shared/types/combats'
+import type { CombatPhase } from '@shared/utils/combat-phase'
 
 /** Combat exposé à JVac-Chrono (sans cases vides). */
 export interface ChronoCombat {
@@ -24,6 +25,7 @@ export interface ChronoCombat {
   teamMatchLabel?: string
   homeClub?: string
   awayClub?: string
+  phase?: CombatPhase
 }
 
 export interface ChronoConnectResponse {
@@ -60,6 +62,7 @@ export function toChronoCombat(c: ManagedCombat): ChronoCombat {
     kind: c.kind === 'team' ? 'team' : 'individual',
     teamMatchLabel: c.teamMatchLabel,
     homeClub: c.homeClub,
-    awayClub: c.awayClub
+    awayClub: c.awayClub,
+    phase: c.phase
   }
 }

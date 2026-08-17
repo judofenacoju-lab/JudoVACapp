@@ -91,6 +91,29 @@ select {
   font: inherit;
 }
 
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-icon {
+  width: 40px;
+  height: 40px;
+  border: 1px solid #c5d0dc;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--white);
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.btn-icon:hover {
+  background: rgb(255 255 255 / 10%);
+}
+
 .btn {
   border: 0;
   border-radius: 8px;
@@ -98,6 +121,21 @@ select {
   font-weight: 600;
   color: var(--white);
   background: var(--red);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .btn:disabled {
@@ -152,14 +190,24 @@ select {
   min-height: 96px;
 }
 
-.fighter.red {
-  background: #c8102e;
-  color: white;
-}
-
 .fighter.white {
   background: #f8fafc;
   border: 2px solid var(--navy);
+  color: var(--navy);
+}
+
+.fighter.blue {
+  background: #1d4ed8;
+  color: white;
+}
+
+.fighter .side-tag {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.8;
+  margin-bottom: 4px;
 }
 
 .fighter .name {
@@ -228,4 +276,85 @@ select {
 
 .done {
   opacity: 0.65;
+}
+
+.display-page {
+  min-height: 100vh;
+  background: var(--navy);
+  color: var(--white);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 28px 24px 40px;
+}
+
+.display-back {
+  align-self: flex-start;
+  background: transparent;
+  color: var(--white);
+  border: 1px solid rgb(255 255 255 / 30%);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-weight: 600;
+}
+
+.display-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.logo-plate {
+  background: #ffffff;
+  border-radius: 18px;
+  padding: 16px 22px;
+  min-width: 180px;
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+}
+
+.logo-plate img {
+  max-height: 140px;
+  max-width: 240px;
+  object-fit: contain;
+}
+
+.phase-banner {
+  margin-top: 12px;
+  background: var(--red);
+  color: #ffffff;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 8px 28px;
+  border-radius: 6px;
+  font-size: 1.05rem;
+}
+
+.display-meta {
+  margin: 18px 0 0;
+  opacity: 0.8;
+  font-size: 0.95rem;
+}
+
+.display-clock {
+  font-variant-numeric: tabular-nums;
+  font-size: 5.4rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  margin: 12px 0 20px;
+}
+
+.display-fighters {
+  width: min(720px, 100%);
+  display: grid;
+  gap: 12px;
+}
+
+.display-wait {
+  margin-top: 48px;
+  opacity: 0.7;
 }

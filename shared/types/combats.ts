@@ -1,5 +1,6 @@
 import type { Sex } from '@shared/types/judoka'
-import type { TirageFighter, TirageResult } from '@shared/utils/tirage'
+import { combatPhaseLabel, mainRoundPhase, type CombatPhase } from '@shared/utils/combat-phase'
+import type { BracketMatch, TirageFighter, TirageResult } from '@shared/utils/tirage'
 import { formatTirageCategoryName } from '@shared/utils/tirage'
 
 /** Statut d’un combat suivi sur le terrain. */
@@ -52,6 +53,10 @@ export interface ManagedCombat {
   winnerId: string | null
   /** Combat suivant alimenté par le vainqueur. */
   feedsInto: { combatId: string; slot: 'top' | 'bottom' } | null
+  /** Combat suivant alimenté par le perdant (repêchage / bronze). */
+  feedsLoserInto?: { combatId: string; slot: 'top' | 'bottom' } | null
+  /** Phase du tableau (préliminaire, quart, demi, finale…). */
+  phase?: CombatPhase
   updatedAt: string
   /** Défaut : individuel (sessions anciennes). */
   kind?: CombatSessionKind
@@ -139,9 +144,96 @@ export function tatamiDisplayLabel(_tatami: Tatami, index: number): string {
   return `Tatami-${index + 1}`
 }
 
+export function resolveCombatPhase(
+  c: ManagedCombat,
+  session?: CombatSession | null
+): CombatPhase {
+  if (c.phase) return c.phase
+  if (!session || c.kind === 'team') return mainRoundPhase(0, c.round)
+  const firstRoundCount = session.combats.filter(
+    (x) => x.poolKey === c.poolKey && x.round === 0 && x.kind !== 'team'
+  ).length
+  return mainRoundPhase(firstRoundCount, c.round)
+}
+
+export function combatPhaseDisplay(
+  c: ManagedCombat,
+  session?: CombatSession | null,
+  style: 'full' | 'chrono' = 'full'
+): string {
+  return combatPhaseLabel(resolveCombatPhase(c, session), style)
+}
+
 /** Au moins un judoka présent (les cases vides restent en base, non affichées). */
 export function hasAtLeastOneJudoka(c: ManagedCombat): boolean {
   return Boolean(c.top || c.bottom)
+}
+
+function linkFromMatch(
+  poolKey: string,
+  match: { feedsIntoMatch?: { matchId: string; slot: 'top' | 'bottom' } | null }
+): ManagedCombat['feedsInto'] {
+  if (!match.feedsIntoMatch) return null
+  return {
+    combatId: `${poolKey}::${match.feedsIntoMatch.matchId}`,
+    slot: match.feedsIntoMatch.slot
+  }
+}
+
+function loserLinkFromMatch(
+  poolKey: string,
+  match: { feedsLoserInto?: { matchId: string; slot: 'top' | 'bottom' } | null }
+): ManagedCombat['feedsLoserInto'] {
+  if (!match.feedsLoserInto) return null
+  return {
+    combatId: `${poolKey}::${match.feedsLoserInto.matchId}`,
+    slot: match.feedsLoserInto.slot
+  }
+}
+
+function managedFromBracketMatch(
+  match: BracketMatch,
+  ctx: {
+    poolKey: string
+    poolLabel: string
+    sex: Sex
+    category: string
+    weightLabel: string
+    feedsInto: ManagedCombat['feedsInto']
+    now: string
+  }
+): ManagedCombat {
+  const top = fighterRef(match.top.fighter)
+  const bottom = fighterRef(match.bottom.fighter)
+  const hasBoth = Boolean(top && bottom)
+  const hasOne = Boolean(top || bottom)
+  let status: CombatStatus = 'pending'
+  if (hasBoth) status = 'ready'
+  else if (match.bye && hasOne) status = 'ready'
+
+  return {
+    id: `${ctx.poolKey}::${match.id}`,
+    matchId: match.id,
+    label: match.label,
+    round: match.round,
+    matchIndex: match.matchIndex,
+    poolKey: ctx.poolKey,
+    poolLabel: ctx.poolLabel,
+    sex: ctx.sex,
+    category: ctx.category,
+    weightLabel: ctx.weightLabel,
+    top,
+    bottom,
+    bye: match.bye,
+    tatamiId: null,
+    orderOnTatami: 0,
+    status,
+    winnerId: null,
+    feedsInto: ctx.feedsInto,
+    feedsLoserInto: loserLinkFromMatch(ctx.poolKey, match),
+    phase: match.phase,
+    updatedAt: ctx.now
+  }
 }
 
 function fighterRef(f: TirageFighter | null | undefined): CombatFighterRef | null {
@@ -235,26 +327,14 @@ export function combatSessionFromTirage(result: TirageResult): CombatSession {
     const weightPart = pool.weightLabel?.trim() ? ` · ${pool.weightLabel.trim()}` : ''
     const poolLabel = `${pool.sexLabel} · ${category}${weightPart}`
     const rounds = pool.bracket.rounds
+    const extraMatches = [...(pool.bracket.repechage ?? []), ...(pool.bracket.bronze ?? [])]
 
     for (let r = 0; r < rounds.length; r++) {
       const round = rounds[r]!
       for (let mi = 0; mi < round.length; mi++) {
         const match = round[mi]!
-        const top = fighterRef(match.top.fighter)
-        const bottom = fighterRef(match.bottom.fighter)
-        const hasBoth = Boolean(top && bottom)
-        const hasOne = Boolean(top || bottom)
-        let status: CombatStatus = 'pending'
-        let winnerId: string | null = null
-        if (hasBoth) {
-          status = 'ready'
-        } else if (match.bye && hasOne) {
-          // Bye tour 1 : jouable sur Chrono pour confirmer la victoire manuellement
-          status = 'ready'
-        }
-
-        let feedsInto: ManagedCombat['feedsInto'] = null
-        if (r + 1 < rounds.length) {
+        let feedsInto = linkFromMatch(poolKey, match)
+        if (!feedsInto && r + 1 < rounds.length) {
           const nextMatch = rounds[r + 1]![Math.floor(mi / 2)]
           if (nextMatch) {
             feedsInto = {
@@ -263,29 +343,32 @@ export function combatSessionFromTirage(result: TirageResult): CombatSession {
             }
           }
         }
+        combats.push(
+          managedFromBracketMatch(match, {
+            poolKey,
+            poolLabel,
+            sex: pool.sex,
+            category,
+            weightLabel: pool.weightLabel || '',
+            feedsInto,
+            now
+          })
+        )
+      }
+    }
 
-        combats.push({
-          id: `${poolKey}::${match.id}`,
-          matchId: match.id,
-          label: match.label,
-          round: match.round,
-          matchIndex: match.matchIndex,
+    for (const match of extraMatches) {
+      combats.push(
+        managedFromBracketMatch(match, {
           poolKey,
           poolLabel,
           sex: pool.sex,
           category,
           weightLabel: pool.weightLabel || '',
-          top,
-          bottom,
-          bye: match.bye,
-          tatamiId: null,
-          orderOnTatami: 0,
-          status,
-          winnerId,
-          feedsInto,
-          updatedAt: now
+          feedsInto: linkFromMatch(poolKey, match),
+          now
         })
-      }
+      )
     }
   }
 
@@ -401,34 +484,47 @@ export function applyCombatWinner(
   combat.winnerId = winnerId
   combat.updatedAt = now
 
-  if (combat.feedsInto) {
-    const nextIdx = combats.findIndex((c) => c.id === combat.feedsInto!.combatId)
-    if (nextIdx >= 0) {
-      const next = { ...combats[nextIdx]! }
-      if (combat.feedsInto.slot === 'top') next.top = winner
-      else next.bottom = winner
-      const hasBoth = Boolean(next.top && next.bottom)
-      const hasOne = Boolean(next.top || next.bottom)
-      if (hasBoth) {
-        next.status = next.status === 'completed' ? 'completed' : 'ready'
-        next.bye = false
-      } else if (hasOne && next.status === 'pending') {
-        next.status = 'pending'
-      }
-      if (hasAtLeastOneJudoka(next) && !next.tatamiId && combat.tatamiId) {
-        const maxOrder = combats
-          .filter((x) => x.tatamiId === combat.tatamiId)
-          .reduce((m, x) => Math.max(m, x.orderOnTatami), -1)
-        next.tatamiId = combat.tatamiId
-        next.orderOnTatami = maxOrder + 1
-      }
-      next.updatedAt = now
-      combats[nextIdx] = next
-    }
+  placeFighterOnDest(combats, combat.feedsInto, winner, combat, now)
+  const loser =
+    combat.top?.id === winnerId ? combat.bottom : combat.bottom?.id === winnerId ? combat.top : null
+  if (loser) {
+    placeFighterOnDest(combats, combat.feedsLoserInto ?? null, loser, combat, now)
   }
 
   combats[idx] = combat
   return { ...session, combats, updatedAt: now }
+}
+
+function placeFighterOnDest(
+  combats: ManagedCombat[],
+  dest: { combatId: string; slot: 'top' | 'bottom' } | null,
+  fighter: CombatFighterRef,
+  source: ManagedCombat,
+  now: string
+): void {
+  if (!dest) return
+  const nextIdx = combats.findIndex((c) => c.id === dest.combatId)
+  if (nextIdx < 0) return
+  const next = { ...combats[nextIdx]! }
+  if (dest.slot === 'top') next.top = fighter
+  else next.bottom = fighter
+  const hasBoth = Boolean(next.top && next.bottom)
+  const hasOne = Boolean(next.top || next.bottom)
+  if (hasBoth) {
+    next.status = next.status === 'completed' ? 'completed' : 'ready'
+    next.bye = false
+  } else if (hasOne && next.status === 'pending') {
+    next.status = 'pending'
+  }
+  if (hasAtLeastOneJudoka(next) && !next.tatamiId && source.tatamiId) {
+    const maxOrder = combats
+      .filter((x) => x.tatamiId === source.tatamiId)
+      .reduce((m, x) => Math.max(m, x.orderOnTatami), -1)
+    next.tatamiId = source.tatamiId
+    next.orderOnTatami = maxOrder + 1
+  }
+  next.updatedAt = now
+  combats[nextIdx] = next
 }
 
 /** Place le remplaçant sur le combat (le titulaire passe en remplaçant). */
