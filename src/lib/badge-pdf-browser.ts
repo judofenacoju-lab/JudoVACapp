@@ -230,54 +230,6 @@ function drawText(
   })
 }
 
-function drawCategoryClubLine(
-  page: PDFPage,
-  category: string,
-  club: string,
-  x: number,
-  yBottom: number,
-  font: PDFFont,
-  fontBold: PDFFont,
-  size: number,
-  color: ReturnType<typeof rgb>,
-  opts?: { maxWidth?: number; align?: 'left' | 'center' | 'right' }
-): void {
-  const cat = pdfSafeText(formatBadgeCategory(category) || category)
-  const clubText = pdfSafeText(club.trim())
-  if (!cat && !clubText) return
-  if (!clubText) {
-    drawText(page, cat, x, yBottom, fontBold, size, color, opts)
-    return
-  }
-  if (!cat) {
-    drawText(page, clubText, x, yBottom, font, size, color, opts)
-    return
-  }
-  const sep = ' - '
-  const catW = fontBold.widthOfTextAtSize(cat, size)
-  const rest = sep + clubText
-  const restW = font.widthOfTextAtSize(rest, size)
-  const total = catW + restW
-  const width = opts?.maxWidth
-  let startX = x
-  if (width != null && opts?.align === 'center') startX = x + (width - total) / 2
-  else if (width != null && opts?.align === 'right') startX = x + width - total
-  page.drawText(cat, {
-    x: Math.max(0, startX),
-    y: yBottom,
-    size,
-    font: fontBold,
-    color
-  })
-  page.drawText(rest, {
-    x: Math.max(0, startX + catW),
-    y: yBottom,
-    size,
-    font,
-    color
-  })
-}
-
 export interface BrowserPdfExportOptions {
   template: BadgeTemplate
   judokas: Judoka[]
@@ -285,7 +237,7 @@ export interface BrowserPdfExportOptions {
   customCols?: number
   customRows?: number
   readDataUrl: (path: string) => Promise<string | null>
-  /** Export par équipe : champ catégorie = « Catégorie - Club » (catégorie en gras). */
+  /** Export par équipe : le champ catégorie affiche uniquement le club. */
   categoryClubLine?: boolean
 }
 
@@ -521,14 +473,12 @@ async function drawBadge(
     const textY = oy + badgeH - style.y * sy - size
 
     if (key === 'category' && categoryClubLine) {
-      drawCategoryClubLine(
+      drawText(
         page,
-        judoka.category || '',
-        judoka.club || '',
+        judoka.club.trim() || 'Sans club',
         textX,
         textY,
         font,
-        fontBold,
         size,
         hexRgb(style.color || template.colors.text),
         { maxWidth: maxW, align: style.align }

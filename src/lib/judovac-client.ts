@@ -8,10 +8,9 @@ import type { AppSettings } from '@shared/types/settings'
 import type { UserAccount } from '@shared/types/user-account'
 import { createDefaultBadgeTemplate } from '@shared/types/badge'
 import { createDefaultSettings } from '@shared/types/settings'
-import { computeAge, formatBadgeCategory, hasRecordedWeight, isSameJudokaIdentity, resolveJudokaCategory, setActiveCategoryAgeRanges } from '@shared/utils/judoka'
+import { computeAge, hasRecordedWeight, isSameJudokaIdentity, resolveJudokaCategory, setActiveCategoryAgeRanges } from '@shared/utils/judoka'
 import { setActiveRegisteredClubs } from '@shared/utils/clubs'
 import { formatCreatorLabel, matchesCreatorLabel, resolveCreatedByStorageValue } from '@shared/utils/creator'
-import { matchTeamWeightClass, normalizeTeamWeightClasses } from '@shared/utils/team-tirage'
 import { judokaFormSchema } from '@shared/validation/judoka'
 import { createId } from './create-id'
 import { supabase, type JudokaRow, type ProfileRow } from './supabase'
@@ -1784,7 +1783,7 @@ export const judovacClient = {
     perPage?: 4 | 6 | 8 | 'custom'
     customCols?: number
     customRows?: number
-    /** Badges par équipe : catégorie (gras) - club (regular). */
+    /** Badges par équipe : le champ catégorie affiche uniquement le club. */
     teamBadge?: boolean
   }): Promise<IpcResult<{ path: string; count: number }>> => {
     try {
@@ -1819,20 +1818,6 @@ export const judovacClient = {
 
       if (opts.weighedOnly) {
         items = items.filter((j) => hasRecordedWeight(j.weightKg))
-      }
-
-      if (opts.teamBadge) {
-        const settingsRes = await judovacClient.getSettings()
-        const classes = settingsRes.ok
-          ? normalizeTeamWeightClasses(settingsRes.data.teamWeightClasses ?? [])
-          : []
-        items = items.map((j) => {
-          const wc = matchTeamWeightClass(j, classes)
-          return {
-            ...j,
-            category: wc?.label || formatBadgeCategory(j.category || '') || j.category
-          }
-        })
       }
 
       if (items.length === 0) {
