@@ -70,6 +70,44 @@ export function normalizeLineups(raw: unknown, memberIds: string[] = []): TeamCa
   return out
 }
 
+/** Ne conserve titulaire / remplaçant que s’ils correspondent à la catégorie (sexe + poids). */
+export function sanitizeLineupsForClasses(
+  team: Team,
+  members: Array<{ id: string; sex: string; weightKg?: number | null }>,
+  classes: Array<{ sex: string; label: string; minKg: number; maxKg: number }>
+): Team {
+  const byId = new Map(members.map((j) => [j.id, j]))
+  const inClass = (
+    id: string | null,
+    wc: { sex: string; minKg: number; maxKg: number }
+  ): string | null => {
+    if (!id) return null
+    const j = byId.get(id)
+    if (!j) {
+      return team.judokaIds.includes(id) ? id : null
+    }
+    if (j.sex !== wc.sex) return null
+    const w = Number(j.weightKg)
+    if (!Number.isFinite(w) || w <= 0) return null
+    if (w < wc.minKg - 1e-9 || w > wc.maxKg + 1e-9) return null
+    return id
+  }
+  const lineups = (team.lineups ?? []).map((l) => {
+    const wc =
+      classes.find(
+        (c) =>
+          c.sex === l.sex &&
+          (c.label.trim().toLowerCase() === l.weightLabel.trim().toLowerCase() ||
+            (Math.abs(c.minKg - l.minKg) < 1e-6 && Math.abs(c.maxKg - l.maxKg) < 1e-6))
+      ) ?? l
+    let principalId = inClass(l.principalId, wc)
+    let substituteId = inClass(l.substituteId, wc)
+    if (substituteId && substituteId === principalId) substituteId = null
+    return { ...l, principalId, substituteId }
+  })
+  return { ...team, lineups: normalizeLineups(lineups, team.judokaIds) }
+}
+
 export function upsertTeamLineup(
   team: Team,
   wc: { sex: Sex; label: string; minKg: number; maxKg: number },

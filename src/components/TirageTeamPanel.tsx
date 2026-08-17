@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Dices, Plus, RefreshCw, Send, Trash2 } from 'lucide-react'
+import { Dices, FileDown, Plus, RefreshCw, Send, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -46,6 +46,8 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [result, setResult] = useState<TeamTirageResult | null>(null)
+  const [exportBusy, setExportBusy] = useState(false)
+  const [exportMessage, setExportMessage] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -104,6 +106,7 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
     setLoading(true)
     setError(null)
     setMessage(null)
+    setExportMessage(null)
     try {
       const settingsRes = await window.judovac.getSettings()
       if (!settingsRes.ok) {
@@ -209,6 +212,25 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
       setError(e instanceof Error ? e.message : 'Envoi vers Combats impossible')
     } finally {
       setSendBusy(false)
+    }
+  }
+
+  async function exportGrille(): Promise<void> {
+    if (!result || result.boutCount === 0) {
+      setError('Aucune grille à exporter.')
+      return
+    }
+    setExportBusy(true)
+    setError(null)
+    setExportMessage(null)
+    try {
+      const { exportAndDownloadTeamTiragePdf } = await import('@/lib/team-tirage-pdf')
+      const out = await exportAndDownloadTeamTiragePdf(result)
+      setExportMessage(`Grille exportée (${out.matchCount} rencontre(s)) → ${out.filename}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Export PDF impossible')
+    } finally {
+      setExportBusy(false)
     }
   }
 
@@ -357,9 +379,25 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
               {sendBusy ? 'Envoi…' : 'Envoyer Combats'}
             </Button>
           )}
+          {result && (
+            <Button
+              variant="outline"
+              size="lg"
+              disabled={loading || exportBusy || sendBusy}
+              onClick={() => {
+                setResult(null)
+                setError(null)
+                setMessage(null)
+                setExportMessage(null)
+              }}
+            >
+              Effacer
+            </Button>
+          )}
         </div>
         {error && <p className="text-sm text-destructive">{error}</p>}
         {message && <p className="text-sm text-emerald-700">{message}</p>}
+        {exportMessage && <p className="text-sm text-emerald-700 break-all">{exportMessage}</p>}
         {result && result.boutCount > 0 && (
           <p className="text-sm text-emerald-700">
             {result.teamCount} équipes · {result.matchCount} rencontre(s) · {result.boutCount}{' '}
@@ -407,6 +445,20 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
           </section>
         )
       })}
+
+      {result && result.boutCount > 0 && matches.length > 0 && (
+        <div className="flex justify-center border-t pt-4 pb-2 max-w-3xl">
+          <Button
+            variant="accent"
+            size="lg"
+            disabled={exportBusy}
+            onClick={() => void exportGrille()}
+          >
+            <FileDown className="h-4 w-4" />
+            {exportBusy ? 'Export…' : 'Exporter Grille'}
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

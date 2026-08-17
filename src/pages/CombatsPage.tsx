@@ -17,6 +17,7 @@ import { AppShell } from '@/layouts/AppShell'
 import {
   applyCombatSubstitute,
   applyCombatWinner,
+  assignManualOpponent,
   combatSessionKind,
   createEmptyCombatSession,
   createTatamiId,
@@ -24,6 +25,7 @@ import {
   ensureTatamiPasswords,
   hasAtLeastOneJudoka,
   isCombatSchedulableOnTatami,
+  isMissingOpponent,
   listTatamisWithoutCombats,
   type CombatSession,
   type CombatStatus,
@@ -84,7 +86,8 @@ function CombatRow({
   assignCombat,
   setCombatStatus,
   declareWinner,
-  applySubstitute
+  applySubstitute,
+  addManualOpponent
 }: {
   c: ManagedCombat
   session: CombatSession
@@ -94,7 +97,12 @@ function CombatRow({
   setCombatStatus: (id: string, status: CombatStatus) => void
   declareWinner: (id: string, winnerId: string) => void
   applySubstitute: (id: string, slot: 'top' | 'bottom') => void
+  addManualOpponent: (id: string, name: string) => void
 }) {
+  const [manualName, setManualName] = useState('')
+  const canAddManual =
+    c.round === 0 && isMissingOpponent(c) && c.status !== 'completed' && c.status !== 'in_progress'
+  const canPlay = c.status !== 'completed' && Boolean(c.top || c.bottom)
   return (
     <li className="rounded-lg border bg-slate-50/60 p-3 space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -137,6 +145,33 @@ function CombatRow({
           )}
         </p>
       </div>
+      {canAddManual && (
+        <form
+          className="flex flex-wrap items-end gap-2 rounded-md border border-dashed bg-white px-2 py-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            const name = manualName.trim()
+            if (!name) return
+            addManualOpponent(c.id, name)
+            setManualName('')
+          }}
+        >
+          <div className="min-w-[12rem] flex-1 space-y-1">
+            <Label className="text-xs text-muted-foreground">
+              Adversaire manquant (tour 1) — saisie manuelle
+            </Label>
+            <Input
+              value={manualName}
+              disabled={busy}
+              placeholder="Nom de l’adversaire"
+              onChange={(e) => setManualName(e.target.value)}
+            />
+          </div>
+          <Button type="submit" size="sm" variant="outline" disabled={busy || !manualName.trim()}>
+            Ajouter
+          </Button>
+        </form>
+      )}
       <div className="flex flex-wrap items-center gap-2 pt-1">
         <Label className="text-xs text-muted-foreground">Tatami</Label>
         <select
@@ -181,7 +216,7 @@ function CombatRow({
           )}
         </div>
       )}
-      {confirmed && c.status !== 'completed' && c.top && c.bottom && (
+      {confirmed && canPlay && (
         <div className="flex flex-wrap gap-2 pt-1">
           {c.status === 'ready' && (
             <Button
@@ -195,22 +230,26 @@ function CombatRow({
           )}
           {(c.status === 'ready' || c.status === 'in_progress') && (
             <>
-              <Button
-                size="sm"
-                variant="accent"
-                disabled={busy}
-                onClick={() => declareWinner(c.id, c.top!.id)}
-              >
-                Vainqueur : {c.top.name.split(',')[0]}
-              </Button>
-              <Button
-                size="sm"
-                variant="accent"
-                disabled={busy}
-                onClick={() => declareWinner(c.id, c.bottom!.id)}
-              >
-                Vainqueur : {c.bottom.name.split(',')[0]}
-              </Button>
+              {c.top && (
+                <Button
+                  size="sm"
+                  variant="accent"
+                  disabled={busy}
+                  onClick={() => declareWinner(c.id, c.top!.id)}
+                >
+                  Vainqueur : {c.top.name.split(',')[0]}
+                </Button>
+              )}
+              {c.bottom && (
+                <Button
+                  size="sm"
+                  variant="accent"
+                  disabled={busy}
+                  onClick={() => declareWinner(c.id, c.bottom!.id)}
+                >
+                  Vainqueur : {c.bottom.name.split(',')[0]}
+                </Button>
+              )}
             </>
           )}
         </div>
@@ -453,6 +492,12 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
       }
       await persist(next, 'Vainqueur enregistré')
     })()
+  }
+
+  function addManualOpponent(combatId: string, name: string): void {
+    if (!session) return
+    const next = assignManualOpponent(session, combatId, name)
+    void persist(next, 'Adversaire ajouté — JVac-Chrono pourra prendre ce combat en charge')
   }
 
   function applySubstitute(combatId: string, slot: 'top' | 'bottom'): void {
@@ -813,6 +858,7 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
                                 setCombatStatus={setCombatStatus}
                                 declareWinner={declareWinner}
                                 applySubstitute={applySubstitute}
+                                addManualOpponent={addManualOpponent}
                               />
                             ))}
                           </ul>
@@ -833,6 +879,7 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
                       setCombatStatus={setCombatStatus}
                       declareWinner={declareWinner}
                       applySubstitute={applySubstitute}
+                      addManualOpponent={addManualOpponent}
                     />
                   ))}
                 </ul>

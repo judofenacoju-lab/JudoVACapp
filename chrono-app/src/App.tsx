@@ -22,7 +22,7 @@ function formatClock(total: number): string {
 
 function fighterName(c: ChronoCombat, side: 'top' | 'bottom'): string {
   const f = side === 'top' ? c.top : c.bottom
-  return f?.name ?? '—'
+  return f?.name ?? (c.bye ? 'Bye' : '—')
 }
 
 function fighterMeta(c: ChronoCombat, side: 'top' | 'bottom'): string {
@@ -53,7 +53,7 @@ export function App() {
     if (!session) return
     const next =
       session.combats.find((c) => c.status === 'in_progress') ??
-      session.combats.find((c) => c.status === 'ready' && c.top && c.bottom) ??
+      session.combats.find((c) => c.status === 'ready' && (c.top || c.bottom)) ??
       session.combats.find((c) => c.status !== 'completed') ??
       session.combats[0] ??
       null
@@ -266,7 +266,7 @@ export function App() {
                   <option value={240}>4 min</option>
                   <option value={300}>5 min</option>
                 </select>
-                {current.status !== 'completed' && current.top && current.bottom && !running && (
+                {current.status !== 'completed' && (current.top || current.bottom) && !running && (
                   <button className="btn" type="button" disabled={busy} onClick={() => void startMatch()}>
                     Démarrer
                   </button>
@@ -316,24 +316,28 @@ export function App() {
                   )}
                 </div>
               )}
-              {current.status !== 'completed' && current.top && current.bottom && (
+              {current.status !== 'completed' && (current.top || current.bottom) && (
                 <div className="actions" style={{ marginTop: 14 }}>
-                  <button
-                    className="btn"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void declareWinner(current.top!.id)}
-                  >
-                    Vainqueur rouge
-                  </button>
-                  <button
-                    className="btn btn-navy"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void declareWinner(current.bottom!.id)}
-                  >
-                    Vainqueur blanc
-                  </button>
+                  {current.top && (
+                    <button
+                      className="btn"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void declareWinner(current.top!.id)}
+                    >
+                      {current.bottom ? 'Vainqueur rouge' : 'Confirmer la victoire'}
+                    </button>
+                  )}
+                  {current.bottom && (
+                    <button
+                      className="btn btn-navy"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void declareWinner(current.bottom!.id)}
+                    >
+                      {current.top ? 'Vainqueur blanc' : 'Confirmer la victoire'}
+                    </button>
+                  )}
                 </div>
               )}
               {current.status === 'completed' && (

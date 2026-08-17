@@ -163,7 +163,7 @@ function boutStatus(top: CombatFighterRef | null, bottom: CombatFighterRef | nul
 } {
   if (top && bottom) return { status: 'ready', winnerId: null, bye: false }
   if (top || bottom) {
-    return { status: 'completed', winnerId: top?.id ?? bottom?.id ?? null, bye: true }
+    return { status: 'ready', winnerId: null, bye: true }
   }
   return { status: 'pending', winnerId: null, bye: false }
 }

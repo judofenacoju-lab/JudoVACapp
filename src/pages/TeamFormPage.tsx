@@ -5,6 +5,7 @@ import type { TeamWeightClassRange } from '@shared/types/settings'
 import {
   createTeamId,
   normalizeTeams,
+  sanitizeLineupsForClasses,
   teamDisplayName,
   upsertTeamLineup,
   type Team
@@ -108,7 +109,7 @@ export function TeamFormPage({
   const classified = useMemo(() => {
     const used = new Set<string>()
     const blocks = weightClasses.map((wc) => {
-      const items = members.filter((j) => inWeightClass(j, wc))
+      const items = members.filter((j) => !used.has(j.id) && inWeightClass(j, wc))
       for (const j of items) used.add(j.id)
       return { wc, items }
     })
@@ -137,7 +138,11 @@ export function TeamFormPage({
     void reload(team.id)
   }
 
-  async function persistTeam(nextTeam: Team, extraClubs: string[] = []): Promise<Team | null> {
+  async function persistTeam(
+    nextTeam: Team,
+    extraClubs: string[] = [],
+    classes: TeamWeightClassRange[] = weightClasses
+  ): Promise<Team | null> {
     const settingsRes = await window.judovac.getSettings()
     if (!settingsRes.ok) {
       setError(settingsRes.error)
@@ -151,8 +156,10 @@ export function TeamFormPage({
     const clubsNext = mergeRegisteredClubNames(
       [...(settingsRes.data.clubs ?? []), nextTeam.club, ...extraClubs]
     )
+    const membersForTeam = judokas.filter((j) => nextTeam.judokaIds.includes(j.id))
+    const cleaned = sanitizeLineupsForClasses(nextTeam, membersForTeam, classes)
     const saved = await window.judovac.setSettings({
-      teams: normalizeTeams([...others, nextTeam]),
+      teams: normalizeTeams([...others, cleaned]),
       clubs: clubsNext
     })
     if (!saved.ok) {
@@ -269,11 +276,20 @@ export function TeamFormPage({
     patch: { principalId?: string | null; substituteId?: string | null }
   ): Promise<void> {
     if (!activeTeam) return
+    const eligible = members.filter((j) => inWeightClass(j, wc))
+    const allowed = new Set(eligible.map((j) => j.id))
+    const nextPatch = { ...patch }
+    if (nextPatch.principalId && !allowed.has(nextPatch.principalId)) nextPatch.principalId = null
+    if (nextPatch.substituteId && !allowed.has(nextPatch.substituteId)) nextPatch.substituteId = null
     setBusy(true)
     setError(null)
     try {
       const saved = await persistTeam(
-        upsertTeamLineup(activeTeam, { sex: wc.sex, label: wc.label, minKg: wc.minKg, maxKg: wc.maxKg }, patch)
+        upsertTeamLineup(
+          activeTeam,
+          { sex: wc.sex, label: wc.label, minKg: wc.minKg, maxKg: wc.maxKg },
+          nextPatch
+        )
       )
       if (!saved) return
       setActiveTeam(saved)
@@ -305,10 +321,19 @@ export function TeamFormPage({
     })
     setWeightClasses(next)
     await persistWeightClasses(next)
+    if (activeTeam) {
+      const saved = await persistTeam(activeTeam, [], next)
+      if (saved) setActiveTeam(saved)
+    }
   }
 
   async function removeWeightClass(id: string): Promise<void> {
-    await persistWeightClasses(weightClasses.filter((c) => c.id !== id))
+    const next = weightClasses.filter((c) => c.id !== id)
+    await persistWeightClasses(next)
+    if (activeTeam) {
+      const saved = await persistTeam(activeTeam, [], next)
+      if (saved) setActiveTeam(saved)
+    }
   }
 
   async function remove(team: Team): Promise<void> {
@@ -651,6 +676,12 @@ export function TeamFormPage({
                           (Math.abs(l.minKg - wc.minKg) < 1e-6 &&
                             Math.abs(l.maxKg - wc.maxKg) < 1e-6))
                     )
+                    const principalId = items.some((j) => j.id === lineup?.principalId)
+                      ? lineup!.principalId
+                      : ''
+                    const substituteId = items.some((j) => j.id === lineup?.substituteId)
+                      ? lineup!.substituteId
+                      : ''
                     const sexLabel = wc.sex === 'F' ? 'Filles' : 'Garçons'
                     return (
                       <div key={wc.id} className="rounded-lg border bg-slate-50/80 p-3 space-y-2">
@@ -714,7 +745,7 @@ export function TeamFormPage({
                               <Label className="text-xs">Judoka principal</Label>
                               <select
                                 className="flex h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
-                                value={lineup?.principalId ?? ''}
+                                value={principalId ?? ''}
                                 disabled={busy}
                                 onChange={(e) =>
                                   void saveLineup(wc, {
@@ -734,7 +765,7 @@ export function TeamFormPage({
                               <Label className="text-xs">Remplaçant</Label>
                               <select
                                 className="flex h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
-                                value={lineup?.substituteId ?? ''}
+                                value={substituteId ?? ''}
                                 disabled={busy}
                                 onChange={(e) =>
                                   void saveLineup(wc, {
@@ -744,7 +775,7 @@ export function TeamFormPage({
                               >
                                 <option value="">— Aucun —</option>
                                 {items
-                                  .filter((j) => j.id !== (lineup?.principalId ?? ''))
+                                  .filter((j) => j.id !== (principalId ?? ''))
                                   .map((j) => (
                                     <option key={j.id} value={j.id}>
                                       {formatJudokaFullName(j)}
@@ -768,6 +799,10 @@ export function TeamFormPage({
                     <div className="rounded-lg border bg-slate-50/80 p-3 space-y-2">
                       <p className="text-xs font-medium text-muted-foreground">
                         Non classés (poids ou sexe hors seuils)
+                      </p>
+                      <p className="text-xs text-amber-800">
+                        Ces judokas ne peuvent pas être titulaires ni remplaçants : leur poids ne
+                        correspond à aucune catégorie créée.
                       </p>
                       <ul className="space-y-1">
                         {classified.uncategorized.map((j) => memberRow(j))}

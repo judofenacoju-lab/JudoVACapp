@@ -246,10 +246,10 @@ export function combatSessionFromTirage(result: TirageResult): CombatSession {
         const hasOne = Boolean(top || bottom)
         let status: CombatStatus = 'pending'
         let winnerId: string | null = null
-        if (match.bye && hasOne && !hasBoth) {
-          status = 'completed'
-          winnerId = top?.id ?? bottom?.id ?? null
-        } else if (hasBoth) {
+        if (hasBoth) {
+          status = 'ready'
+        } else if (match.bye && hasOne) {
+          // Bye tour 1 : jouable sur Chrono pour confirmer la victoire manuellement
           status = 'ready'
         }
 
@@ -289,10 +289,97 @@ export function combatSessionFromTirage(result: TirageResult): CombatSession {
     }
   }
 
-  session.combats = combats
+  session.combats = rewindUnconfirmedByes(combats)
   session.kind = 'individual'
   session.teamMatches = []
   return session
+}
+
+/** Un seul judoka présent (adversaire manquant). */
+export function isMissingOpponent(c: ManagedCombat): boolean {
+  return Boolean(c.top) !== Boolean(c.bottom)
+}
+
+function rewindUnconfirmedByes(combats: ManagedCombat[]): ManagedCombat[] {
+  const next = combats.map((c) => ({ ...c }))
+  for (const c of next) {
+    if (c.round !== 0 || !isMissingOpponent(c) || c.winnerId) continue
+    c.status = 'ready'
+    c.bye = true
+    if (!c.feedsInto) continue
+    const dest = next.find((x) => x.id === c.feedsInto!.combatId)
+    if (!dest) continue
+    const remainingId = c.top?.id ?? c.bottom?.id
+    if (c.feedsInto.slot === 'top' && dest.top?.id === remainingId) dest.top = null
+    if (c.feedsInto.slot === 'bottom' && dest.bottom?.id === remainingId) dest.bottom = null
+    const hasBoth = Boolean(dest.top && dest.bottom)
+    const hasOne = Boolean(dest.top || dest.bottom)
+    if (hasBoth) dest.status = dest.status === 'completed' ? dest.status : 'ready'
+    else if (hasOne) dest.status = dest.status === 'completed' ? dest.status : 'pending'
+    else dest.status = 'pending'
+    dest.bye = false
+    dest.winnerId = dest.status === 'completed' ? dest.winnerId : null
+  }
+  return next
+}
+
+export function createManualFighterRef(
+  name: string,
+  combat: ManagedCombat,
+  slot: 'top' | 'bottom'
+): CombatFighterRef {
+  const trimmed = name.trim()
+  return {
+    id: `manual-${combat.id}-${slot}`,
+    displayId: 'MANUEL',
+    name: trimmed,
+    club: '',
+    age: 0,
+    sex: combat.sex,
+    category: combat.category,
+    weightKg: 0
+  }
+}
+
+/** Tour 1 uniquement : saisit un adversaire manquant pour Chrono. */
+export function assignManualOpponent(
+  session: CombatSession,
+  combatId: string,
+  name: string
+): CombatSession {
+  const trimmed = name.trim()
+  if (!trimmed) return session
+  const now = new Date().toISOString()
+  const idx = session.combats.findIndex((c) => c.id === combatId)
+  if (idx < 0) return session
+  const combat = { ...session.combats[idx]! }
+  if (combat.round !== 0 || combat.status === 'completed') return session
+  if (combat.top && combat.bottom) return session
+  const slot: 'top' | 'bottom' = combat.top ? 'bottom' : 'top'
+  const remainingId = combat.top?.id ?? combat.bottom?.id ?? null
+  const fighter = createManualFighterRef(trimmed, combat, slot)
+  if (slot === 'top') combat.top = fighter
+  else combat.bottom = fighter
+  combat.bye = false
+  combat.status = 'ready'
+  combat.winnerId = null
+  combat.updatedAt = now
+
+  const combats = session.combats.map((c, i) => (i === idx ? combat : { ...c }))
+  if (combat.feedsInto && remainingId) {
+    const nextIdx = combats.findIndex((c) => c.id === combat.feedsInto!.combatId)
+    if (nextIdx >= 0) {
+      const dest = { ...combats[nextIdx]! }
+      if (combat.feedsInto.slot === 'top' && dest.top?.id === remainingId) dest.top = null
+      if (combat.feedsInto.slot === 'bottom' && dest.bottom?.id === remainingId) dest.bottom = null
+      const hasBoth = Boolean(dest.top && dest.bottom)
+      dest.status = hasBoth ? (dest.status === 'completed' ? dest.status : 'ready') : 'pending'
+      dest.winnerId = dest.status === 'completed' ? dest.winnerId : null
+      dest.updatedAt = now
+      combats[nextIdx] = dest
+    }
+  }
+  return { ...session, combats, updatedAt: now }
 }
 
 /** Place le vainqueur dans le combat suivant et met à jour le statut. */
