@@ -1,8 +1,22 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
-import type { TeamTirageResult } from '@shared/utils/team-tirage'
-import { teamMatchScore, formatTeamMatchScoreLine } from '@shared/utils/team-tirage'
+import type { Team } from '@shared/types/teams'
+import type { TeamWeightClassRange } from '@shared/types/settings'
+import {
+  teamTirageSnapshot,
+  TEAM_TIRAGE_PDF_SUBJECT_PREFIX,
+  teamMatchScore,
+  formatTeamMatchScoreLine,
+  type TeamTirageResult
+} from '@shared/utils/team-tirage'
 import { downloadBytes } from './download-blob'
 import { pdfSafeText } from './pdf-winansi-text'
+
+function utf8ToBase64(value: string): string {
+  const bytes = new TextEncoder().encode(value)
+  let bin = ''
+  for (const b of bytes) bin += String.fromCharCode(b)
+  return btoa(bin)
+}
 
 const PAGE_W = 595.28
 const PAGE_H = 841.89
@@ -31,10 +45,16 @@ function truncate(
 /**
  * PDF de la grille des combats par équipe (rencontres + bouts).
  */
-export async function exportTeamTiragePdfBytes(result: TeamTirageResult): Promise<Uint8Array> {
+export async function exportTeamTiragePdfBytes(
+  result: TeamTirageResult,
+  extras: { teams?: Team[]; weightClasses?: TeamWeightClassRange[] } = {}
+): Promise<Uint8Array> {
+  const snapshot = teamTirageSnapshot(result, extras.teams ?? [], extras.weightClasses ?? [])
   const pdf = await PDFDocument.create()
   pdf.setTitle('Grille des combats par équipe — JudoVACapp')
   pdf.setAuthor('JudoVACapp')
+  pdf.setKeywords(['judovac-team-tirage'])
+  pdf.setSubject(`${TEAM_TIRAGE_PDF_SUBJECT_PREFIX}${utf8ToBase64(JSON.stringify(snapshot))}`)
   const font = await pdf.embedFont(StandardFonts.Helvetica)
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold)
 
@@ -158,9 +178,10 @@ export async function exportTeamTiragePdfBytes(result: TeamTirageResult): Promis
 }
 
 export async function exportAndDownloadTeamTiragePdf(
-  result: TeamTirageResult
+  result: TeamTirageResult,
+  extras: { teams?: Team[]; weightClasses?: TeamWeightClassRange[] } = {}
 ): Promise<{ filename: string; matchCount: number }> {
-  const bytes = await exportTeamTiragePdfBytes(result)
+  const bytes = await exportTeamTiragePdfBytes(result, extras)
   const filename = `grille-equipe-${new Date().toISOString().slice(0, 10)}.pdf`
   downloadBytes(bytes, filename, 'application/pdf')
   return {

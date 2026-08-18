@@ -18,7 +18,14 @@ import {
   type TeamWinMethod
 } from '@shared/types/combats'
 import { formatJudokaFullName } from '@shared/utils/judoka'
-import { createWeightClassId, suggestWeightClassLabel } from '@shared/utils/tirage'
+import { phaseForRound } from '@shared/utils/combat-phase'
+import {
+  createWeightClassId,
+  suggestWeightClassLabel,
+  type BracketMatch,
+  type BracketTree,
+  type TirageFighter
+} from '@shared/utils/tirage'
 
 export interface TeamTirageResult {
   generatedAt: string
@@ -761,4 +768,439 @@ export function resolveTeamMatches(
   const anyAssigned = next.combats.some((c) => c.tatamiId)
   if (!anyAssigned) return distributeCombatsAcrossTatamis(next)
   return assignUnassignedCombatsToTatamis(next)
+}
+
+export const TEAM_TIRAGE_PDF_KIND = 'judovac-team-tirage'
+export const TEAM_TIRAGE_PDF_VERSION = 1
+export const TEAM_TIRAGE_PDF_SUBJECT_PREFIX = 'JUDVAC-TEAM-TIRAGE-1:'
+
+export interface TeamTiragePdfSnapshot {
+  kind: typeof TEAM_TIRAGE_PDF_KIND
+  version: number
+  generatedAt: string
+  teamCount: number
+  matchCount: number
+  boutCount: number
+  weightClasses: TeamWeightClassRange[]
+  teams: Array<{ id: string; club: string; name: string }>
+  matches: TeamMatch[]
+  combats: ManagedCombat[]
+}
+
+export function teamTirageSnapshot(
+  result: TeamTirageResult,
+  teams: Team[] = [],
+  weightClasses: TeamWeightClassRange[] = []
+): TeamTiragePdfSnapshot {
+  return {
+    kind: TEAM_TIRAGE_PDF_KIND,
+    version: TEAM_TIRAGE_PDF_VERSION,
+    generatedAt: result.generatedAt,
+    teamCount: result.teamCount,
+    matchCount: result.matchCount,
+    boutCount: result.boutCount,
+    weightClasses: normalizeTeamWeightClasses(weightClasses),
+    teams: teams.map((t) => ({ id: t.id, club: t.club, name: t.name })),
+    matches: result.session.teamMatches ?? [],
+    combats: result.session.combats
+  }
+}
+
+export function isTeamTiragePdfSnapshot(value: unknown): value is TeamTiragePdfSnapshot {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Partial<TeamTiragePdfSnapshot>
+  return (
+    v.kind === TEAM_TIRAGE_PDF_KIND &&
+    Number(v.version) === TEAM_TIRAGE_PDF_VERSION &&
+    Array.isArray(v.matches) &&
+    Array.isArray(v.combats)
+  )
+}
+
+export function fighterRefToTirage(ref: CombatFighterRef | null | undefined): TirageFighter | null {
+  if (!ref) return null
+  return {
+    id: ref.id,
+    displayId: ref.displayId,
+    name: ref.name,
+    sex: ref.sex,
+    category: ref.category,
+    weightKg: ref.weightKg,
+    club: ref.club,
+    age: ref.age
+  }
+}
+
+function clubTreeFighter(club: string, teamId: string | null): TirageFighter | null {
+  const name = club.trim()
+  if (!name || /^(bye|à déterminer)$/i.test(name)) return null
+  return {
+    id: teamId || `club-${name.toLowerCase()}`,
+    displayId: '',
+    name,
+    sex: 'M',
+    category: 'Par équipe',
+    weightKg: 0,
+    club: name,
+    age: 0
+  }
+}
+
+function teamMatchToBracketMatch(match: TeamMatch, phase = phaseForRound(1, match.round === 0)): BracketMatch {
+  const top = clubTreeFighter(match.homeClub, match.homeTeamId)
+  const bottom = clubTreeFighter(match.awayClub, match.awayTeamId)
+  return {
+    id: match.id,
+    label: match.label,
+    round: match.round,
+    matchIndex: match.matchIndex,
+    top: { fighter: top, empty: !top },
+    bottom: { fighter: bottom, empty: !bottom },
+    bye: Boolean((top && !bottom) || (!top && bottom) || match.decidedBy === 'bye'),
+    phase,
+    feedsIntoMatch: match.feedsInto
+      ? {
+          matchId: match.feedsInto.teamMatchId,
+          slot: match.feedsInto.slot === 'home' ? 'top' : 'bottom'
+        }
+      : null
+  }
+}
+
+/** Tableau d’élimination des clubs (même structure que le tirage individuel). */
+export function teamMatchesToBracket(matches: TeamMatch[]): BracketTree {
+  if (matches.length === 0) {
+    return { rounds: [], size: 0, entrantCount: 0 }
+  }
+  const maxRound = Math.max(...matches.map((m) => m.round))
+  const rounds: BracketMatch[][] = []
+  for (let r = 0; r <= maxRound; r++) {
+    const row = matches
+      .filter((m) => m.round === r)
+      .slice()
+      .sort((a, b) => a.matchIndex - b.matchIndex)
+    const phase = phaseForRound(row.length, r === 0)
+    rounds.push(row.map((m) => teamMatchToBracketMatch(m, phase)))
+  }
+  const first = rounds[0] ?? []
+  return {
+    rounds,
+    size: Math.max(2, first.length * 2),
+    entrantCount: first.reduce(
+      (n, m) => n + (m.top.fighter ? 1 : 0) + (m.bottom.fighter ? 1 : 0),
+      0
+    )
+  }
+}
+
+/** Combats d’une rencontre, empilés comme le 1er tour d’une grille individuelle. */
+export function teamBoutsToBracket(bouts: ManagedCombat[]): BracketTree {
+  const matches: BracketMatch[] = bouts.map((c, i) => ({
+    id: c.id,
+    label: c.poolLabel || c.label,
+    round: 0,
+    matchIndex: i,
+    top: { fighter: fighterRefToTirage(c.top), empty: !c.top },
+    bottom: { fighter: fighterRefToTirage(c.bottom), empty: !c.bottom },
+    bye: c.bye,
+    phase: undefined
+  }))
+  return {
+    rounds: matches.length ? [matches] : [],
+    size: Math.max(2, matches.length * 2),
+    entrantCount: matches.reduce(
+      (n, m) => n + (m.top.fighter ? 1 : 0) + (m.bottom.fighter ? 1 : 0),
+      0
+    )
+  }
+}
+
+function clubKey(name: string): string {
+  return name.trim().toLowerCase()
+}
+
+function findTeamByClub(teams: Team[], club: string): Team | undefined {
+  const key = clubKey(club)
+  if (!key || key === 'bye' || key === 'à déterminer') return undefined
+  return teams.find(
+    (t) => clubKey(t.club) === key || clubKey(teamDisplayName(t)) === key || clubKey(t.name) === key
+  )
+}
+
+function findJudokaByName(name: string, pool: Judoka[]): Judoka | undefined {
+  const key = name.trim().toLowerCase()
+  if (!key || key === 'absence' || key === '...') return undefined
+  return (
+    pool.find((j) => formatJudokaFullName(j).toLowerCase() === key) ??
+    pool.find((j) => {
+      const n = formatJudokaFullName(j).toLowerCase()
+      return n.includes(key) || key.includes(n)
+    })
+  )
+}
+
+function syntheticFighter(
+  name: string,
+  club: string,
+  category: string,
+  sex: Sex
+): CombatFighterRef {
+  return {
+    id: `import-${clubKey(club)}-${clubKey(name)}`.replace(/[^a-z0-9-]+/g, '-'),
+    displayId: '',
+    name: name.trim(),
+    club: club.trim(),
+    age: 0,
+    sex,
+    category,
+    weightKg: 0
+  }
+}
+
+function fighterFromName(
+  name: string,
+  team: Team | undefined,
+  club: string,
+  category: string,
+  sex: Sex,
+  byId: Map<string, Judoka>
+): CombatFighterRef | null {
+  const cleaned = name.trim()
+  if (!cleaned || cleaned.toLowerCase() === 'absence' || cleaned === '...') return null
+  const pool = team ? membersOf(team, byId) : [...byId.values()]
+  const found = findJudokaByName(cleaned, pool)
+  return found ? toFighter(found, category) : syntheticFighter(cleaned, club, category, sex)
+}
+
+function parsePoolLabel(label: string): { sex: Sex; weightLabel: string } {
+  const raw = label.trim()
+  const sex: Sex = /^filles/i.test(raw) ? 'F' : 'M'
+  const weightLabel = raw.replace(/^(garçons|filles)\s*[·•\-–]\s*/i, '').trim() || raw
+  return { sex, weightLabel }
+}
+
+export interface ImportedTeamBoutLine {
+  poolLabel: string
+  topName: string
+  bottomName: string
+}
+
+export interface ImportedTeamMatchLine {
+  label: string
+  homeClub: string
+  awayClub: string
+  bouts: ImportedTeamBoutLine[]
+}
+
+/** Reconstruit un tirage à partir des rencontres lues dans le PDF. */
+export function generateTeamTirageFromImportedMatches(
+  imported: ImportedTeamMatchLine[],
+  teams: Team[],
+  judokas: Judoka[],
+  weightClasses: TeamWeightClassRange[]
+): TeamTirageResult {
+  const now = new Date().toISOString()
+  const classes = normalizeTeamWeightClasses(weightClasses)
+  const session = createEmptyCombatSession()
+  session.kind = 'team'
+  session.sourceTirageAt = now
+  session.updatedAt = now
+
+  const pairings = imported.filter((m) => m.homeClub.trim() && m.awayClub.trim())
+  if (pairings.length === 0) {
+    session.teamMatches = []
+    session.combats = []
+    return { generatedAt: now, teamCount: 0, matchCount: 0, boutCount: 0, session }
+  }
+
+  const used = new Set<string>()
+  const orderedTeams: Team[] = []
+  const addTeam = (club: string): void => {
+    const t = findTeamByClub(teams, club)
+    if (!t || used.has(t.id)) return
+    used.add(t.id)
+    orderedTeams.push(t)
+  }
+  for (const m of pairings) {
+    addTeam(m.homeClub)
+    addTeam(m.awayClub)
+  }
+
+  const byId = judokasIndexedForTeams(orderedTeams.length ? orderedTeams : teams, judokas)
+  const slots: Array<Team | null> = []
+  for (const m of pairings) {
+    slots.push(findTeamByClub(teams, m.homeClub) ?? null)
+    slots.push(findTeamByClub(teams, m.awayClub) ?? null)
+  }
+  const size = nextPow2(Math.max(2, slots.length))
+  while (slots.length < size) slots.push(null)
+
+  const rounds = Math.round(Math.log2(size))
+  const matches: TeamMatch[] = []
+  const byRound: TeamMatch[][] = []
+  for (let r = 0; r < rounds; r++) {
+    const count = size / 2 ** (r + 1)
+    const row: TeamMatch[] = []
+    for (let i = 0; i < count; i++) {
+      const importedMatch = r === 0 ? pairings[i] : undefined
+      row.push({
+        id: `tm-r${r}-m${i}`,
+        label:
+          importedMatch?.label?.trim() ||
+          (r === rounds - 1 ? 'Finale' : r === rounds - 2 ? `Demi ${i + 1}` : `Rencontre ${i + 1}`),
+        round: r,
+        matchIndex: i,
+        homeTeamId: null,
+        awayTeamId: null,
+        homeClub: 'À déterminer',
+        awayClub: 'À déterminer',
+        winnerTeamId: null,
+        feedsInto: null
+      })
+    }
+    byRound.push(row)
+    matches.push(...row)
+  }
+  for (let r = 0; r < rounds - 1; r++) {
+    const row = byRound[r]!
+    const next = byRound[r + 1]!
+    for (let i = 0; i < row.length; i++) {
+      row[i]!.feedsInto = {
+        teamMatchId: next[Math.floor(i / 2)]!.id,
+        slot: i % 2 === 0 ? 'home' : 'away'
+      }
+    }
+  }
+
+  const first = byRound[0]!
+  const combats: ManagedCombat[] = []
+  for (let i = 0; i < first.length; i++) {
+    const home = slots[i * 2] ?? null
+    const away = slots[i * 2 + 1] ?? null
+    const line = pairings[i]
+    first[i]!.homeTeamId = home?.id ?? null
+    first[i]!.awayTeamId = away?.id ?? null
+    first[i]!.homeClub = home ? teamDisplayName(home) : line?.homeClub?.trim() || 'Bye'
+    first[i]!.awayClub = away ? teamDisplayName(away) : line?.awayClub?.trim() || 'Bye'
+    if (home && !away) first[i]!.winnerTeamId = home.id
+    if (away && !home) first[i]!.winnerTeamId = away.id
+    if (!line || (!home && !away)) continue
+    const homeLabel = first[i]!.homeClub
+    const awayLabel = first[i]!.awayClub
+    const teamMatchLabel = `${homeLabel} vs ${awayLabel}`
+    line.bouts.forEach((bout, index) => {
+      const parsed = parsePoolLabel(bout.poolLabel)
+      const wc =
+        classes.find(
+          (c) =>
+            c.sex === parsed.sex &&
+            c.label.trim().toLowerCase() === parsed.weightLabel.toLowerCase()
+        ) ?? null
+      const category = wc?.label ?? parsed.weightLabel
+      const sex = wc?.sex ?? parsed.sex
+      const top = fighterFromName(bout.topName, home ?? undefined, homeLabel, category, sex, byId)
+      const bottom = fighterFromName(
+        bout.bottomName,
+        away ?? undefined,
+        awayLabel,
+        category,
+        sex,
+        byId
+      )
+      if (!top && !bottom) return
+      const { status, winnerId, bye, winMethod } = boutStatus(top, bottom)
+      combats.push({
+        id: `${first[i]!.id}::bout-${sex}-${wc?.id ?? index}`,
+        matchId: `bout-${wc?.id ?? index}`,
+        label: `Combat ${index + 1}`,
+        round: 0,
+        matchIndex: index,
+        poolKey: `${first[i]!.id}|${sex}|${wc?.id ?? index}`,
+        poolLabel: bout.poolLabel.trim() || `${sex === 'F' ? 'Filles' : 'Garçons'} · ${category}`,
+        sex,
+        category,
+        weightLabel: category,
+        top,
+        bottom,
+        bye,
+        tatamiId: null,
+        orderOnTatami: 0,
+        status,
+        winnerId,
+        winMethod,
+        feedsInto: null,
+        updatedAt: now,
+        kind: 'team',
+        teamMatchId: first[i]!.id,
+        teamMatchLabel,
+        homeClub: home?.club ?? homeLabel,
+        awayClub: away?.club ?? awayLabel
+      })
+    })
+  }
+
+  session.teamMatches = matches
+  session.combats = combats
+  const uniqueTeams = new Set(
+    slots.filter((t): t is Team => Boolean(t)).map((t) => t.id)
+  )
+  return {
+    generatedAt: now,
+    teamCount: uniqueTeams.size,
+    matchCount: first.filter((m) => m.homeClub && m.awayClub && m.homeClub !== 'Bye').length,
+    boutCount: combats.filter(hasAtLeastOneJudoka).length,
+    session
+  }
+}
+
+export function teamTirageResultFromSnapshot(
+  snapshot: TeamTiragePdfSnapshot,
+  teams: Team[],
+  judokas: Judoka[]
+): TeamTirageResult {
+  const now = new Date().toISOString()
+  const byJudoka = new Map(judokas.map((j) => [j.id, j]))
+  const rebindTeam = (id: string | null, club: string): string | null => {
+    if (id && teams.some((t) => t.id === id)) return id
+    return findTeamByClub(teams, club)?.id ?? id
+  }
+  const rebindFighter = (ref: CombatFighterRef | null | undefined): CombatFighterRef | null => {
+    if (!ref) return null
+    const found =
+      byJudoka.get(ref.id) ??
+      findJudokaByName(ref.name, judokas.filter((j) => clubKey(j.club) === clubKey(ref.club))) ??
+      findJudokaByName(ref.name, judokas)
+    return found ? toFighter(found, ref.category || found.category) : ref
+  }
+
+  const matches = (snapshot.matches ?? []).map((m) => ({
+    ...m,
+    homeTeamId: rebindTeam(m.homeTeamId, m.homeClub),
+    awayTeamId: rebindTeam(m.awayTeamId, m.awayClub)
+  }))
+  const combats = (snapshot.combats ?? []).map((c) => ({
+    ...c,
+    top: rebindFighter(c.top),
+    bottom: rebindFighter(c.bottom),
+    topSubstitute: rebindFighter(c.topSubstitute) ?? undefined,
+    bottomSubstitute: rebindFighter(c.bottomSubstitute) ?? undefined,
+    tatamiId: null,
+    orderOnTatami: 0,
+    kind: 'team' as const
+  }))
+
+  const session = createEmptyCombatSession()
+  session.kind = 'team'
+  session.sourceTirageAt = snapshot.generatedAt || now
+  session.updatedAt = now
+  session.teamMatches = matches
+  session.combats = combats
+  return {
+    generatedAt: snapshot.generatedAt || now,
+    teamCount: snapshot.teamCount || new Set(matches.flatMap((m) => [m.homeTeamId, m.awayTeamId].filter(Boolean))).size,
+    matchCount:
+      snapshot.matchCount || matches.filter((m) => m.round === 0 && m.homeClub && m.awayClub).length,
+    boutCount: snapshot.boutCount || combats.filter(hasAtLeastOneJudoka).length,
+    session
+  }
 }

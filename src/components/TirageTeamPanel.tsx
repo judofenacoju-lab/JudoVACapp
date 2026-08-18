@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
-import { Dices, FileDown, Plus, RefreshCw, Send, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Dices, FileDown, FileUp, Plus, RefreshCw, Send, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { CombatBracket } from '@/components/CombatBracket'
 import { normalizeTeams, teamDisplayName, type Team } from '@shared/types/teams'
 import type { Sex } from '@shared/types/judoka'
 import type { TeamWeightClassRange } from '@shared/types/settings'
@@ -12,6 +13,8 @@ import {
   judoVacancesWeightClasses,
   mergeTeamTirageIntoCombatSession,
   normalizeTeamWeightClasses,
+  teamBoutsToBracket,
+  teamMatchesToBracket,
   teamMatchScore,
   type TeamTirageResult
 } from '@shared/utils/team-tirage'
@@ -50,6 +53,8 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
   const [result, setResult] = useState<TeamTirageResult | null>(null)
   const [exportBusy, setExportBusy] = useState(false)
   const [exportMessage, setExportMessage] = useState<string | null>(null)
+  const [importBusy, setImportBusy] = useState(false)
+  const importInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -242,7 +247,10 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
     setExportMessage(null)
     try {
       const { exportAndDownloadTeamTiragePdf } = await import('@/lib/team-tirage-pdf')
-      const out = await exportAndDownloadTeamTiragePdf(result)
+      const out = await exportAndDownloadTeamTiragePdf(result, {
+        teams,
+        weightClasses
+      })
       setExportMessage(`Grille exportée (${out.matchCount} rencontre(s)) → ${out.filename}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Export PDF impossible')
@@ -251,8 +259,65 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
     }
   }
 
+  async function importGrille(file: File | undefined): Promise<void> {
+    if (!file) return
+    setImportBusy(true)
+    setLoading(true)
+    setError(null)
+    setMessage(null)
+    setExportMessage(null)
+    try {
+      if (!/\.pdf$/i.test(file.name) && file.type && file.type !== 'application/pdf') {
+        setError('Choisissez un fichier PDF de grille par équipe.')
+        return
+      }
+      const settingsRes = await window.judovac.getSettings()
+      if (!settingsRes.ok) {
+        setError(settingsRes.error)
+        return
+      }
+      const registered = normalizeTeams(settingsRes.data.teams)
+      setTeams(registered)
+      const normalized = normalizeTeamWeightClasses(
+        settingsRes.data.teamWeightClasses?.length
+          ? settingsRes.data.teamWeightClasses
+          : weightClasses
+      )
+      if (normalized.length > 0) setWeightClasses(normalized)
+      const listed = await window.judovac.listJudokas({ limit: 5000, offset: 0 })
+      if (!listed.ok) {
+        setError(listed.error)
+        return
+      }
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      const { importTeamTirageFromPdf } = await import('@/lib/team-tirage-import')
+      const imported = await importTeamTirageFromPdf(
+        bytes,
+        registered,
+        listed.data.items,
+        normalized
+      )
+      setResult(imported)
+      setMessage(
+        `Tirage importé depuis « ${file.name} » · ${imported.teamCount} équipes · ${imported.matchCount} rencontre(s) · ${imported.boutCount} combat(s).`
+      )
+      onTatamiCount(settingsRes.data.combatSession?.tatamis?.length ?? 0)
+    } catch (e) {
+      setResult(null)
+      setError(e instanceof Error ? e.message : 'Import PDF impossible')
+    } finally {
+      setImportBusy(false)
+      setLoading(false)
+      if (importInputRef.current) importInputRef.current.value = ''
+    }
+  }
+
   const matches = result?.session.teamMatches?.filter((m) => m.round === 0) ?? []
   const validated = teams.filter((t) => t.club.trim())
+  const teamBracket = useMemo(
+    () => teamMatchesToBracket(result?.session.teamMatches ?? []),
+    [result]
+  )
 
   return (
     <div className="space-y-6">
@@ -389,9 +454,29 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
           </ul>
         )}
         <div className="flex flex-wrap gap-2 border-t pt-4">
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/pdf,.pdf"
+            className="hidden"
+            onChange={(e) => void importGrille(e.target.files?.[0])}
+          />
+          <Button
+            variant="outline"
+            size="lg"
+            disabled={loading || importBusy}
+            onClick={() => importInputRef.current?.click()}
+          >
+            <FileUp className="h-4 w-4" />
+            {importBusy ? 'Import…' : 'Import'}
+          </Button>
           <Button variant="accent" size="lg" disabled={loading} onClick={() => void run()}>
             {result ? <RefreshCw className="h-4 w-4" /> : <Dices className="h-4 w-4" />}
-            {loading ? 'Tirage…' : result ? 'Relancer le tirage' : 'Lancer le tirage par équipe'}
+            {loading && !importBusy
+              ? 'Tirage…'
+              : result
+                ? 'Relancer le tirage'
+                : 'Lancer le tirage par équipe'}
           </Button>
           {result && result.boutCount > 0 && (
             <Button
@@ -425,6 +510,10 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
             </Button>
           )}
         </div>
+        <p className="text-xs text-muted-foreground">
+          Import : PDF de grille par équipe (Exporter Grille). Les combats du fichier s’affichent
+          comme un nouveau tirage.
+        </p>
         {error && <p className="text-sm text-destructive">{error}</p>}
         {message && <p className="text-sm text-emerald-700">{message}</p>}
         {exportMessage && <p className="text-sm text-emerald-700 break-all">{exportMessage}</p>}
@@ -441,52 +530,58 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
         )}
       </div>
 
+      {result && result.matchCount > 0 && teamBracket.rounds.length > 0 && (
+        <section className="rounded-xl border bg-white/80 overflow-hidden">
+          <header className="flex flex-wrap items-center justify-between gap-2 border-b bg-judo-navy/95 px-4 py-3 text-white">
+            <div>
+              <h3 className="font-display text-base font-semibold">Tableau des équipes</h3>
+              <p className="text-xs text-white/70">
+                {result.teamCount} équipe{result.teamCount > 1 ? 's' : ''} · tableau{' '}
+                {teamBracket.size}
+              </p>
+            </div>
+          </header>
+          <div className="bg-slate-50/50 p-2">
+            <CombatBracket bracket={teamBracket} palette="team" />
+          </div>
+        </section>
+      )}
+
       {matches.map((m) => {
         const bouts =
           result?.session.combats.filter((c) => c.teamMatchId === m.id && (c.top || c.bottom)) ??
           []
         const score = result ? teamMatchScore(result.session, m.id) : null
         const scoreLine = result && score ? formatTeamMatchScoreLine(score, m) : ''
+        const boutBracket = teamBoutsToBracket(bouts)
         return (
-          <section key={m.id} className="rounded-xl border bg-white/80 overflow-hidden max-w-3xl">
-            <header className="border-b bg-judo-navy/95 px-4 py-3 text-white">
-              <h3 className="font-display text-base font-semibold">
-                {m.label} · {m.homeClub}{' '}
-                <span className="text-sky-300 font-normal text-sm">(A · Bleu)</span> vs {m.awayClub}{' '}
-                <span className="text-red-300 font-normal text-sm">(B · Rouge)</span>
-              </h3>
-              <p className="text-xs text-white/70">
-                Par équipe · {bouts.length} combat(s)
-                {scoreLine ? ` · ${scoreLine}` : ''}
-              </p>
+          <section key={m.id} className="rounded-xl border bg-white/80 overflow-hidden">
+            <header className="flex flex-wrap items-center justify-between gap-2 border-b bg-judo-navy/95 px-4 py-3 text-white">
+              <div>
+                <h3 className="font-display text-base font-semibold">
+                  {m.label} · {m.homeClub} vs {m.awayClub}
+                </h3>
+                <p className="text-xs text-white/70">
+                  Par équipe · {bouts.length} combat(s)
+                  {scoreLine ? ` · ${scoreLine}` : ''}
+                </p>
+              </div>
             </header>
-            <ul className="divide-y">
-              {bouts.length === 0 && (
-                <li className="px-4 py-2.5 text-sm text-muted-foreground">
-                  Aucun combat individuel : club(s) sans judoka dans les catégories.
-                </li>
+            <div className="bg-slate-50/50 p-2">
+              {bouts.length === 0 ? (
+                <p className="px-4 py-6 text-sm text-muted-foreground">
+                  Aucun combat dans ce groupe.
+                </p>
+              ) : (
+                <CombatBracket bracket={boutBracket} palette="team" variant="stack" />
               )}
-              {bouts.map((c) => (
-                <li key={c.id} className="px-4 py-2.5 text-sm">
-                  <p className="text-xs text-muted-foreground">{c.poolLabel}</p>
-                  <p className="font-medium text-judo-navy">
-                    <span className="text-blue-700">A</span> {c.top?.name ?? 'Absence'} vs{' '}
-                    <span className="text-red-700">B</span> {c.bottom?.name ?? 'Absence'}
-                  </p>
-                  {(c.topSubstitute || c.bottomSubstitute) && (
-                    <p className="text-xs text-muted-foreground">
-                      Remplaçants : {c.topSubstitute?.name ?? '—'} / {c.bottomSubstitute?.name ?? '—'}
-                    </p>
-                  )}
-                </li>
-              ))}
-            </ul>
+            </div>
           </section>
         )
       })}
 
       {result && result.matchCount > 0 && matches.length > 0 && (
-        <div className="flex justify-center border-t pt-4 pb-2 max-w-3xl">
+        <div className="flex justify-center border-t pt-4 pb-2">
           <Button
             variant="accent"
             size="lg"

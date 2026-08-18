@@ -16,33 +16,40 @@ function SlotLines({
   borderBottom
 }: {
   fighter: TirageFighter | null
-  tone: 'white' | 'blue'
+  tone: 'white' | 'blue' | 'red'
   borderBottom?: boolean
 }) {
   const isBlue = tone === 'blue'
+  const isRed = tone === 'red'
+  const meta = fighter ? formatFighterMeta(fighter) : ''
+  const showMeta = Boolean(fighter && meta && meta !== fighter.name)
   return (
     <div
       className={`min-w-0 px-2 py-1 ${borderBottom ? 'border-b border-judo-navy/20' : ''} ${
-        isBlue ? 'bg-blue-700 text-white' : 'bg-white text-judo-navy'
+        isRed
+          ? 'bg-red-700 text-white'
+          : isBlue
+            ? 'bg-blue-700 text-white'
+            : 'bg-white text-judo-navy'
       }`}
     >
       <div className="flex items-center gap-1.5">
         <span
           className={`shrink-0 text-[8px] font-extrabold tracking-wide ${
-            isBlue ? 'text-white/80' : 'text-slate-400'
+            isRed || isBlue ? 'text-white/80' : 'text-slate-400'
           }`}
         >
-          {isBlue ? 'BLEU' : 'BLANC'}
+          {isRed ? 'ROUGE' : isBlue ? 'BLEU' : 'BLANC'}
         </span>
         <div className="min-w-0 text-[11px] font-bold leading-snug break-words">{slotName(fighter)}</div>
       </div>
-      {fighter ? (
+      {showMeta ? (
         <div
           className={`mt-0.5 text-[9px] leading-tight break-words ${
-            isBlue ? 'text-white/75' : 'text-muted-foreground'
+            isRed || isBlue ? 'text-white/75' : 'text-muted-foreground'
           }`}
         >
-          {formatFighterMeta(fighter)}
+          {meta}
         </div>
       ) : (
         <div className="h-[11px]" aria-hidden />
@@ -53,14 +60,19 @@ function SlotLines({
 
 /**
  * Grille à élimination directe (style tableau de combat judo).
- * BLANC au-dessus, BLEU en bas.
+ * Individuel : BLANC au-dessus, BLEU en bas.
+ * Par équipe : BLEU (A) au-dessus, ROUGE (B) en bas.
  */
 export function CombatBracket({
   bracket,
-  title
+  title,
+  palette = 'individual',
+  variant = 'tree'
 }: {
   bracket: BracketTree
   title?: string
+  palette?: 'individual' | 'team'
+  variant?: 'tree' | 'stack'
 }) {
   if (!bracket.rounds.length) {
     return <p className="px-4 py-6 text-sm text-muted-foreground">Aucun combat dans ce groupe.</p>
@@ -74,6 +86,21 @@ export function CombatBracket({
   const bronze = bracket.bronze ?? []
 
   const hasRepechage = repechage.length > 0 || bronze.length > 0
+
+  if (variant === 'stack') {
+    return (
+      <div className="px-2 py-3">
+        {title ? (
+          <p className="mb-3 px-1 text-sm font-medium text-judo-navy">{title}</p>
+        ) : null}
+        <div className="flex flex-col items-stretch gap-3 sm:items-start">
+          {firstRound.map((m) => (
+            <MatchCard key={m.id} match={m} wide palette={palette} />
+          ))}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="overflow-x-auto">
@@ -93,6 +120,7 @@ export function CombatBracket({
                 firstRoundCount={firstRound.length}
                 matchBlockH={matchBlockH}
                 matchGap={matchGap}
+                palette={palette}
               />
               {roundIdx < bracket.rounds.length - 1 ? (
                 <ConnectorColumn
@@ -112,7 +140,7 @@ export function CombatBracket({
           ))}
         </div>
         {hasRepechage ? (
-          <RepechageMiniGrid repechage={repechage} bronze={bronze} />
+          <RepechageMiniGrid repechage={repechage} bronze={bronze} palette={palette} />
         ) : null}
       </div>
     </div>
@@ -122,10 +150,12 @@ export function CombatBracket({
 /** Petite grille : 2 repêchages (perdants des quarts) → 2 finales de bronze. */
 function RepechageMiniGrid({
   repechage,
-  bronze
+  bronze,
+  palette = 'individual'
 }: {
   repechage: BracketMatch[]
   bronze: BracketMatch[]
+  palette?: 'individual' | 'team'
 }) {
   const pairs = Math.max(repechage.length, bronze.length, 1)
   return (
@@ -145,6 +175,7 @@ function RepechageMiniGrid({
             key={repechage[i]?.id ?? bronze[i]?.id ?? `pair-${i}`}
             left={repechage[i] ?? null}
             right={bronze[i] ?? null}
+            palette={palette}
           />
         ))}
       </div>
@@ -152,12 +183,24 @@ function RepechageMiniGrid({
   )
 }
 
-function RepechagePair({ left, right }: { left: BracketMatch | null; right: BracketMatch | null }) {
+function RepechagePair({
+  left,
+  right,
+  palette
+}: {
+  left: BracketMatch | null
+  right: BracketMatch | null
+  palette?: 'individual' | 'team'
+}) {
   return (
     <>
-      <div className="flex justify-center">{left ? <MatchCard match={left} compact /> : null}</div>
+      <div className="flex justify-center">
+        {left ? <MatchCard match={left} compact palette={palette} /> : null}
+      </div>
       <div className="h-px bg-judo-navy" aria-hidden />
-      <div className="flex justify-center">{right ? <MatchCard match={right} compact /> : null}</div>
+      <div className="flex justify-center">
+        {right ? <MatchCard match={right} compact palette={palette} /> : null}
+      </div>
     </>
   )
 }
@@ -167,13 +210,15 @@ function RoundColumn({
   roundIdx,
   firstRoundCount,
   matchBlockH,
-  matchGap
+  matchGap,
+  palette = 'individual'
 }: {
   matches: BracketMatch[]
   roundIdx: number
   firstRoundCount: number
   matchBlockH: number
   matchGap: number
+  palette?: 'individual' | 'team'
 }) {
   const colH = firstRoundCount * (matchBlockH + matchGap) - matchGap
   const slotH = colH / matches.length
@@ -192,7 +237,7 @@ function RoundColumn({
       <div className="relative flex flex-col justify-around" style={{ height: colH, width: colW }}>
         {matches.map((m) => (
           <div key={m.id} className="flex items-center justify-center" style={{ height: slotH }}>
-            <MatchCard match={m} wide={roundIdx === 0} />
+            <MatchCard match={m} wide={roundIdx === 0} palette={palette} />
           </div>
         ))}
       </div>
@@ -203,23 +248,30 @@ function RoundColumn({
 function MatchCard({
   match,
   wide,
-  compact
+  compact,
+  palette = 'individual'
 }: {
   match: BracketMatch
   wide?: boolean
   compact?: boolean
+  palette?: 'individual' | 'team'
 }) {
+  const topTone = palette === 'team' ? 'blue' : 'white'
+  const bottomTone = palette === 'team' ? 'red' : 'blue'
+  const stripW = palette === 'team' && wide ? 'w-[92px]' : 'w-[68px]'
   return (
     <div
       className={`flex overflow-hidden rounded border border-judo-navy/25 bg-white shadow-sm ${
-        compact ? 'w-[200px]' : wide ? 'w-[250px]' : 'w-[230px]'
+        compact ? 'w-[200px]' : wide && palette === 'team' ? 'w-[280px]' : wide ? 'w-[250px]' : 'w-[230px]'
       }`}
     >
       <div className="min-w-0 flex-1">
-        <SlotLines fighter={match.top.fighter} tone="white" borderBottom />
-        <SlotLines fighter={match.bottom.fighter} tone="blue" />
+        <SlotLines fighter={match.top.fighter} tone={topTone} borderBottom />
+        <SlotLines fighter={match.bottom.fighter} tone={bottomTone} />
       </div>
-      <div className="flex w-[68px] shrink-0 flex-col items-center justify-center bg-judo-navy px-1 text-center text-[10px] font-semibold leading-tight text-white">
+      <div
+        className={`flex ${stripW} shrink-0 flex-col items-center justify-center bg-judo-navy px-1 text-center text-[10px] font-semibold leading-tight text-white`}
+      >
         {match.label}
       </div>
     </div>
