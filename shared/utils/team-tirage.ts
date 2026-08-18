@@ -206,11 +206,8 @@ function boutStatus(top: CombatFighterRef | null, bottom: CombatFighterRef | nul
   winMethod?: TeamWinMethod
 } {
   if (top && bottom) return { status: 'ready', winnerId: null, bye: false }
-  if (top && !bottom) {
-    return { status: 'completed', winnerId: top.id, bye: true, winMethod: 'fusen' }
-  }
-  if (bottom && !top) {
-    return { status: 'completed', winnerId: bottom.id, bye: true, winMethod: 'fusen' }
+  if (top || bottom) {
+    return { status: 'ready', winnerId: null, bye: true }
   }
   return { status: 'pending', winnerId: null, bye: false }
 }
@@ -280,10 +277,10 @@ export function generateTeamTirage(
 ): TeamTirageResult {
   const now = new Date().toISOString()
   const classes = normalizeTeamWeightClasses(weightClasses)
-  const registered = teams.filter((t) => t.club.trim() && t.judokaIds.length > 0)
+  const registered = teams.filter((t) => t.club.trim())
   const allowed = new Set(registered.flatMap((t) => t.judokaIds))
   const byId = new Map(judokas.filter((j) => allowed.has(j.id)).map((j) => [j.id, j]))
-  const eligible = registered.filter((t) => membersOf(t, byId).length > 0)
+  const eligible = registered
 
   const session = createEmptyCombatSession()
   session.kind = 'team'
@@ -470,6 +467,9 @@ export function teamMatchScore(session: CombatSession, teamMatchId: string): Tea
 export function formatTeamMatchScoreLine(score: TeamMatchScoreBreakdown, match: TeamMatch): string {
   if (match.decidedBy === 'bye' && match.winnerTeamId) {
     const name = match.winnerTeamId === match.homeTeamId ? match.homeClub : match.awayClub
+    if (match.homeTeamId && match.awayTeamId) {
+      return `Qualifié ${name} (sans combat)`
+    }
     return `Qualifié ${name} (bye)`
   }
   const base = `Score ${score.homeWins}–${score.awayWins}`
@@ -725,7 +725,15 @@ export function resolveTeamMatches(
       const away = teamById.get(match.awayTeamId)
       if (!home || !away || weightClasses.length === 0) continue
       const created = buildTeamBouts(match, home, away, byId, weightClasses, now)
-      if (created.length === 0) continue
+      if (created.length === 0) {
+        if (!match.winnerTeamId) {
+          const pick = Math.random() < 0.5 ? home : away
+          match.winnerTeamId = pick.id
+          match.decidedBy = 'bye'
+          changed = true
+        }
+        continue
+      }
       combats = [...combats, ...created]
       changed = true
     }

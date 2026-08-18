@@ -36,7 +36,7 @@ function emptyTeamWeightClass(partial?: Partial<TeamWeightClassRange>): TeamWeig
 }
 
 /**
- * Tirage par club : uniquement les équipes validées, 1 combat par catégorie de poids × sexe.
+ * Tirage par club : toutes les équipes validées (même sans judoka), 1 combat par catégorie.
  */
 export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
   const [teams, setTeams] = useState<Team[]>([])
@@ -155,18 +155,21 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
       if (generated.teamCount < 2) {
         setResult(generated)
         setError(
-          'Le tirage n’utilise que les clubs et judokas des équipes validées. Au moins deux équipes avec judokas inscrits sont requises.'
+          'Validez au moins deux équipes (menu Par Équipe → Équipes validées) avant le tirage.'
         )
         return
       }
-      if (generated.boutCount === 0) {
+      if (generated.matchCount === 0) {
         setResult(generated)
-        setError(
-          'Aucun combat généré. Vérifiez les catégories de poids, les titulaires et les judokas des équipes validées.'
-        )
+        setError('Aucune rencontre générée. Vérifiez les équipes validées.')
         return
       }
       setResult(generated)
+      if (generated.boutCount === 0) {
+        setMessage(
+          'Tirage effectué. Les combats contre un club sans judoka sont programmés : confirmez la victoire manuellement (absence).'
+        )
+      }
       onTatamiCount(settingsRes.data.combatSession?.tatamis?.length ?? 0)
     } catch (e) {
       setResult(null)
@@ -230,7 +233,7 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
   }
 
   async function exportGrille(): Promise<void> {
-    if (!result || result.boutCount === 0) {
+    if (!result || result.matchCount === 0) {
       setError('Aucune grille à exporter.')
       return
     }
@@ -249,7 +252,7 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
   }
 
   const matches = result?.session.teamMatches?.filter((m) => m.round === 0) ?? []
-  const validated = teams.filter((t) => t.judokaIds.length > 0)
+  const validated = teams.filter((t) => t.club.trim())
 
   return (
     <div className="space-y-6">
@@ -368,8 +371,9 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
         </div>
 
         <p className="text-sm text-muted-foreground border-t pt-4">
-          {validated.length} équipe(s) validée(s) avec judokas. Seuls ces clubs et leurs judokas
-          inscrits participent au tirage.
+          {validated.length} équipe(s) validée(s). Toutes participent au tirage, y compris les clubs
+          sans judoka. Face à un club avec judokas, le combat est programmé : la victoire par
+          absence se confirme manuellement.
         </p>
         {teams.length > 0 && (
           <ul className="flex flex-wrap gap-2">
@@ -379,6 +383,7 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
                 className="rounded-full border bg-slate-50 px-3 py-1 text-xs text-judo-navy"
               >
                 {teamDisplayName(t)} · {t.judokaIds.length}
+                {t.judokaIds.length === 0 ? ' (sans judoka)' : ''}
               </li>
             ))}
           </ul>
@@ -423,7 +428,7 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
         {error && <p className="text-sm text-destructive">{error}</p>}
         {message && <p className="text-sm text-emerald-700">{message}</p>}
         {exportMessage && <p className="text-sm text-emerald-700 break-all">{exportMessage}</p>}
-        {result && result.boutCount > 0 && (
+        {result && result.matchCount > 0 && (
           <p className="text-sm text-emerald-700">
             {result.teamCount} équipes · {result.matchCount} rencontre(s) · {result.boutCount}{' '}
             combat(s)
@@ -456,6 +461,11 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
               </p>
             </header>
             <ul className="divide-y">
+              {bouts.length === 0 && (
+                <li className="px-4 py-2.5 text-sm text-muted-foreground">
+                  Aucun combat individuel : club(s) sans judoka dans les catégories.
+                </li>
+              )}
               {bouts.map((c) => (
                 <li key={c.id} className="px-4 py-2.5 text-sm">
                   <p className="text-xs text-muted-foreground">{c.poolLabel}</p>
@@ -475,7 +485,7 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
         )
       })}
 
-      {result && result.boutCount > 0 && matches.length > 0 && (
+      {result && result.matchCount > 0 && matches.length > 0 && (
         <div className="flex justify-center border-t pt-4 pb-2 max-w-3xl">
           <Button
             variant="accent"
