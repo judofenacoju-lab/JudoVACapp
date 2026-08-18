@@ -265,8 +265,11 @@ function drawMatchCard(
       return
     }
 
-    const nameLines = wrapLines(fontBold, fighter.name, nameSize, textMaxW, 1)
-    const metaLine = wrapLines(font, formatFighterMeta(fighter), metaSize, textMaxW, 1)[0]
+    const meta = formatFighterMeta(fighter)
+    // Comme la page Tirage : pas de 2e ligne si c’est le même texte (clubs par équipe).
+    const showMeta = Boolean(meta && meta !== fighter.name)
+    const nameLines = wrapLines(fontBold, fighter.name, nameSize, textMaxW, showMeta ? 1 : 2)
+    const metaLine = showMeta ? wrapLines(font, meta, metaSize, textMaxW, 1)[0] : undefined
 
     const lineGap = 1.2
     const blockH =
