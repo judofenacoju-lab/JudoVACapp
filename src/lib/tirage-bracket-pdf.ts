@@ -352,18 +352,24 @@ function drawFullBracket(
     const nextX = x + colWidth
 
     if (r < rounds.length - 1) {
-      const pairs = count / 2
-      for (let p = 0; p < pairs; p++) {
-        const topCy = matchCenterY(p * 2, count)
-        const botCy = matchCenterY(p * 2 + 1, count)
-        const midCy = (topCy + botCy) / 2
+      const destCount = Math.ceil(count / 2)
+      for (let p = 0; p < destCount; p++) {
+        const i0 = p * 2
+        const i1 = p * 2 + 1
+        const topCy = matchCenterY(i0, count)
         const x0 = nextX
         const x1 = nextX + connectorW * 0.42
         const x2 = nextX + connectorW
-        page.drawLine({ start: { x: x0, y: topCy }, end: { x: x1, y: topCy }, thickness: 0.9, color: LINE })
-        page.drawLine({ start: { x: x0, y: botCy }, end: { x: x1, y: botCy }, thickness: 0.9, color: LINE })
-        page.drawLine({ start: { x: x1, y: topCy }, end: { x: x1, y: botCy }, thickness: 0.9, color: LINE })
-        page.drawLine({ start: { x: x1, y: midCy }, end: { x: x2, y: midCy }, thickness: 0.9, color: LINE })
+        if (i1 < count) {
+          const botCy = matchCenterY(i1, count)
+          const midCy = (topCy + botCy) / 2
+          page.drawLine({ start: { x: x0, y: topCy }, end: { x: x1, y: topCy }, thickness: 0.9, color: LINE })
+          page.drawLine({ start: { x: x0, y: botCy }, end: { x: x1, y: botCy }, thickness: 0.9, color: LINE })
+          page.drawLine({ start: { x: x1, y: topCy }, end: { x: x1, y: botCy }, thickness: 0.9, color: LINE })
+          page.drawLine({ start: { x: x1, y: midCy }, end: { x: x2, y: midCy }, thickness: 0.9, color: LINE })
+        } else {
+          page.drawLine({ start: { x: x0, y: topCy }, end: { x: x2, y: topCy }, thickness: 0.9, color: LINE })
+        }
       }
       x = nextX + connectorW
     } else {

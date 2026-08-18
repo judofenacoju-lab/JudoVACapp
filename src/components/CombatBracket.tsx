@@ -238,29 +238,44 @@ function ConnectorColumn({
   matchGap: number
 }) {
   const colH = firstRoundCount * (matchBlockH + matchGap) - matchGap
-  const pairs = fromCount / 2
-  const pairH = colH / pairs
+  const destCount = Math.ceil(fromCount / 2)
+  const fromSlotH = colH / fromCount
 
   return (
     <div className="relative mt-[22px]" style={{ width: 72, height: colH }}>
-      {Array.from({ length: pairs }, (_, i) => {
-        const topY = i * pairH + pairH * 0.25
-        const botY = i * pairH + pairH * 0.75
-        const midY = i * pairH + pairH * 0.5
+      {Array.from({ length: destCount }, (_, p) => {
+        const i0 = p * 2
+        const i1 = p * 2 + 1
+        const y0 = i0 * fromSlotH + fromSlotH / 2
+        if (i1 < fromCount) {
+          const y1 = i1 * fromSlotH + fromSlotH / 2
+          const midY = (y0 + y1) / 2
+          return (
+            <svg
+              key={p}
+              className="absolute inset-0 overflow-visible"
+              width={72}
+              height={colH}
+              aria-hidden
+            >
+              <path
+                d={`M 0 ${y0} H 32 V ${y1} H 0 M 32 ${midY} H 72`}
+                fill="none"
+                stroke="#0B1F3A"
+                strokeWidth={1.25}
+              />
+            </svg>
+          )
+        }
         return (
           <svg
-            key={i}
+            key={p}
             className="absolute inset-0 overflow-visible"
             width={72}
             height={colH}
             aria-hidden
           >
-            <path
-              d={`M 0 ${topY} H 32 V ${botY} H 0 M 32 ${midY} H 72`}
-              fill="none"
-              stroke="#0B1F3A"
-              strokeWidth={1.25}
-            />
+            <path d={`M 0 ${y0} H 72`} fill="none" stroke="#0B1F3A" strokeWidth={1.25} />
           </svg>
         )
       })}

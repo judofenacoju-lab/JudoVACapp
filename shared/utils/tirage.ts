@@ -5,7 +5,7 @@ import {
   hasRecordedWeight,
   resolveJudokaCategory
 } from '@shared/utils/judoka'
-import { mainRoundPhase, type CombatPhase } from '@shared/utils/combat-phase'
+import { phaseForRound, type CombatPhase } from '@shared/utils/combat-phase'
 
 /** Catégorie de poids configurable pour le tirage (ex. −20 kg → 18–20). */
 export interface TirageWeightClass {
@@ -77,7 +77,7 @@ export interface BracketTree {
   repechage?: BracketMatch[]
   /** Finales de bronze. */
   bronze?: BracketMatch[]
-  /** Taille du tableau (puissance de 2). */
+  /** Nombre de cases du 1er tour (2 × combats). */
   size: number
   entrantCount: number
 }
@@ -204,85 +204,73 @@ export function matchWeightClass(
   return null
 }
 
-function nextPowerOfTwo(n: number): number {
-  let p = 1
-  while (p < n) p *= 2
-  return Math.max(2, p)
+function popLargestClub(
+  byClub: Map<string, TirageFighter[]>,
+  exceptClub?: string
+): TirageFighter | null {
+  let best: string | null = null
+  let bestLen = 0
+  for (const [club, list] of byClub) {
+    if (exceptClub && club === exceptClub) continue
+    if (list.length > bestLen) {
+      bestLen = list.length
+      best = club
+    }
+  }
+  if (!best) return null
+  const list = byClub.get(best)!
+  const fighter = list.pop() ?? null
+  if (list.length === 0) byClub.delete(best)
+  return fighter
 }
 
-/** Indices de combats du 1er tour qui reçoivent un bye, espacés dans le tableau. */
-function spacedByeMatchIndices(matchCount: number, byeMatchCount: number): number[] {
-  if (byeMatchCount <= 0 || matchCount <= 0) return []
-  const count = Math.min(byeMatchCount, matchCount)
-  const chosen: number[] = []
-  const used = new Set<number>()
-  for (let i = 0; i < count; i++) {
-    // Centres des intervalles : répartit les byes au lieu de les coller en tête de grille
-    let idx = Math.floor(((2 * i + 1) * matchCount) / (2 * count))
-    idx = Math.min(matchCount - 1, Math.max(0, idx))
-    let guard = 0
-    while (used.has(idx) && guard < matchCount) {
-      idx = (idx + 1) % matchCount
-      guard += 1
-    }
-    used.add(idx)
-    chosen.push(idx)
-  }
-  return chosen.sort((a, b) => a - b)
+function remainingFighters(byClub: Map<string, TirageFighter[]>): number {
+  let n = 0
+  for (const list of byClub.values()) n += list.length
+  return n
 }
 
 /**
- * Place les combattants en puissance de 2 :
- * — jamais deux cases vides dans le même combat (1 judoka = bye, pas de combat fantôme) ;
- * — byes espacés dans le tableau (évite plusieurs « sans adversaire » collés) ;
- * — optionnellement évite les duels intra-club au 1er tour.
+ * Associe tous les judokas du groupe au 1er tour (1 bye seulement si effectif impair).
+ * Si avoidSameClub : pioche d’abord dans deux clubs différents (les plus nombreux).
  */
-function seedSlots(
+function pairFirstRound(
   fighters: TirageFighter[],
-  size: number,
   avoidSameClub: boolean,
   random: () => number
-): (TirageFighter | null)[] {
+): Array<[TirageFighter, TirageFighter | null]> {
   const pool = shuffleInPlace([...fighters], random)
-  const slots: (TirageFighter | null)[] = Array.from({ length: size }, () => null)
-  const matchCount = size / 2
-  const byeMatchCount = size - pool.length
-  const byeMatches = new Set(spacedByeMatchIndices(matchCount, byeMatchCount))
+  if (pool.length === 0) return []
 
-  let fi = 0
-  for (let m = 0; m < matchCount; m++) {
-    if (byeMatches.has(m)) {
-      // Un seul judoka dans le combat → l’autre case reste vide (bye)
-      if (random() < 0.5) {
-        slots[m * 2] = pool[fi++] ?? null
-        slots[m * 2 + 1] = null
-      } else {
-        slots[m * 2] = null
-        slots[m * 2 + 1] = pool[fi++] ?? null
-      }
-    } else {
-      slots[m * 2] = pool[fi++] ?? null
-      slots[m * 2 + 1] = pool[fi++] ?? null
+  if (!avoidSameClub) {
+    const pairs: Array<[TirageFighter, TirageFighter | null]> = []
+    for (let i = 0; i < pool.length; i += 2) {
+      pairs.push([pool[i]!, pool[i + 1] ?? null])
     }
+    return shuffleInPlace(pairs, random)
   }
 
-  if (!avoidSameClub) return slots
-
-  // Échanges locaux pour éviter même club dans une paire (i, i+1)
-  for (let i = 0; i < size; i += 2) {
-    const a = slots[i]
-    const b = slots[i + 1]
-    if (!a || !b) continue
-    if (a.club === 'Sans club' || a.club !== b.club) continue
-    for (let j = i + 2; j < size; j++) {
-      const cand = slots[j]
-      if (!cand || cand.club === a.club) continue
-      slots[j] = b
-      slots[i + 1] = cand
-      break
-    }
+  const byClub = new Map<string, TirageFighter[]>()
+  for (const f of pool) {
+    const list = byClub.get(f.club) ?? []
+    list.push(f)
+    byClub.set(f.club, list)
   }
-  return slots
+  for (const list of byClub.values()) shuffleInPlace(list, random)
+
+  const pairs: Array<[TirageFighter, TirageFighter | null]> = []
+  while (remainingFighters(byClub) >= 2) {
+    const a = popLargestClub(byClub)
+    if (!a) break
+    const b = popLargestClub(byClub, a.club) ?? popLargestClub(byClub)
+    if (b && random() < 0.5) pairs.push([b, a])
+    else pairs.push([a, b])
+  }
+  if (remainingFighters(byClub) === 1) {
+    const last = popLargestClub(byClub)
+    if (last) pairs.push([last, null])
+  }
+  return shuffleInPlace(pairs, random)
 }
 
 /** Vainqueur automatique d’un combat (bye) — un seul judoka présent. */
@@ -308,10 +296,11 @@ function propagateFirstRoundByes(rounds: BracketMatch[][]): void {
   const next = rounds[1]!
   for (let i = 0; i < current.length; i += 2) {
     const upper = current[i]!
-    const lower = current[i + 1]!
-    const dest = next[Math.floor(i / 2)]!
+    const lower = current[i + 1]
+    const dest = next[Math.floor(i / 2)]
+    if (!dest) continue
     dest.top = slotFromFighter(automaticWinner(upper))
-    dest.bottom = slotFromFighter(automaticWinner(lower))
+    dest.bottom = slotFromFighter(lower ? automaticWinner(lower) : null)
     dest.bye = false
   }
 }
@@ -345,24 +334,23 @@ export function buildBracket(
     }
   }
 
-  const size = nextPowerOfTwo(entrantCount)
-  const slots = seedSlots(fighters, size, opts.avoidSameClub, random)
+  const pairs = pairFirstRound(fighters, opts.avoidSameClub, random)
   const rounds: BracketMatch[][] = []
   let fightNumber = opts.startFightNumber ?? 1
   const prefix = opts.idPrefix ?? 'm'
+  const size = Math.max(2, pairs.length * 2)
 
   const r0: BracketMatch[] = []
-  for (let i = 0; i < size; i += 2) {
-    const topF = slots[i] ?? null
-    const bottomF = slots[i + 1] ?? null
+  for (let i = 0; i < pairs.length; i++) {
+    const [topF, bottomF] = pairs[i]!
     const bye = !topF || !bottomF
     const num = fightNumber
     fightNumber += 1
     r0.push({
-      id: `${prefix}-r0-${i / 2}`,
+      id: `${prefix}-r0-${i}`,
       label: fightLabel(0, num),
       round: 0,
-      matchIndex: i / 2,
+      matchIndex: i,
       top: { fighter: topF, empty: !topF },
       bottom: { fighter: bottomF, empty: !bottomF },
       bye
@@ -395,10 +383,10 @@ export function buildBracket(
   // Bye : passage unique 1er tour → 2e tour (pas jusqu’au vainqueur)
   propagateFirstRoundByes(rounds)
 
-  const n0 = r0.length
-  for (const round of rounds) {
+  for (const [ri, round] of rounds.entries()) {
+    const phase = phaseForRound(round.length, ri === 0)
     for (const m of round) {
-      m.phase = mainRoundPhase(n0, m.round)
+      m.phase = phase
     }
   }
 

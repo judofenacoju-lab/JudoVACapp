@@ -1,5 +1,5 @@
 import type { Sex } from '@shared/types/judoka'
-import { combatPhaseLabel, mainRoundPhase, type CombatPhase } from '@shared/utils/combat-phase'
+import { combatPhaseLabel, phaseForRound, type CombatPhase } from '@shared/utils/combat-phase'
 import type { BracketMatch, TirageFighter, TirageResult } from '@shared/utils/tirage'
 import { formatTirageCategoryName } from '@shared/utils/tirage'
 
@@ -149,11 +149,16 @@ export function resolveCombatPhase(
   session?: CombatSession | null
 ): CombatPhase {
   if (c.phase === 'repechage' || c.phase === 'bronze') return c.phase
-  if (!session || c.kind === 'team') return mainRoundPhase(0, c.round)
-  const firstRoundCount = session.combats.filter(
-    (x) => x.poolKey === c.poolKey && x.round === 0 && x.kind !== 'team'
+  if (!session || c.kind === 'team') return phaseForRound(0, c.round === 0)
+  const sameRound = session.combats.filter(
+    (x) =>
+      x.poolKey === c.poolKey &&
+      x.round === c.round &&
+      x.kind !== 'team' &&
+      x.phase !== 'repechage' &&
+      x.phase !== 'bronze'
   ).length
-  return mainRoundPhase(firstRoundCount, c.round)
+  return phaseForRound(sameRound, c.round === 0)
 }
 
 export function combatPhaseDisplay(
