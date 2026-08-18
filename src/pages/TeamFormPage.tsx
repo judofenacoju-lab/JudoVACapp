@@ -18,6 +18,7 @@ import type { Judoka, Sex } from '@shared/types/judoka'
 import type { TeamWeightClassRange } from '@shared/types/settings'
 import {
   createTeamId,
+  judokasOnTeam,
   normalizeTeams,
   sanitizeLineupsForClasses,
   teamDisplayName,
@@ -95,16 +96,37 @@ export function TeamFormPage({
       window.judovac.getSettings(),
       window.judovac.listJudokas({ limit: 1_000_000, offset: 0 })
     ])
-    if (settingsRes.ok) {
-      const nextTeams = normalizeTeams(settingsRes.data.teams)
-      setTeams(nextTeams)
-      setWeightClasses(normalizeTeamWeightClasses(settingsRes.data.teamWeightClasses ?? []))
-      const id = teamId ?? activeTeam?.id
-      if (id) {
-        setActiveTeam(nextTeams.find((t) => t.id === id) ?? null)
-      }
+    const listedItems = listed.ok ? listed.data.items : []
+    if (listed.ok) setJudokas(listedItems)
+    if (!settingsRes.ok) return
+    const nextTeams = normalizeTeams(settingsRes.data.teams)
+    const classes = normalizeTeamWeightClasses(settingsRes.data.teamWeightClasses ?? [])
+    setTeams(nextTeams)
+    setWeightClasses(classes)
+    const id = teamId ?? activeTeam?.id
+    if (!id) return
+    const found = nextTeams.find((t) => t.id === id) ?? null
+    if (!found) {
+      setActiveTeam(null)
+      return
     }
-    if (listed.ok) setJudokas(listed.data.items)
+    const extraIds = judokasOnTeam(found, listedItems).map((j) => j.id)
+    const mergedIds = [...new Set([...found.judokaIds, ...extraIds])]
+    if (mergedIds.length === found.judokaIds.length) {
+      setActiveTeam(found)
+      return
+    }
+    const saved = await persistTeam(
+      {
+        ...found,
+        judokaIds: mergedIds,
+        updatedAt: new Date().toISOString()
+      },
+      [],
+      classes,
+      listedItems
+    )
+    setActiveTeam(saved ?? { ...found, judokaIds: mergedIds })
   }
 
   useEffect(() => {
@@ -118,16 +140,20 @@ export function TeamFormPage({
 
   const teamStats = useMemo(() => {
     const registered = teams.length
-    const withJudokas = teams.filter((t) => t.judokaIds.length > 0).length
-    const withoutJudokas = teams.filter((t) => t.judokaIds.length === 0).length
-    const uniqueIds = new Set(teams.flatMap((t) => t.judokaIds))
+    const rosterIds = new Set<string>()
+    for (const t of teams) {
+      for (const j of judokasOnTeam(t, judokas)) rosterIds.add(j.id)
+      for (const id of t.judokaIds) rosterIds.add(id)
+    }
+    const withJudokas = teams.filter((t) => judokasOnTeam(t, judokas).length > 0 || t.judokaIds.length > 0).length
+    const withoutJudokas = registered - withJudokas
     return {
       registered,
       withJudokas,
       withoutJudokas,
-      judokasOnTeams: uniqueIds.size
+      judokasOnTeams: rosterIds.size
     }
-  }, [teams])
+  }, [teams, judokas])
 
   const filteredTeams = useMemo(() => {
     const q = clubQuery.trim().toLowerCase()
@@ -138,10 +164,9 @@ export function TeamFormPage({
 
   const members = useMemo(() => {
     if (!activeTeam) return []
-    const ids = new Set(activeTeam.judokaIds)
-    return judokas
-      .filter((j) => ids.has(j.id))
-      .sort((a, b) => formatJudokaFullName(a).localeCompare(formatJudokaFullName(b), 'fr'))
+    return judokasOnTeam(activeTeam, judokas).sort((a, b) =>
+      formatJudokaFullName(a).localeCompare(formatJudokaFullName(b), 'fr')
+    )
   }, [judokas, activeTeam])
 
   const classified = useMemo(() => {
@@ -181,7 +206,8 @@ export function TeamFormPage({
   async function persistTeam(
     nextTeam: Team,
     extraClubs: string[] = [],
-    classes: TeamWeightClassRange[] = weightClasses
+    classes: TeamWeightClassRange[] = weightClasses,
+    allJudokas: Judoka[] = judokas
   ): Promise<Team | null> {
     const settingsRes = await window.judovac.getSettings()
     if (!settingsRes.ok) {
@@ -196,7 +222,7 @@ export function TeamFormPage({
     const clubsNext = mergeRegisteredClubNames(
       [...(settingsRes.data.clubs ?? []), nextTeam.club, ...extraClubs]
     )
-    const membersForTeam = judokas.filter((j) => nextTeam.judokaIds.includes(j.id))
+    const membersForTeam = allJudokas.filter((j) => nextTeam.judokaIds.includes(j.id))
     const cleaned = sanitizeLineupsForClasses(nextTeam, membersForTeam, classes)
     const saved = await window.judovac.setSettings({
       teams: normalizeTeams([...others, cleaned]),
@@ -530,7 +556,7 @@ export function TeamFormPage({
             setMessage('Fiche judoka enregistrée.')
             return
           }
-          if (created) {
+          if (created?.id) {
             await addMember(created)
           } else {
             await reload(activeTeam.id)
@@ -592,8 +618,8 @@ export function TeamFormPage({
         <div className="rounded-xl border bg-white/75 p-5 space-y-4 max-w-3xl">
           <Label className="text-base">1. Club à inscrire comme équipe</Label>
           <p className="text-sm text-muted-foreground">
-            Un club déjà présent en individuel peut être inscrit ici : ce n’est pas un doublon, et
-            ses judokas individuels ne sont pas importés.
+            Un club déjà présent en individuel peut être inscrit ici : ce n’est pas un doublon.
+            Les judokas de ce club apparaissent dans l’équipe.
           </p>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1">
@@ -705,7 +731,7 @@ export function TeamFormPage({
                           <div className="min-w-0">
                             <p className="text-sm font-medium text-judo-navy">{teamDisplayName(t)}</p>
                             <p className="text-xs text-muted-foreground">
-                              {t.judokaIds.length} judoka(s)
+                              {judokasOnTeam(t, judokas).length} judoka(s)
                               {t.createdBy ? ` · ${t.createdBy}` : ''}
                             </p>
                           </div>

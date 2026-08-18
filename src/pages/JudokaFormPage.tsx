@@ -232,10 +232,16 @@ export function JudokaFormPage({
       id?: string
       lastName?: string
     } | null
-    const created =
+    const created: Judoka | undefined =
       data?.judoka ??
-      (data && typeof data.id === 'string' && typeof data.lastName === 'string'
-        ? (data as Judoka)
+      (typeof data?.id === 'string'
+        ? ({
+            id: data.id,
+            lastName: form.lastName,
+            middleName: form.middleName,
+            firstName: form.firstName,
+            club: form.club
+          } as Judoka)
         : undefined)
     onSaved({
       synced: Boolean(data?.synced),

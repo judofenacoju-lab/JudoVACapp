@@ -16,6 +16,8 @@ export interface ClientConnectOptions {
 
 export interface EnqueueResult {
   queueId: string
+  /** ID judoka (create) pour rattacher l’équipe. */
+  id?: string
   queueSize: number
   /** true si l’élément a déjà été envoyé au serveur */
   synced: boolean
@@ -116,6 +118,7 @@ class ClientRuntime {
     const stillQueued = q.list().some((i) => i.id === item.id)
     return {
       queueId: item.id,
+      id: String(enriched.id),
       queueSize: q.size(),
       synced: !stillQueued,
       connected: this.status.connected,

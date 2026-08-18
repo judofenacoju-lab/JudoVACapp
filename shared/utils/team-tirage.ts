@@ -1,7 +1,12 @@
 import type { Judoka, Sex } from '@shared/types/judoka'
 import type { TeamWeightClassRange } from '@shared/types/settings'
-import type { Team, TeamCategoryLineup } from '@shared/types/teams'
-import { teamDisplayName } from '@shared/types/teams'
+import {
+  teamDisplayName,
+  judokasOnTeam,
+  normalizeClubKey,
+  type Team,
+  type TeamCategoryLineup
+} from '@shared/types/teams'
 import {
   createEmptyCombatSession,
   distributeCombatsAcrossTatamis,
@@ -109,7 +114,26 @@ function toFighter(j: Judoka, category: string): CombatFighterRef {
 }
 
 function membersOf(team: Team, byId: Map<string, Judoka>): Judoka[] {
-  return team.judokaIds.map((id) => byId.get(id)).filter((j): j is Judoka => Boolean(j))
+  const seen = new Set<string>()
+  const out: Judoka[] = []
+  const add = (j: Judoka | undefined): void => {
+    if (!j || seen.has(j.id)) return
+    seen.add(j.id)
+    out.push(j)
+  }
+  for (const id of team.judokaIds) add(byId.get(id))
+  for (const j of judokasOnTeam(team, [...byId.values()])) add(j)
+  return out
+}
+
+function judokasIndexedForTeams(teams: Team[], judokas: Judoka[]): Map<string, Judoka> {
+  const allowed = new Set(teams.flatMap((t) => t.judokaIds))
+  const clubKeys = new Set(teams.map((t) => normalizeClubKey(t.club)).filter(Boolean))
+  return new Map(
+    judokas
+      .filter((j) => allowed.has(j.id) || clubKeys.has(normalizeClubKey(j.club)))
+      .map((j) => [j.id, j])
+  )
 }
 
 function matchesWeightClass(j: Judoka, wc: TeamWeightClassRange): boolean {
@@ -278,8 +302,7 @@ export function generateTeamTirage(
   const now = new Date().toISOString()
   const classes = normalizeTeamWeightClasses(weightClasses)
   const registered = teams.filter((t) => t.club.trim())
-  const allowed = new Set(registered.flatMap((t) => t.judokaIds))
-  const byId = new Map(judokas.filter((j) => allowed.has(j.id)).map((j) => [j.id, j]))
+  const byId = judokasIndexedForTeams(registered, judokas)
   const eligible = registered
 
   const session = createEmptyCombatSession()
@@ -655,10 +678,7 @@ export function resolveTeamMatches(
   const matches = session.teamMatches.map((m) => ({ ...m }))
   let combats = session.combats.map((c) => ({ ...c }))
   const teamById = new Map((ctx?.teams ?? []).map((t) => [t.id, t]))
-  const allowed = new Set((ctx?.teams ?? []).flatMap((t) => t.judokaIds))
-  const byId = new Map(
-    (ctx?.judokas ?? []).filter((j) => allowed.size === 0 || allowed.has(j.id)).map((j) => [j.id, j])
-  )
+  const byId = judokasIndexedForTeams(ctx?.teams ?? [], ctx?.judokas ?? [])
   const weightClasses = normalizeTeamWeightClasses(ctx?.weightClasses ?? [])
 
   let changed = true

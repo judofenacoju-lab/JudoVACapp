@@ -35,6 +35,26 @@ export function teamDisplayName(team: Team): string {
   return club || name || 'Équipe'
 }
 
+export function normalizeClubKey(name: string): string {
+  return name.trim().toLowerCase()
+}
+
+export function judokaBelongsToTeam(
+  team: Team,
+  judoka: { id: string; club: string }
+): boolean {
+  if (team.judokaIds.includes(judoka.id)) return true
+  const club = normalizeClubKey(team.club)
+  return Boolean(club) && normalizeClubKey(judoka.club) === club
+}
+
+export function judokasOnTeam<T extends { id: string; club: string }>(
+  team: Team,
+  judokas: T[]
+): T[] {
+  return judokas.filter((j) => judokaBelongsToTeam(team, j))
+}
+
 export function createLineupId(): string {
   return `lu-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
@@ -145,10 +165,18 @@ export function upsertTeamLineup(
   }
 }
 
-export function teamMemberIdSet(teams: Team[]): Set<string> {
+export function teamMemberIdSet(
+  teams: Team[],
+  judokas: Array<{ id: string; club: string }> = []
+): Set<string> {
   const ids = new Set<string>()
+  const clubKeys = new Set(teams.map((t) => normalizeClubKey(t.club)).filter(Boolean))
   for (const t of teams) {
     for (const id of t.judokaIds) ids.add(id)
+  }
+  for (const j of judokas) {
+    if (ids.has(j.id)) continue
+    if (clubKeys.has(normalizeClubKey(j.club))) ids.add(j.id)
   }
   return ids
 }
