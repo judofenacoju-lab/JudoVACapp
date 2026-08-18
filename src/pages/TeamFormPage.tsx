@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   ArrowLeft,
+  ArrowRightLeft,
   Building2,
   Check,
   FolderOpen,
@@ -62,6 +63,19 @@ function emptyDraftClass(): TeamWeightClassRange {
     minKg: 0,
     maxKg: 66,
     sex: 'M'
+  }
+}
+
+function stripTeamMember(team: Team, judokaId: string): Team {
+  return {
+    ...team,
+    judokaIds: team.judokaIds.filter((id) => id !== judokaId),
+    lineups: (team.lineups ?? []).map((l) => ({
+      ...l,
+      principalId: l.principalId === judokaId ? null : l.principalId,
+      substituteId: l.substituteId === judokaId ? null : l.substituteId
+    })),
+    updatedAt: new Date().toISOString()
   }
 }
 
@@ -151,6 +165,13 @@ export function TeamFormPage({
     )
   }, [judokas, activeTeam])
 
+  const otherTeams = useMemo(() => {
+    if (!activeTeam) return []
+    return [...teams]
+      .filter((t) => t.id !== activeTeam.id)
+      .sort((a, b) => a.club.localeCompare(b.club, 'fr'))
+  }, [teams, activeTeam])
+
   const classified = useMemo(() => {
     const used = new Set<string>()
     const blocks = weightClasses.map((wc) => {
@@ -217,6 +238,31 @@ export function TeamFormPage({
     const stored = normalizeTeams(saved.data.teams)
     setTeams(stored)
     return stored.find((t) => t.id === nextTeam.id) ?? nextTeam
+  }
+
+  async function persistTeamPatches(patches: Team[]): Promise<Team[] | null> {
+    if (patches.length === 0) return teams
+    const settingsRes = await window.judovac.getSettings()
+    if (!settingsRes.ok) {
+      setError(settingsRes.error)
+      return null
+    }
+    const byId = new Map(patches.map((t) => [t.id, t]))
+    const current = normalizeTeams(settingsRes.data.teams)
+    const next = current.map((t) => {
+      const patch = byId.get(t.id)
+      if (!patch) return t
+      const membersForTeam = judokas.filter((j) => patch.judokaIds.includes(j.id))
+      return sanitizeLineupsForClasses(patch, membersForTeam, weightClasses)
+    })
+    const saved = await window.judovac.setSettings({ teams: normalizeTeams(next) })
+    if (!saved.ok) {
+      setError(saved.error)
+      return null
+    }
+    const stored = normalizeTeams(saved.data.teams)
+    setTeams(stored)
+    return stored
   }
 
   async function persistWeightClasses(classes: TeamWeightClassRange[]): Promise<boolean> {
@@ -301,19 +347,45 @@ export function TeamFormPage({
     setBusy(true)
     setError(null)
     try {
-      const nextTeam: Team = {
-        ...activeTeam,
-        judokaIds: activeTeam.judokaIds.filter((id) => id !== judokaId),
-        lineups: (activeTeam.lineups ?? []).map((l) => ({
-          ...l,
-          principalId: l.principalId === judokaId ? null : l.principalId,
-          substituteId: l.substituteId === judokaId ? null : l.substituteId
-        })),
-        updatedAt: new Date().toISOString()
-      }
-      const saved = await persistTeam(nextTeam)
+      const saved = await persistTeam(stripTeamMember(activeTeam, judokaId))
       if (!saved) return
       setActiveTeam(saved)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function moveMember(judoka: Judoka, targetTeamId: string): Promise<void> {
+    if (!activeTeam) return
+    const target = teams.find((t) => t.id === targetTeamId)
+    if (!target || target.id === activeTeam.id) return
+    setBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const source = stripTeamMember(activeTeam, judoka.id)
+      const dest: Team = {
+        ...target,
+        judokaIds: [...new Set([...target.judokaIds, judoka.id])],
+        updatedAt: new Date().toISOString()
+      }
+      const stored = await persistTeamPatches([source, dest])
+      if (!stored) return
+      const clubRes = await window.judovac.updateJudoka(judoka.id, { club: dest.club })
+      if (!clubRes.ok) {
+        setError(clubRes.error)
+      }
+      const savedSource = stored.find((t) => t.id === source.id) ?? source
+      setActiveTeam(savedSource)
+      setJudokas((prev) =>
+        prev.map((j) => (j.id === judoka.id ? { ...j, club: dest.club } : j))
+      )
+      setMessage(
+        `${formatJudokaFullName(judoka)} déplacé vers ${teamDisplayName(dest)}.`
+      )
+      await reload(savedSource.id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Déplacement impossible')
     } finally {
       setBusy(false)
     }
@@ -484,7 +556,7 @@ export function TeamFormPage({
 
   function memberRow(j: Judoka) {
     return (
-      <li key={j.id} className="flex items-center justify-between gap-2 text-sm">
+      <li key={j.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
         <span>
           <span className="font-medium text-judo-navy">{formatJudokaFullName(j)}</span>
           <span className="ml-2 text-xs text-muted-foreground">
@@ -492,7 +564,7 @@ export function TeamFormPage({
             {j.weightKg ? ` · ${j.weightKg} kg` : ''}
           </span>
         </span>
-        <span className="flex shrink-0 items-center gap-1">
+        <span className="flex shrink-0 flex-wrap items-center gap-1">
           <Button
             type="button"
             size="icon"
@@ -503,6 +575,28 @@ export function TeamFormPage({
           >
             <Pencil className="h-4 w-4" />
           </Button>
+          {otherTeams.length > 0 && (
+            <label className="flex items-center gap-1" title="Déplacer vers un autre club">
+              <ArrowRightLeft className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <select
+                className="h-8 max-w-[11rem] rounded-md border border-input bg-background px-1.5 text-xs"
+                value=""
+                disabled={busy}
+                aria-label={`Déplacer ${formatJudokaFullName(j)} vers un autre club`}
+                onChange={(e) => {
+                  const targetId = e.target.value
+                  if (targetId) void moveMember(j, targetId)
+                }}
+              >
+                <option value="">Déplacer vers…</option>
+                {otherTeams.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {teamDisplayName(t)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <Button
             type="button"
             size="sm"
@@ -770,8 +864,8 @@ export function TeamFormPage({
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
                   Créez les catégories (seuil de poids et sexe). Chaque judoka inscrit se place
-                  automatiquement. Le titulaire et le remplaçant sont choisis ici ; le tirage les
-                  reprend tels quels.
+                  automatiquement. Vous pouvez déplacer un judoka vers un autre club inscrit.
+                  Le titulaire et le remplaçant sont choisis ici ; le tirage les reprend tels quels.
                 </p>
               </div>
               <Button
@@ -784,6 +878,9 @@ export function TeamFormPage({
                 <X className="h-4 w-4" />
               </Button>
             </div>
+
+            {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
+            {message && <p className="mb-3 text-sm text-emerald-700">{message}</p>}
 
             <div className="space-y-4">
               <div className="rounded-lg border bg-slate-50/80 p-3 space-y-3">
