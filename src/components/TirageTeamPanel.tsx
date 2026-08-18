@@ -339,7 +339,7 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            La grille n’affiche que les rencontres de clubs (A bleu vs B rouge). Les judokas
+            La grille n’affiche que les rencontres de clubs (Blanc vs Bleu). Les judokas
             principaux par catégorie apparaissent dans Combats après l’envoi.
           </p>
           <div className="space-y-2">

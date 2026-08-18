@@ -7,6 +7,7 @@ import {
   type TirageFighter,
   type TiragePool
 } from '@shared/utils/tirage'
+import { combatPhaseLabel } from '@shared/utils/combat-phase'
 import { downloadBytes } from './download-blob'
 import { pdfSafeText } from './pdf-winansi-text'
 
@@ -316,16 +317,19 @@ function drawFullBracket(
   bracket: BracketTree,
   layout: BracketLayout,
   originX: number,
-  originTop: number
+  originTop: number,
+  opts?: { phaseLabels?: boolean }
 ): void {
   const rounds = bracket.rounds
   if (!rounds.length) return
 
   const { boxH, boxW, laterW, connectorW, colH } = layout
+  const phaseH = opts?.phaseLabels ? 14 : 0
+  const cardsTop = originTop - phaseH
 
   const matchCenterY = (matchIndex: number, count: number): number => {
     const slotH = colH / count
-    return originTop - matchIndex * slotH - slotH / 2
+    return cardsTop - matchIndex * slotH - slotH / 2
   }
 
   let x = originX
@@ -334,6 +338,19 @@ function drawFullBracket(
     const round = rounds[r]!
     const count = round.length
     const colWidth = r === 0 ? boxW : laterW
+    if (opts?.phaseLabels) {
+      const phase = pdfSafeText(combatPhaseLabel(round[0]?.phase))
+      if (phase) {
+        const pw = fontBold.widthOfTextAtSize(phase, 7)
+        page.drawText(phase, {
+          x: x + Math.max(0, (colWidth - pw) / 2),
+          y: originTop - 9,
+          size: 7,
+          font: fontBold,
+          color: RED
+        })
+      }
+    }
 
     for (let i = 0; i < count; i++) {
       // Toutes les cases sont dessinées (pas de filtrage qui coupe des combats)
@@ -623,4 +640,87 @@ export async function exportAndDownloadTirageBracketPdf(
   const filename = `grille-combats-${new Date().toISOString().slice(0, 10)}.pdf`
   downloadBytes(bytes, filename, 'application/pdf')
   return { filename, poolCount: pools.length }
+}
+
+type BracketPdfFont = Awaited<ReturnType<PDFDocument['embedFont']>>
+
+/**
+ * Ajoute la même grille visuelle que la page Tirage (cases Blanc / Bleu, connecteurs, Finale Or).
+ */
+export function appendBracketTreePages(
+  doc: PDFDocument,
+  font: BracketPdfFont,
+  fontBold: BracketPdfFont,
+  opts: {
+    title: string
+    heading: string
+    meta: string
+    bracket: BracketTree
+    phaseLabels?: boolean
+  }
+): void {
+  const slices = bracketPageSlices(opts.bracket)
+  const totalParts = slices.length
+
+  for (let partIndex = 0; partIndex < slices.length; partIndex++) {
+    const slice = slices[partIndex]!
+    const page = doc.addPage([PAGE_W, PAGE_H])
+    let y = PAGE_H - MARGIN
+
+    page.drawText(pdfSafeText(opts.title), {
+      x: MARGIN,
+      y: y - 12,
+      size: 14,
+      font: fontBold,
+      color: NAVY
+    })
+    y -= 22
+    page.drawLine({
+      start: { x: MARGIN, y },
+      end: { x: PAGE_W - MARGIN, y },
+      thickness: 1,
+      color: NAVY
+    })
+    y -= 14
+
+    const headingLines = wrapLines(fontBold, opts.heading, 11, PAGE_W - MARGIN * 2, 2)
+    for (const line of headingLines) {
+      page.drawText(line, {
+        x: MARGIN,
+        y: y - 9,
+        size: 11,
+        font: fontBold,
+        color: NAVY
+      })
+      y -= 12
+    }
+
+    const meta =
+      totalParts > 1
+        ? `${opts.meta} · partie ${partIndex + 1}/${totalParts} · combats ${slice.start + 1}–${slice.end}`
+        : opts.meta
+    page.drawText(pdfSafeText(meta), {
+      x: MARGIN,
+      y: y - 8,
+      size: 8,
+      font,
+      color: MUTED
+    })
+    y -= 16
+    page.drawLine({
+      start: { x: MARGIN, y },
+      end: { x: PAGE_W - MARGIN, y },
+      thickness: 0.5,
+      color: rgb(0.75, 0.8, 0.85)
+    })
+    y -= 8
+
+    const pageBracket =
+      totalParts === 1 ? opts.bracket : sliceBracketTree(opts.bracket, slice.start, slice.end)
+    const phaseReserve = opts.phaseLabels ? 14 : 0
+    const layout = computeLayout(pageBracket, PAGE_W - MARGIN * 2, Math.max(60, y - MARGIN - phaseReserve))
+    drawFullBracket(page, font, fontBold, pageBracket, layout, MARGIN, y, {
+      phaseLabels: opts.phaseLabels
+    })
+  }
 }
