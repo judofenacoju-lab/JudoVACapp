@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label'
 import { AppShell } from '@/layouts/AppShell'
 import {
   applyCombatSubstitute,
+  applyTeamMatchSubstitutes,
   applyCombatWinner,
   assignManualOpponent,
   combatPhaseDisplay,
@@ -110,11 +111,12 @@ function CombatRow({
 }) {
   const [manualName, setManualName] = useState('')
   const isTeam = c.kind === 'team'
-  const topLabel = isTeam ? 'Équipe A · Bleu' : 'Blanc'
-  const bottomLabel = isTeam ? 'Équipe B · Rouge' : 'Bleu'
+  const topLabel = isTeam ? 'Équipe A · Blanc' : 'Blanc'
+  const bottomLabel = isTeam ? 'Équipe B · Bleu' : 'Bleu'
   const canAddManual =
     c.round === 0 && isMissingOpponent(c) && c.status !== 'completed' && c.status !== 'in_progress'
   const canPlay = c.status !== 'completed' && Boolean(c.top || c.bottom)
+  const canSwap = c.status !== 'completed' && (isTeam || confirmed)
   const methodNote = isTeam && c.status === 'completed' ? teamWinMethodLabel(c.winMethod) : ''
   return (
     <li className="rounded-lg border bg-slate-50/60 p-3 space-y-2">
@@ -138,41 +140,65 @@ function CombatRow({
           {methodNote ? ` · ${methodNote}` : ''}
         </span>
       </div>
-      <div className="grid gap-1 text-sm sm:grid-cols-2">
-        <p>
-          <span className={isTeam ? 'font-medium text-blue-700' : 'text-muted-foreground'}>
-            {topLabel} ·{' '}
-          </span>
-          {fighterLine(c, 'top')}
-          {isTeam && c.top && (
-            <span className="ml-1 text-[11px] text-blue-700/80">(principal)</span>
-          )}
-          {c.winnerId && c.top?.id === c.winnerId && (
-            <span className="ml-1 text-emerald-700 font-medium">✓</span>
-          )}
+      <div className="grid gap-2 text-sm sm:grid-cols-2">
+        <div className="space-y-1">
+          <p>
+            <span className={isTeam ? 'font-medium text-judo-navy' : 'text-muted-foreground'}>
+              {topLabel} ·{' '}
+            </span>
+            {fighterLine(c, 'top')}
+            {isTeam && c.top && (
+              <span className="ml-1 text-[11px] text-judo-navy/70">(principal)</span>
+            )}
+            {c.winnerId && c.top?.id === c.winnerId && (
+              <span className="ml-1 text-emerald-700 font-medium">✓</span>
+            )}
+          </p>
           {c.topSubstitute && (
-            <span className="block text-xs text-muted-foreground">
-              Remplaçant : {c.topSubstitute.name}
+            <p className="text-xs text-muted-foreground">Remplaçant : {c.topSubstitute.name}</p>
+          )}
+          {canSwap && c.topSubstitute && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              title={`Mettre ${c.topSubstitute.name} en principal pour JVac-Chrono`}
+              onClick={() => applySubstitute(c.id, 'top')}
+            >
+              <Replace className="h-3.5 w-3.5" />
+              Mettre {c.topSubstitute.name} en principal
+            </Button>
+          )}
+        </div>
+        <div className="space-y-1">
+          <p>
+            <span className={isTeam ? 'font-medium text-blue-700' : 'text-muted-foreground'}>
+              {bottomLabel} ·{' '}
             </span>
-          )}
-        </p>
-        <p>
-          <span className={isTeam ? 'font-medium text-red-700' : 'text-muted-foreground'}>
-            {bottomLabel} ·{' '}
-          </span>
-          {fighterLine(c, 'bottom')}
-          {isTeam && c.bottom && (
-            <span className="ml-1 text-[11px] text-red-700/80">(principal)</span>
-          )}
-          {c.winnerId && c.bottom?.id === c.winnerId && (
-            <span className="ml-1 text-emerald-700 font-medium">✓</span>
-          )}
+            {fighterLine(c, 'bottom')}
+            {isTeam && c.bottom && (
+              <span className="ml-1 text-[11px] text-blue-700/80">(principal)</span>
+            )}
+            {c.winnerId && c.bottom?.id === c.winnerId && (
+              <span className="ml-1 text-emerald-700 font-medium">✓</span>
+            )}
+          </p>
           {c.bottomSubstitute && (
-            <span className="block text-xs text-muted-foreground">
-              Remplaçant : {c.bottomSubstitute.name}
-            </span>
+            <p className="text-xs text-muted-foreground">Remplaçant : {c.bottomSubstitute.name}</p>
           )}
-        </p>
+          {canSwap && c.bottomSubstitute && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              title={`Mettre ${c.bottomSubstitute.name} en principal pour JVac-Chrono`}
+              onClick={() => applySubstitute(c.id, 'bottom')}
+            >
+              <Replace className="h-3.5 w-3.5" />
+              Mettre {c.bottomSubstitute.name} en principal
+            </Button>
+          )}
+        </div>
       </div>
       {canAddManual && (
         <form
@@ -217,34 +243,6 @@ function CombatRow({
           ))}
         </select>
       </div>
-      {confirmed && c.status !== 'completed' && (c.topSubstitute || c.bottomSubstitute) && (
-        <div className="flex flex-wrap gap-2 pt-1">
-          {c.topSubstitute && (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              title={`Faire combattre ${c.topSubstitute.name}`}
-              onClick={() => applySubstitute(c.id, 'top')}
-            >
-              <Replace className="h-3.5 w-3.5" />
-              {isTeam ? 'Remplaçant bleu' : 'Remplaçant blanc'}
-            </Button>
-          )}
-          {c.bottomSubstitute && (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              title={`Faire combattre ${c.bottomSubstitute.name}`}
-              onClick={() => applySubstitute(c.id, 'bottom')}
-            >
-              <Replace className="h-3.5 w-3.5" />
-              {isTeam ? 'Remplaçant rouge' : 'Remplaçant bleu'}
-            </Button>
-          )}
-        </div>
-      )}
       {confirmed && canPlay && (
         <div className="flex flex-wrap gap-2 pt-1">
           {c.status === 'ready' && (
@@ -315,13 +313,13 @@ function TeamBoutResultButtons({
       {c.top && c.bottom && (
         <>
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="w-28 text-xs font-medium text-blue-700">Bleu gagne</span>
+            <span className="w-28 text-xs font-medium text-judo-navy">Blanc gagne</span>
             {methods.map((m) => (
               <Button
                 key={`top-${m.method}`}
                 size="sm"
                 variant="outline"
-                className="border-blue-300 text-blue-800"
+                className="border-judo-navy/30 text-judo-navy"
                 disabled={busy}
                 onClick={() => declareWinner(c.id, c.top!.id, m.method)}
               >
@@ -330,13 +328,13 @@ function TeamBoutResultButtons({
             ))}
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="w-28 text-xs font-medium text-red-700">Rouge gagne</span>
+            <span className="w-28 text-xs font-medium text-blue-700">Bleu gagne</span>
             {methods.map((m) => (
               <Button
                 key={`bottom-${m.method}`}
                 size="sm"
                 variant="outline"
-                className="border-red-300 text-red-800"
+                className="border-blue-300 text-blue-800"
                 disabled={busy}
                 onClick={() => declareWinner(c.id, c.bottom!.id, m.method)}
               >
@@ -361,7 +359,7 @@ function TeamBoutResultButtons({
           disabled={busy}
           onClick={() => declareWinner(c.id, c.top!.id, 'fusen')}
         >
-          Victoire bleu par absence
+          Victoire blanc par absence
         </Button>
       )}
       {c.bottom && !c.top && (
@@ -371,7 +369,7 @@ function TeamBoutResultButtons({
           disabled={busy}
           onClick={() => declareWinner(c.id, c.bottom!.id, 'fusen')}
         >
-          Victoire rouge par absence
+          Victoire bleu par absence
         </Button>
       )}
     </div>
@@ -620,8 +618,25 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
   }
 
   function applySubstitute(combatId: string, slot: 'top' | 'bottom'): void {
-    if (!session?.confirmedAt) return
-    void persist(applyCombatSubstitute(session, combatId, slot), 'Remplaçant sur le combat')
+    if (!session) return
+    const combat = session.combats.find((c) => c.id === combatId)
+    const isTeam = combat?.kind === 'team' || combatSessionKind(session) === 'team'
+    if (!isTeam && !session.confirmedAt) return
+    void persist(
+      applyCombatSubstitute(session, combatId, slot),
+      'Principal mis à jour — JVac-Chrono prendra ce judoka en charge.'
+    )
+  }
+
+  function applyMatchSubstitutes(teamMatchId: string, slot: 'top' | 'bottom'): void {
+    if (!session) return
+    const { session: next, swapped } = applyTeamMatchSubstitutes(session, teamMatchId, slot)
+    if (swapped === 0) return
+    const side = slot === 'top' ? 'blanc' : 'bleu'
+    void persist(
+      next,
+      `Remplaçant ${side} mis en principal sur ${swapped} catégorie(s) — JVac-Chrono prendra ces judokas en charge.`
+    )
   }
 
   async function clearSession(): Promise<void> {
@@ -636,7 +651,7 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
       title="Combats"
       subtitle={
         combatSessionKind(session) === 'team'
-          ? 'Combats par équipe : Équipe A (bleu) vs Équipe B (rouge). Victoires d’abord, puis points techniques (Ippon 10, Waza-ari 1).'
+          ? 'Combats par équipe : choisissez le judoka principal (ou le remplaçant) par catégorie. JVac-Chrono reprend le principal automatiquement.'
           : 'Tatamis, confirmation des grilles Tirage et suivi d’évolution des combats.'
       }
       actions={
@@ -920,7 +935,15 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
             {session.combats.some(hasAtLeastOneJudoka) && (
             <div className="rounded-xl border bg-white/75 p-5 space-y-4 max-w-4xl">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <Label className="text-base">Liste des combats</Label>
+                <div className="space-y-0.5">
+                  <Label className="text-base">Liste des combats</Label>
+                  {combatSessionKind(session) === 'team' && (
+                    <p className="text-xs text-muted-foreground">
+                      Par équipe : mettez le remplaçant en principal avant que JVac-Chrono
+                      prenne le combat — par catégorie, ou pour toute la rencontre.
+                    </p>
+                  )}
+                </div>
                 <select
                   className="flex h-9 rounded-md border border-input bg-background px-2 text-sm"
                   value={selectedTatamiId}
@@ -956,18 +979,52 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
                             a.matchIndex - b.matchIndex
                         )
                       const score = teamMatchScore(session, m.id)
+                      const canSwapTop = bouts.some(
+                        (c) => c.status !== 'completed' && Boolean(c.topSubstitute)
+                      )
+                      const canSwapBottom = bouts.some(
+                        (c) => c.status !== 'completed' && Boolean(c.bottomSubstitute)
+                      )
                       return (
                         <div key={m.id} className="space-y-2">
                           <div className="rounded-lg border bg-judo-navy/95 px-3 py-2 text-white">
                             <p className="text-sm font-semibold">
                               {m.label} · {m.homeClub}{' '}
-                              <span className="text-sky-300">(A · Bleu)</span> vs {m.awayClub}{' '}
-                              <span className="text-red-300">(B · Rouge)</span>
+                              <span className="text-white">(A · Blanc)</span> vs {m.awayClub}{' '}
+                              <span className="text-sky-300">(B · Bleu)</span>
                             </p>
                             <p className="text-xs text-white/70">
                               {formatTeamMatchScoreLine(score, m) ||
                                 `${bouts.length} combat(s) par catégorie`}
                             </p>
+                            {(canSwapTop || canSwapBottom) && (
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {canSwapTop && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="border-white/40 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+                                    disabled={busy}
+                                    onClick={() => applyMatchSubstitutes(m.id, 'top')}
+                                  >
+                                    <Replace className="h-3.5 w-3.5" />
+                                    Remplaçant blanc · toutes catégories
+                                  </Button>
+                                )}
+                                {canSwapBottom && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="border-white/40 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+                                    disabled={busy}
+                                    onClick={() => applyMatchSubstitutes(m.id, 'bottom')}
+                                  >
+                                    <Replace className="h-3.5 w-3.5" />
+                                    Remplaçant bleu · toutes catégories
+                                  </Button>
+                                )}
+                              </div>
+                            )}
                           </div>
                           <ul className="space-y-3">
                             {bouts.map((c) => (

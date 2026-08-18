@@ -608,6 +608,25 @@ export function applyCombatSubstitute(
   return { ...session, combats, updatedAt: now }
 }
 
+/** Place le remplaçant en principal sur tous les combats d’une rencontre. */
+export function applyTeamMatchSubstitutes(
+  session: CombatSession,
+  teamMatchId: string,
+  slot: 'top' | 'bottom'
+): { session: CombatSession; swapped: number } {
+  const ids = session.combats
+    .filter((c) => {
+      if (c.teamMatchId !== teamMatchId || c.status === 'completed') return false
+      return Boolean(slot === 'top' ? c.topSubstitute : c.bottomSubstitute)
+    })
+    .map((c) => c.id)
+  let next = session
+  for (const id of ids) {
+    next = applyCombatSubstitute(next, id, slot)
+  }
+  return { session: next, swapped: ids.length }
+}
+
 /**
  * Répartit et classe les combats des 1er et 2e tours sur les tatamis disponibles.
  * Ordre sur chaque tatami : 1er tour puis 2e tour (par poule / index).
