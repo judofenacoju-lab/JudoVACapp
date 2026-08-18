@@ -10,7 +10,9 @@ import {
   type CombatSession,
   type CombatStatus,
   type ManagedCombat,
-  type TeamMatch
+  type TeamMatch,
+  type TeamMatchDecidedBy,
+  type TeamWinMethod
 } from '@shared/types/combats'
 import { formatJudokaFullName } from '@shared/utils/judoka'
 import { createWeightClassId, suggestWeightClassLabel } from '@shared/utils/tirage'
@@ -156,14 +158,59 @@ function pickPrincipalAndSub(
   return { principal, substitute }
 }
 
+/** Ippon = 10 pts techniques ; Waza-ari = 1 pt (règlement Judo Vacances). */
+export const TEAM_TECH_IPPON = 10
+export const TEAM_TECH_WAZA_ARI = 1
+
+export function technicalPointsFor(method: TeamWinMethod | undefined): number {
+  if (method === 'ippon' || method === 'fusen') return TEAM_TECH_IPPON
+  if (method === 'waza_ari') return TEAM_TECH_WAZA_ARI
+  return 0
+}
+
+/** Catégories officielles Judo Vacances (garçons par défaut). */
+export function judoVacancesWeightClasses(sex: 'M' | 'F' = 'M'): TeamWeightClassRange[] {
+  const caps = [
+    { label: '-60 kg', maxKg: 60 },
+    { label: '-66 kg', maxKg: 66 },
+    { label: '-73 kg', maxKg: 73 },
+    { label: '-81 kg', maxKg: 81 },
+    { label: '-90 kg', maxKg: 90 }
+  ]
+  let prev = 0
+  const rows: TeamWeightClassRange[] = caps.map((c) => {
+    const row: TeamWeightClassRange = {
+      id: createWeightClassId(),
+      label: c.label,
+      minKg: prev,
+      maxKg: c.maxKg,
+      sex
+    }
+    prev = c.maxKg
+    return row
+  })
+  rows.push({
+    id: createWeightClassId(),
+    label: '+90 kg',
+    minKg: 90,
+    maxKg: 250,
+    sex
+  })
+  return rows
+}
+
 function boutStatus(top: CombatFighterRef | null, bottom: CombatFighterRef | null): {
   status: CombatStatus
   winnerId: string | null
   bye: boolean
+  winMethod?: TeamWinMethod
 } {
   if (top && bottom) return { status: 'ready', winnerId: null, bye: false }
-  if (top || bottom) {
-    return { status: 'ready', winnerId: null, bye: true }
+  if (top && !bottom) {
+    return { status: 'completed', winnerId: top.id, bye: true, winMethod: 'fusen' }
+  }
+  if (bottom && !top) {
+    return { status: 'completed', winnerId: bottom.id, bye: true, winMethod: 'fusen' }
   }
   return { status: 'pending', winnerId: null, bye: false }
 }
@@ -190,7 +237,7 @@ export function buildTeamBouts(
     if (!top && !bottom) return
     const topSubstitute = homePick.substitute ? toFighter(homePick.substitute, wc.label) : null
     const bottomSubstitute = awayPick.substitute ? toFighter(awayPick.substitute, wc.label) : null
-    const { status, winnerId, bye } = boutStatus(top, bottom)
+    const { status, winnerId, bye, winMethod } = boutStatus(top, bottom)
     const sexLabel = wc.sex === 'F' ? 'Filles' : 'Garçons'
     combats.push({
       id: `${match.id}::bout-${wc.sex}-${wc.id}`,
@@ -212,6 +259,7 @@ export function buildTeamBouts(
       orderOnTatami: 0,
       status,
       winnerId,
+      winMethod,
       feedsInto: null,
       updatedAt: now,
       kind: 'team',
@@ -345,18 +393,169 @@ export function mergeTeamTirageIntoCombatSession(
   return distributeCombatsAcrossTatamis(merged)
 }
 
-export function teamMatchScore(
-  session: CombatSession,
-  teamMatchId: string
-): { home: number; away: number } {
-  let home = 0
-  let away = 0
-  for (const c of session.combats) {
-    if (c.teamMatchId !== teamMatchId || c.status !== 'completed' || !c.winnerId) continue
-    if (c.top?.id === c.winnerId) home += 1
-    else if (c.bottom?.id === c.winnerId) away += 1
+export interface TeamMatchScoreBreakdown {
+  /** Alias de homeWins (compat affichage). */
+  home: number
+  /** Alias de awayWins (compat affichage). */
+  away: number
+  homeWins: number
+  awayWins: number
+  homeTech: number
+  awayTech: number
+  regularComplete: boolean
+  goldenScore: ManagedCombat | null
+  decidedBy: TeamMatchDecidedBy | null
+  winnerSlot: 'home' | 'away' | null
+}
+
+export function teamMatchScore(session: CombatSession, teamMatchId: string): TeamMatchScoreBreakdown {
+  let homeWins = 0
+  let awayWins = 0
+  let homeTech = 0
+  let awayTech = 0
+  const bouts = session.combats.filter((c) => c.teamMatchId === teamMatchId)
+  const regular = bouts.filter((c) => !c.goldenScore)
+  const goldenScore = bouts.find((c) => c.goldenScore) ?? null
+  const regularComplete = regular.length > 0 && regular.every((c) => c.status === 'completed')
+
+  for (const c of regular) {
+    if (c.status !== 'completed' || c.winMethod === 'draw') continue
+    if (!c.winnerId) continue
+    const tech = technicalPointsFor(c.winMethod)
+    if (c.top?.id === c.winnerId) {
+      homeWins += 1
+      homeTech += tech
+    } else if (c.bottom?.id === c.winnerId) {
+      awayWins += 1
+      awayTech += tech
+    }
   }
-  return { home, away }
+
+  let decidedBy: TeamMatchDecidedBy | null = null
+  let winnerSlot: 'home' | 'away' | null = null
+  if (regularComplete) {
+    if (homeWins > awayWins) {
+      winnerSlot = 'home'
+      decidedBy = 'wins'
+    } else if (awayWins > homeWins) {
+      winnerSlot = 'away'
+      decidedBy = 'wins'
+    } else if (homeTech > awayTech) {
+      winnerSlot = 'home'
+      decidedBy = 'tech'
+    } else if (awayTech > homeTech) {
+      winnerSlot = 'away'
+      decidedBy = 'tech'
+    } else if (goldenScore?.status === 'completed' && goldenScore.winnerId) {
+      decidedBy = 'golden_score'
+      if (goldenScore.top?.id === goldenScore.winnerId) winnerSlot = 'home'
+      else if (goldenScore.bottom?.id === goldenScore.winnerId) winnerSlot = 'away'
+    }
+  }
+
+  return {
+    home: homeWins,
+    away: awayWins,
+    homeWins,
+    awayWins,
+    homeTech,
+    awayTech,
+    regularComplete,
+    goldenScore,
+    decidedBy,
+    winnerSlot
+  }
+}
+
+export function formatTeamMatchScoreLine(score: TeamMatchScoreBreakdown, match: TeamMatch): string {
+  if (match.decidedBy === 'bye' && match.winnerTeamId) {
+    const name = match.winnerTeamId === match.homeTeamId ? match.homeClub : match.awayClub
+    return `Qualifié ${name} (bye)`
+  }
+  const base = `Score ${score.homeWins}–${score.awayWins}`
+  const tech = ` · pts tech. ${score.homeTech}–${score.awayTech}`
+  if (match.winnerTeamId) {
+    const name = match.winnerTeamId === match.homeTeamId ? match.homeClub : match.awayClub
+    const how =
+      match.decidedBy === 'tech'
+        ? 'aux points techniques'
+        : match.decidedBy === 'golden_score'
+          ? 'au golden score'
+          : 'aux victoires'
+    return `${base}${tech} · vainqueur ${name} (${how})`
+  }
+  if (score.regularComplete && !score.winnerSlot) {
+    const cat = score.goldenScore?.weightLabel
+    return cat
+      ? `${base}${tech} · égalité — golden score ${cat}`
+      : `${base}${tech} · égalité — golden score`
+  }
+  if (score.homeWins + score.awayWins === 0 && score.homeTech + score.awayTech === 0) {
+    return ''
+  }
+  return `${base}${tech}`
+}
+
+export interface TeamStanding {
+  teamId: string
+  club: string
+  encounterPoints: number
+  matchWins: number
+  matchDraws: number
+  matchLosses: number
+  boutWins: number
+  techPoints: number
+}
+
+/** Classement poule : 3 pts victoire, 1 nul, 0 défaite, puis victoires individuelles, puis pts tech. */
+export function computeTeamStandings(session: CombatSession): TeamStanding[] {
+  const byId = new Map<string, TeamStanding>()
+  const ensure = (teamId: string, club: string): TeamStanding => {
+    let row = byId.get(teamId)
+    if (!row) {
+      row = {
+        teamId,
+        club,
+        encounterPoints: 0,
+        matchWins: 0,
+        matchDraws: 0,
+        matchLosses: 0,
+        boutWins: 0,
+        techPoints: 0
+      }
+      byId.set(teamId, row)
+    }
+    return row
+  }
+
+  for (const match of session.teamMatches ?? []) {
+    if (!match.homeTeamId || !match.awayTeamId) continue
+    const home = ensure(match.homeTeamId, match.homeClub)
+    const away = ensure(match.awayTeamId, match.awayClub)
+    const score = teamMatchScore(session, match.id)
+    home.boutWins += score.homeWins
+    home.techPoints += score.homeTech
+    away.boutWins += score.awayWins
+    away.techPoints += score.awayTech
+    if (!match.winnerTeamId) continue
+    if (match.winnerTeamId === match.homeTeamId) {
+      home.encounterPoints += 3
+      home.matchWins += 1
+      away.matchLosses += 1
+    } else if (match.winnerTeamId === match.awayTeamId) {
+      away.encounterPoints += 3
+      away.matchWins += 1
+      home.matchLosses += 1
+    }
+  }
+
+  return [...byId.values()].sort(
+    (a, b) =>
+      b.encounterPoints - a.encounterPoints ||
+      b.boutWins - a.boutWins ||
+      b.techPoints - a.techPoints ||
+      a.club.localeCompare(b.club, 'fr')
+  )
 }
 
 export interface TeamResolveCtx {
@@ -372,6 +571,75 @@ function fillSlot(match: TeamMatch, slot: 'home' | 'away', team: Team): void {
   } else {
     match.awayTeamId = team.id
     match.awayClub = teamDisplayName(team)
+  }
+}
+
+function createGoldenScoreBout(
+  match: TeamMatch,
+  regular: ManagedCombat[],
+  now: string
+): ManagedCombat | null {
+  if (regular.length === 0) return null
+  const eligible = regular.filter((c) => c.top && c.bottom)
+  const pool = eligible.length > 0 ? eligible : regular
+  const source = pool[Math.floor(Math.random() * pool.length)]!
+  const { status, winnerId, bye, winMethod } = boutStatus(source.top, source.bottom)
+  return {
+    ...source,
+    id: `${match.id}::golden-score`,
+    matchId: 'golden-score',
+    label: 'Golden Score',
+    poolKey: `${match.id}|golden-score`,
+    poolLabel: `Golden Score · ${source.weightLabel}`,
+    status,
+    winnerId,
+    winMethod,
+    bye,
+    goldenScore: true,
+    feedsInto: null,
+    feedsLoserInto: undefined,
+    tatamiId: source.tatamiId,
+    orderOnTatami: (source.orderOnTatami ?? 0) + 1,
+    updatedAt: now
+  }
+}
+
+function assignUnassignedCombatsToTatamis(session: CombatSession): CombatSession {
+  const tatamis = session.tatamis
+  if (tatamis.length === 0) return session
+  const counts = new Map(tatamis.map((t) => [t.id, 0]))
+  const maxOrder = new Map(tatamis.map((t) => [t.id, -1]))
+  for (const c of session.combats) {
+    if (!c.tatamiId) continue
+    counts.set(c.tatamiId, (counts.get(c.tatamiId) ?? 0) + 1)
+    maxOrder.set(c.tatamiId, Math.max(maxOrder.get(c.tatamiId) ?? -1, c.orderOnTatami))
+  }
+  const pickLeast = (): string => {
+    let best = tatamis[0]!.id
+    let n = counts.get(best) ?? 0
+    for (const t of tatamis) {
+      const c = counts.get(t.id) ?? 0
+      if (c < n) {
+        best = t.id
+        n = c
+      }
+    }
+    return best
+  }
+  return {
+    ...session,
+    combats: session.combats.map((c) => {
+      if (c.tatamiId || !hasAtLeastOneJudoka(c)) return c
+      const siblingTatami = c.goldenScore
+        ? session.combats.find((x) => x.teamMatchId === c.teamMatchId && x.tatamiId && !x.goldenScore)
+            ?.tatamiId
+        : null
+      const tatamiId = siblingTatami ?? pickLeast()
+      const order = (maxOrder.get(tatamiId) ?? -1) + 1
+      counts.set(tatamiId, (counts.get(tatamiId) ?? 0) + 1)
+      maxOrder.set(tatamiId, order)
+      return { ...c, tatamiId, orderOnTatami: order, updatedAt: session.updatedAt }
+    })
   }
 }
 
@@ -398,6 +666,7 @@ export function resolveTeamMatches(
     changed = false
     for (const match of matches) {
       if (match.winnerTeamId) {
+        if (!match.decidedBy) match.decidedBy = 'bye'
         if (match.feedsInto) {
           const next = matches.find((m) => m.id === match.feedsInto!.teamMatchId)
           const winner = teamById.get(match.winnerTeamId)
@@ -415,28 +684,37 @@ export function resolveTeamMatches(
 
       if (match.homeTeamId && !match.awayTeamId) {
         match.winnerTeamId = match.homeTeamId
+        match.decidedBy = 'bye'
         changed = true
         continue
       }
       if (match.awayTeamId && !match.homeTeamId) {
         match.winnerTeamId = match.awayTeamId
+        match.decidedBy = 'bye'
         changed = true
         continue
       }
 
       const bouts = combats.filter((c) => c.teamMatchId === match.id)
-      if (bouts.length === 0) continue
-      if (bouts.some((c) => c.status !== 'completed')) continue
+      const regular = bouts.filter((c) => !c.goldenScore)
+      if (regular.length === 0) continue
+      if (regular.some((c) => c.status !== 'completed')) continue
+
       const score = teamMatchScore({ ...session, combats }, match.id)
-      if (score.home > score.away && match.homeTeamId) {
-        match.winnerTeamId = match.homeTeamId
+      if (score.winnerSlot && match.homeTeamId && match.awayTeamId) {
+        match.winnerTeamId =
+          score.winnerSlot === 'home' ? match.homeTeamId : match.awayTeamId
+        match.decidedBy = score.decidedBy ?? 'wins'
         changed = true
-      } else if (score.away > score.home && match.awayTeamId) {
-        match.winnerTeamId = match.awayTeamId
-        changed = true
-      } else if (match.homeTeamId) {
-        match.winnerTeamId = match.homeTeamId
-        changed = true
+        continue
+      }
+
+      if (!bouts.some((c) => c.goldenScore)) {
+        const created = createGoldenScoreBout(match, regular, now)
+        if (created) {
+          combats = [...combats, created]
+          changed = true
+        }
       }
     }
 
@@ -459,6 +737,8 @@ export function resolveTeamMatches(
     combats,
     updatedAt: now
   }
-  if (next.tatamis.length > 0) return distributeCombatsAcrossTatamis(next)
-  return next
+  if (next.tatamis.length === 0) return next
+  const anyAssigned = next.combats.some((c) => c.tatamiId)
+  if (!anyAssigned) return distributeCombatsAcrossTatamis(next)
+  return assignUnassignedCombatsToTatamis(next)
 }

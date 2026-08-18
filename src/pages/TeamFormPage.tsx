@@ -1,5 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Check, FolderOpen, Pencil, Plus, Trash2, UserPlus, Users, X } from 'lucide-react'
+import {
+  ArrowLeft,
+  Building2,
+  Check,
+  FolderOpen,
+  Pencil,
+  Plus,
+  Trash2,
+  UserCheck,
+  UserPlus,
+  UserX,
+  Users,
+  X
+} from 'lucide-react'
 import type { Judoka, Sex } from '@shared/types/judoka'
 import type { TeamWeightClassRange } from '@shared/types/settings'
 import {
@@ -12,8 +25,9 @@ import {
 } from '@shared/types/teams'
 import { formatJudokaFullName } from '@shared/utils/judoka'
 import { mergeRegisteredClubNames } from '@shared/utils/clubs'
-import { normalizeTeamWeightClasses } from '@shared/utils/team-tirage'
+import { judoVacancesWeightClasses, normalizeTeamWeightClasses } from '@shared/utils/team-tirage'
 import { createWeightClassId, suggestWeightClassLabel } from '@shared/utils/tirage'
+import { StatTile } from '@/components/StatTile'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -97,6 +111,19 @@ export function TeamFormPage({
   }, [])
 
   const chosenClub = clubName.trim()
+
+  const teamStats = useMemo(() => {
+    const registered = teams.length
+    const withJudokas = teams.filter((t) => t.judokaIds.length > 0).length
+    const withoutJudokas = teams.filter((t) => t.judokaIds.length === 0).length
+    const uniqueIds = new Set(teams.flatMap((t) => t.judokaIds))
+    return {
+      registered,
+      withJudokas,
+      withoutJudokas,
+      judokasOnTeams: uniqueIds.size
+    }
+  }, [teams])
 
   const members = useMemo(() => {
     if (!activeTeam) return []
@@ -446,6 +473,38 @@ export function TeamFormPage({
       }
     >
       <div className="space-y-6 animate-fade-in">
+        <div className="rounded-xl border bg-white/75 p-5 space-y-3 max-w-3xl">
+          <Label className="text-base">Statistiques</Label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <StatTile
+              icon={<Building2 className="h-5 w-5" />}
+              label="Clubs enregistrés"
+              value={String(teamStats.registered)}
+              hint="Clubs inscrits comme équipe"
+            />
+            <StatTile
+              icon={<UserCheck className="h-5 w-5" />}
+              label="Clubs avec judokas"
+              value={String(teamStats.withJudokas)}
+              hint="Au moins un judoka dans l’équipe"
+              tone={teamStats.withJudokas > 0 ? 'ok' : 'muted'}
+            />
+            <StatTile
+              icon={<UserX className="h-5 w-5" />}
+              label="Clubs sans judokas"
+              value={String(teamStats.withoutJudokas)}
+              hint="Équipes encore vides"
+              tone={teamStats.withoutJudokas > 0 ? 'warn' : 'muted'}
+            />
+            <StatTile
+              icon={<Users className="h-5 w-5" />}
+              label="Judokas par équipe"
+              value={String(teamStats.judokasOnTeams)}
+              hint="Judokas inscrits dans une équipe"
+            />
+          </div>
+        </div>
+
         <div className="rounded-xl border bg-white/75 p-5 space-y-4 max-w-3xl">
           <Label className="text-base">1. Club à inscrire comme équipe</Label>
           <p className="text-sm text-muted-foreground">
@@ -570,7 +629,28 @@ export function TeamFormPage({
 
             <div className="space-y-4">
               <div className="rounded-lg border bg-slate-50/80 p-3 space-y-3">
-                <Label className="text-sm">Catégories de poids</Label>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Label className="text-sm">Catégories de poids</Label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => {
+                      if (
+                        weightClasses.length > 0 &&
+                        !window.confirm(
+                          'Remplacer les catégories actuelles par -60, -66, -73, -81, -90, +90 kg ?'
+                        )
+                      ) {
+                        return
+                      }
+                      void persistWeightClasses(judoVacancesWeightClasses('M'))
+                    }}
+                  >
+                    Judo Vacances
+                  </Button>
+                </div>
                 <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,0.7fr)_minmax(0,0.7fr)_auto]">
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Libellé</Label>

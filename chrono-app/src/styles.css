@@ -201,6 +201,36 @@ select {
   color: white;
 }
 
+.fighter.team-a {
+  background: #1d4ed8;
+  color: white;
+}
+
+.fighter.team-b {
+  background: #c8102e;
+  color: white;
+}
+
+.team-results {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.team-result-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+}
+
+.team-result-row span {
+  font-size: 0.8rem;
+  font-weight: 700;
+  min-width: 6.5rem;
+}
+
 .fighter .side-tag {
   font-size: 0.72rem;
   font-weight: 800;

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ImageUp, Timer } from 'lucide-react'
 import type { ChronoCombat, ChronoConnectResponse } from '@shared/types/chrono'
+import { teamWinMethodLabel, type TeamWinMethod } from '@shared/types/combats'
 import { combatPhaseLabel } from '@shared/utils/combat-phase'
 import {
   chronoBaseUrl,
@@ -162,12 +163,12 @@ export function App() {
     }
   }
 
-  async function declareWinner(winnerId: string): Promise<void> {
+  async function declareWinner(winnerId: string, winMethod?: TeamWinMethod): Promise<void> {
     if (!session || !current || !base) return
     setBusy(true)
     setError(null)
     try {
-      const data = await setChronoWinner(base, pwd, current.id, winnerId)
+      const data = await setChronoWinner(base, pwd, current.id, winnerId, winMethod)
       setSession(data)
       setRunning(false)
       setRemaining(duration)
@@ -314,10 +315,11 @@ export function App() {
                   : ''}
                 {current.label} · {current.poolLabel}
                 {phaseForCombat(current) ? ` · ${phaseForCombat(current)}` : ''}
+                {current.goldenScore ? ' · Golden Score' : ''}
               </p>
               <div className="fighters">
-                <div className="fighter white">
-                  <div className="side-tag">Blanc</div>
+                <div className={current.kind === 'team' ? 'fighter team-a' : 'fighter white'}>
+                  <div className="side-tag">{current.kind === 'team' ? 'Équipe A · Bleu' : 'Blanc'}</div>
                   <div className="name">{fighterName(current, 'top')}</div>
                   <div className="meta">{fighterMeta(current, 'top')}</div>
                   {current.topSubstitute && (
@@ -325,8 +327,8 @@ export function App() {
                   )}
                 </div>
                 <div className="vs">VS</div>
-                <div className="fighter blue">
-                  <div className="side-tag">Bleu</div>
+                <div className={current.kind === 'team' ? 'fighter team-b' : 'fighter blue'}>
+                  <div className="side-tag">{current.kind === 'team' ? 'Équipe B · Rouge' : 'Bleu'}</div>
                   <div className="name">{fighterName(current, 'bottom')}</div>
                   <div className="meta">{fighterMeta(current, 'bottom')}</div>
                   {current.bottomSubstitute && (
@@ -386,7 +388,7 @@ export function App() {
                       disabled={busy}
                       onClick={() => void useSubstitute('top')}
                     >
-                      Remplaçant blanc
+                      Remplaçant {current.kind === 'team' ? 'bleu' : 'blanc'}
                     </button>
                   )}
                   {current.bottomSubstitute && (
@@ -396,12 +398,19 @@ export function App() {
                       disabled={busy}
                       onClick={() => void useSubstitute('bottom')}
                     >
-                      Remplaçant bleu
+                      Remplaçant {current.kind === 'team' ? 'rouge' : 'bleu'}
                     </button>
                   )}
                 </div>
               )}
               {current.status !== 'completed' && (current.top || current.bottom) && (
+                current.kind === 'team' ? (
+                  <TeamChronoResultButtons
+                    combat={current}
+                    busy={busy}
+                    onResult={(winnerId, method) => void declareWinner(winnerId, method)}
+                  />
+                ) : (
                 <div className="actions" style={{ marginTop: 14 }}>
                   {current.top && (
                     <button
@@ -424,9 +433,15 @@ export function App() {
                     </button>
                   )}
                 </div>
+                )
               )}
               {current.status === 'completed' && (
-                <p style={{ textAlign: 'center', fontWeight: 600 }}>Combat terminé</p>
+                <p style={{ textAlign: 'center', fontWeight: 600 }}>
+                  Combat terminé
+                  {current.kind === 'team' && current.winMethod
+                    ? ` · ${teamWinMethodLabel(current.winMethod)}`
+                    : ''}
+                </p>
               )}
             </>
           )}
@@ -451,7 +466,7 @@ export function App() {
                 >
                   <strong>{c.label}</strong>{' '}
                   <span className="badge">
-                    {c.kind === 'team' ? 'Équipe · ' : ''}
+                    {c.kind === 'team' ? (c.goldenScore ? 'GS · ' : 'Équipe · ') : ''}
                     {c.status === 'completed'
                       ? 'Terminé'
                       : phaseForCombat(c) || `Tour ${c.round + 1}`}
@@ -513,13 +528,13 @@ function ChronoDisplay({
           </p>
           <div className="display-clock">{formatClock(remaining)}</div>
           <div className="display-fighters">
-            <div className="fighter white">
-              <div className="side-tag">Blanc</div>
+            <div className={combat.kind === 'team' ? 'fighter team-a' : 'fighter white'}>
+              <div className="side-tag">{combat.kind === 'team' ? 'Équipe A · Bleu' : 'Blanc'}</div>
               <div className="name">{fighterName(combat, 'top')}</div>
               <div className="meta">{fighterMeta(combat, 'top')}</div>
             </div>
-            <div className="fighter blue">
-              <div className="side-tag">Bleu</div>
+            <div className={combat.kind === 'team' ? 'fighter team-b' : 'fighter blue'}>
+              <div className="side-tag">{combat.kind === 'team' ? 'Équipe B · Rouge' : 'Bleu'}</div>
               <div className="name">{fighterName(combat, 'bottom')}</div>
               <div className="meta">{fighterMeta(combat, 'bottom')}</div>
             </div>
@@ -527,6 +542,92 @@ function ChronoDisplay({
         </>
       ) : (
         <p className="display-wait">En attente de combat</p>
+      )}
+    </div>
+  )
+}
+
+function TeamChronoResultButtons({
+  combat,
+  busy,
+  onResult
+}: {
+  combat: ChronoCombat
+  busy: boolean
+  onResult: (winnerId: string, method: TeamWinMethod) => void
+}) {
+  const methods: Array<{ method: TeamWinMethod; label: string }> = [
+    { method: 'ippon', label: 'Ippon' },
+    { method: 'waza_ari', label: 'Waza-ari' },
+    { method: 'hantei', label: 'Victoire' }
+  ]
+  return (
+    <div className="team-results">
+      {combat.top && combat.bottom && (
+        <>
+          <div className="team-result-row">
+            <span>Bleu gagne</span>
+            {methods.map((m) => (
+              <button
+                key={`a-${m.method}`}
+                className="btn btn-navy"
+                type="button"
+                disabled={busy}
+                onClick={() => onResult(combat.top!.id, m.method)}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <div className="team-result-row">
+            <span>Rouge gagne</span>
+            {methods.map((m) => (
+              <button
+                key={`b-${m.method}`}
+                className="btn"
+                type="button"
+                disabled={busy}
+                onClick={() => onResult(combat.bottom!.id, m.method)}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <div className="actions" style={{ marginTop: 8 }}>
+            <button
+              className="btn btn-outline"
+              type="button"
+              disabled={busy}
+              onClick={() => onResult('', 'draw')}
+            >
+              Match nul
+            </button>
+          </div>
+        </>
+      )}
+      {combat.top && !combat.bottom && (
+        <div className="actions">
+          <button
+            className="btn btn-navy"
+            type="button"
+            disabled={busy}
+            onClick={() => onResult(combat.top!.id, 'fusen')}
+          >
+            Victoire bleu par absence
+          </button>
+        </div>
+      )}
+      {combat.bottom && !combat.top && (
+        <div className="actions">
+          <button
+            className="btn"
+            type="button"
+            disabled={busy}
+            onClick={() => onResult(combat.bottom!.id, 'fusen')}
+          >
+            Victoire rouge par absence
+          </button>
+        </div>
       )}
     </div>
   )

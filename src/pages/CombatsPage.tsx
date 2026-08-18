@@ -31,9 +31,17 @@ import {
   type CombatSession,
   type CombatStatus,
   type ManagedCombat,
-  type Tatami
+  type Tatami,
+  type TeamWinMethod,
+  teamWinMethodLabel
 } from '@shared/types/combats'
-import { normalizeTeamWeightClasses, resolveTeamMatches, teamMatchScore } from '@shared/utils/team-tirage'
+import {
+  computeTeamStandings,
+  formatTeamMatchScoreLine,
+  normalizeTeamWeightClasses,
+  resolveTeamMatches,
+  teamMatchScore
+} from '@shared/utils/team-tirage'
 import { normalizeTeams } from '@shared/types/teams'
 import { TatamiAccessModals } from '@/components/TatamiAccessModals'
 
@@ -96,14 +104,18 @@ function CombatRow({
   busy: boolean
   assignCombat: (id: string, tatamiId: string | null) => void
   setCombatStatus: (id: string, status: CombatStatus) => void
-  declareWinner: (id: string, winnerId: string) => void
+  declareWinner: (id: string, winnerId: string, winMethod?: TeamWinMethod) => void
   applySubstitute: (id: string, slot: 'top' | 'bottom') => void
   addManualOpponent: (id: string, name: string) => void
 }) {
   const [manualName, setManualName] = useState('')
+  const isTeam = c.kind === 'team'
+  const topLabel = isTeam ? 'Équipe A · Bleu' : 'Blanc'
+  const bottomLabel = isTeam ? 'Équipe B · Rouge' : 'Bleu'
   const canAddManual =
     c.round === 0 && isMissingOpponent(c) && c.status !== 'completed' && c.status !== 'in_progress'
   const canPlay = c.status !== 'completed' && Boolean(c.top || c.bottom)
+  const methodNote = isTeam && c.status === 'completed' ? teamWinMethodLabel(c.winMethod) : ''
   return (
     <li className="rounded-lg border bg-slate-50/60 p-3 space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -114,15 +126,23 @@ function CombatRow({
             {combatPhaseDisplay(c, session) || `Tour ${c.round + 1}`}
             {c.tatamiId != null ? ` · n°${c.orderOnTatami + 1}` : ''}
           </span>
+          {c.goldenScore && (
+            <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900">
+              Golden Score
+            </span>
+          )}
         </div>
         <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusClass(c.status)}`}>
           {statusLabel(c.status)}
-          {c.bye ? ' · bye' : ''}
+          {c.bye ? ' · absence' : ''}
+          {methodNote ? ` · ${methodNote}` : ''}
         </span>
       </div>
       <div className="grid gap-1 text-sm sm:grid-cols-2">
         <p>
-          <span className="text-muted-foreground">Blanc · </span>
+          <span className={isTeam ? 'font-medium text-blue-700' : 'text-muted-foreground'}>
+            {topLabel} ·{' '}
+          </span>
           {fighterLine(c, 'top')}
           {c.winnerId && c.top?.id === c.winnerId && (
             <span className="ml-1 text-emerald-700 font-medium">✓</span>
@@ -134,7 +154,9 @@ function CombatRow({
           )}
         </p>
         <p>
-          <span className="text-muted-foreground">Bleu · </span>
+          <span className={isTeam ? 'font-medium text-red-700' : 'text-muted-foreground'}>
+            {bottomLabel} ·{' '}
+          </span>
           {fighterLine(c, 'bottom')}
           {c.winnerId && c.bottom?.id === c.winnerId && (
             <span className="ml-1 text-emerald-700 font-medium">✓</span>
@@ -200,7 +222,7 @@ function CombatRow({
               onClick={() => applySubstitute(c.id, 'top')}
             >
               <Replace className="h-3.5 w-3.5" />
-              Remplaçant blanc
+              {isTeam ? 'Remplaçant bleu' : 'Remplaçant blanc'}
             </Button>
           )}
           {c.bottomSubstitute && (
@@ -212,7 +234,7 @@ function CombatRow({
               onClick={() => applySubstitute(c.id, 'bottom')}
             >
               <Replace className="h-3.5 w-3.5" />
-              Remplaçant bleu
+              {isTeam ? 'Remplaçant rouge' : 'Remplaçant bleu'}
             </Button>
           )}
         </div>
@@ -229,30 +251,33 @@ function CombatRow({
               Démarrer
             </Button>
           )}
-          {(c.status === 'ready' || c.status === 'in_progress') && (
-            <>
-              {c.top && (
-                <Button
-                  size="sm"
-                  variant="accent"
-                  disabled={busy}
-                  onClick={() => declareWinner(c.id, c.top!.id)}
-                >
-                  Vainqueur : {c.top.name.split(',')[0]}
-                </Button>
-              )}
-              {c.bottom && (
-                <Button
-                  size="sm"
-                  variant="accent"
-                  disabled={busy}
-                  onClick={() => declareWinner(c.id, c.bottom!.id)}
-                >
-                  Vainqueur : {c.bottom.name.split(',')[0]}
-                </Button>
-              )}
-            </>
-          )}
+          {(c.status === 'ready' || c.status === 'in_progress') &&
+            (isTeam ? (
+              <TeamBoutResultButtons c={c} busy={busy} declareWinner={declareWinner} />
+            ) : (
+              <>
+                {c.top && (
+                  <Button
+                    size="sm"
+                    variant="accent"
+                    disabled={busy}
+                    onClick={() => declareWinner(c.id, c.top!.id)}
+                  >
+                    Vainqueur : {c.top.name.split(',')[0]}
+                  </Button>
+                )}
+                {c.bottom && (
+                  <Button
+                    size="sm"
+                    variant="accent"
+                    disabled={busy}
+                    onClick={() => declareWinner(c.id, c.bottom!.id)}
+                  >
+                    Vainqueur : {c.bottom.name.split(',')[0]}
+                  </Button>
+                )}
+              </>
+            ))}
         </div>
       )}
       {confirmed && c.tatamiId && (
@@ -262,6 +287,88 @@ function CombatRow({
         </p>
       )}
     </li>
+  )
+}
+
+function TeamBoutResultButtons({
+  c,
+  busy,
+  declareWinner
+}: {
+  c: ManagedCombat
+  busy: boolean
+  declareWinner: (id: string, winnerId: string, winMethod?: TeamWinMethod) => void
+}) {
+  const methods: Array<{ method: TeamWinMethod; label: string }> = [
+    { method: 'ippon', label: 'Ippon' },
+    { method: 'waza_ari', label: 'Waza-ari' },
+    { method: 'hantei', label: 'Victoire' }
+  ]
+  return (
+    <div className="flex w-full flex-col gap-2">
+      {c.top && c.bottom && (
+        <>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="w-28 text-xs font-medium text-blue-700">Bleu gagne</span>
+            {methods.map((m) => (
+              <Button
+                key={`top-${m.method}`}
+                size="sm"
+                variant="outline"
+                className="border-blue-300 text-blue-800"
+                disabled={busy}
+                onClick={() => declareWinner(c.id, c.top!.id, m.method)}
+              >
+                {m.label}
+              </Button>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="w-28 text-xs font-medium text-red-700">Rouge gagne</span>
+            {methods.map((m) => (
+              <Button
+                key={`bottom-${m.method}`}
+                size="sm"
+                variant="outline"
+                className="border-red-300 text-red-800"
+                disabled={busy}
+                onClick={() => declareWinner(c.id, c.bottom!.id, m.method)}
+              >
+                {m.label}
+              </Button>
+            ))}
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            onClick={() => declareWinner(c.id, '', 'draw')}
+          >
+            Match nul
+          </Button>
+        </>
+      )}
+      {c.top && !c.bottom && (
+        <Button
+          size="sm"
+          variant="accent"
+          disabled={busy}
+          onClick={() => declareWinner(c.id, c.top!.id, 'fusen')}
+        >
+          Victoire bleu par absence
+        </Button>
+      )}
+      {c.bottom && !c.top && (
+        <Button
+          size="sm"
+          variant="accent"
+          disabled={busy}
+          onClick={() => declareWinner(c.id, c.bottom!.id, 'fusen')}
+        >
+          Victoire rouge par absence
+        </Button>
+      )}
+    </div>
   )
 }
 
@@ -351,6 +458,11 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
         a.matchIndex - b.matchIndex
     )
   }, [session, selectedTatamiId])
+
+  const teamStandings = useMemo(
+    () => (session && combatSessionKind(session) === 'team' ? computeTeamStandings(session) : []),
+    [session]
+  )
 
   function addTatami(): void {
     const base = session ?? createEmptyCombatSession()
@@ -476,10 +588,10 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
     void persist(next)
   }
 
-  function declareWinner(combatId: string, winnerId: string): void {
+  function declareWinner(combatId: string, winnerId: string, winMethod?: TeamWinMethod): void {
     if (!session?.confirmedAt) return
     void (async () => {
-      let next = applyCombatWinner(session, combatId, winnerId)
+      let next = applyCombatWinner(session, combatId, winnerId, winMethod)
       if (combatSessionKind(next) === 'team') {
         const settingsRes = await window.judovac.getSettings()
         const listed = await window.judovac.listJudokas({ limit: 5000, offset: 0 })
@@ -491,7 +603,7 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
             : []
         })
       }
-      await persist(next, 'Vainqueur enregistré')
+      await persist(next, winMethod === 'draw' ? 'Match nul enregistré' : 'Vainqueur enregistré')
     })()
   }
 
@@ -518,7 +630,7 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
       title="Combats"
       subtitle={
         combatSessionKind(session) === 'team'
-          ? 'Combats par équipe : rencontres de clubs, score par catégorie, tatamis et Chrono.'
+          ? 'Combats par équipe : Équipe A (bleu) vs Équipe B (rouge). Victoires d’abord, puis points techniques (Ippon 10, Waza-ari 1).'
           : 'Tatamis, confirmation des grilles Tirage et suivi d’évolution des combats.'
       }
       actions={
@@ -830,21 +942,25 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
                   {(session.teamMatches ?? [])
                     .filter((m) => visibleCombats.some((c) => c.teamMatchId === m.id))
                     .map((m) => {
-                      const bouts = visibleCombats.filter((c) => c.teamMatchId === m.id)
+                      const bouts = visibleCombats
+                        .filter((c) => c.teamMatchId === m.id)
+                        .sort(
+                          (a, b) =>
+                            Number(Boolean(a.goldenScore)) - Number(Boolean(b.goldenScore)) ||
+                            a.matchIndex - b.matchIndex
+                        )
                       const score = teamMatchScore(session, m.id)
                       return (
                         <div key={m.id} className="space-y-2">
                           <div className="rounded-lg border bg-judo-navy/95 px-3 py-2 text-white">
                             <p className="text-sm font-semibold">
-                              {m.label} · {m.homeClub} vs {m.awayClub}
+                              {m.label} · {m.homeClub}{' '}
+                              <span className="text-sky-300">(A · Bleu)</span> vs {m.awayClub}{' '}
+                              <span className="text-red-300">(B · Rouge)</span>
                             </p>
                             <p className="text-xs text-white/70">
-                              Score {score.home}–{score.away}
-                              {m.winnerTeamId
-                                ? ` · vainqueur ${
-                                    m.winnerTeamId === m.homeTeamId ? m.homeClub : m.awayClub
-                                  }`
-                                : ''}
+                              {formatTeamMatchScoreLine(score, m) ||
+                                `${bouts.length} combat(s) par catégorie`}
                             </p>
                           </div>
                           <ul className="space-y-3">
@@ -886,6 +1002,43 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
                 </ul>
               )}
             </div>
+            )}
+            {combatSessionKind(session) === 'team' && teamStandings.length > 0 && (
+              <div className="rounded-xl border bg-white/75 p-5 space-y-3 max-w-4xl">
+                <Label className="text-base">Classement des équipes</Label>
+                <p className="text-xs text-muted-foreground">
+                  Victoire de rencontre 3 pts, nul 1, défaite 0 — puis victoires individuelles, puis
+                  points techniques (Ippon 10, Waza-ari 1).
+                </p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs text-muted-foreground">
+                        <th className="py-1.5 pr-2">#</th>
+                        <th className="py-1.5 pr-2">Équipe</th>
+                        <th className="py-1.5 pr-2">Pts</th>
+                        <th className="py-1.5 pr-2">V-N-D</th>
+                        <th className="py-1.5 pr-2">Victoires</th>
+                        <th className="py-1.5">Pts tech.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {teamStandings.map((row, i) => (
+                        <tr key={row.teamId} className="border-t">
+                          <td className="py-1.5 pr-2 text-muted-foreground">{i + 1}</td>
+                          <td className="py-1.5 pr-2 font-medium text-judo-navy">{row.club}</td>
+                          <td className="py-1.5 pr-2">{row.encounterPoints}</td>
+                          <td className="py-1.5 pr-2">
+                            {row.matchWins}-{row.matchDraws}-{row.matchLosses}
+                          </td>
+                          <td className="py-1.5 pr-2">{row.boutWins}</td>
+                          <td className="py-1.5">{row.techPoints}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             )}
           </>
         )}

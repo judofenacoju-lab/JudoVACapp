@@ -5,6 +5,7 @@ import {
   applyCombatWinner,
   combatSessionKind,
   hasAtLeastOneJudoka,
+  isTeamWinMethod,
   type CombatSession,
   type CombatStatus
 } from '@shared/types/combats'
@@ -150,12 +151,13 @@ export function createChronoRouter(): Router {
     }
     const combatId = String(req.body?.combatId ?? '')
     const winnerId = String(req.body?.winnerId ?? '')
+    const winMethod = isTeamWinMethod(req.body?.winMethod) ? req.body.winMethod : undefined
     const combat = session.combats.find((c) => c.id === combatId && c.tatamiId === found.tatami.id)
     if (!combat) {
       res.status(404).json({ ok: false, error: 'Combat introuvable sur ce tatami.' })
       return
     }
-    let next = applyCombatWinner(session, combatId, winnerId)
+    let next = applyCombatWinner(session, combatId, winnerId, winMethod)
     if (combatSessionKind(next) === 'team') {
       const settings = await new SettingsStore().get()
       const listed = getContainer().listJudoka

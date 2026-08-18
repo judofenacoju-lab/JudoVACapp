@@ -3,7 +3,8 @@ import type {
   CombatSession,
   CombatSessionKind,
   CombatStatus,
-  ManagedCombat
+  ManagedCombat,
+  TeamWinMethod
 } from '@shared/types/combats'
 import { resolveCombatPhase } from '@shared/types/combats'
 import type { CombatPhase } from '@shared/utils/combat-phase'
@@ -23,6 +24,8 @@ export interface ChronoCombat {
   topSubstitute?: CombatFighterRef | null
   bottomSubstitute?: CombatFighterRef | null
   winnerId: string | null
+  winMethod?: TeamWinMethod
+  goldenScore?: boolean
   kind?: CombatSessionKind
   teamMatchLabel?: string
   homeClub?: string
@@ -61,6 +64,8 @@ export function toChronoCombat(c: ManagedCombat, session?: CombatSession | null)
     topSubstitute: c.topSubstitute ?? null,
     bottomSubstitute: c.bottomSubstitute ?? null,
     winnerId: c.winnerId,
+    winMethod: c.winMethod,
+    goldenScore: c.goldenScore,
     kind: c.kind === 'team' ? 'team' : 'individual',
     teamMatchLabel: c.teamMatchLabel,
     homeClub: c.homeClub,

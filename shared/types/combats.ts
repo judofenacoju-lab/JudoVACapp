@@ -9,6 +9,35 @@ export type CombatStatus = 'pending' | 'ready' | 'in_progress' | 'completed'
 /** Nature de la session Combats (tirage individuel ou par club). */
 export type CombatSessionKind = 'individual' | 'team'
 
+/** Mode de victoire d’un combat par équipe (points techniques). */
+export type TeamWinMethod = 'ippon' | 'waza_ari' | 'hantei' | 'fusen' | 'draw'
+
+/** Critère qui a départagé la rencontre. */
+export type TeamMatchDecidedBy = 'wins' | 'tech' | 'golden_score' | 'bye'
+
+const TEAM_WIN_METHODS: TeamWinMethod[] = ['ippon', 'waza_ari', 'hantei', 'fusen', 'draw']
+
+export function isTeamWinMethod(value: unknown): value is TeamWinMethod {
+  return typeof value === 'string' && (TEAM_WIN_METHODS as string[]).includes(value)
+}
+
+export function teamWinMethodLabel(method: TeamWinMethod | undefined): string {
+  switch (method) {
+    case 'ippon':
+      return 'Ippon'
+    case 'waza_ari':
+      return 'Waza-ari'
+    case 'hantei':
+      return 'Victoire'
+    case 'fusen':
+      return 'Absence'
+    case 'draw':
+      return 'Nul'
+    default:
+      return ''
+  }
+}
+
 export interface CombatFighterRef {
   id: string
   displayId: string
@@ -51,6 +80,10 @@ export interface ManagedCombat {
   orderOnTatami: number
   status: CombatStatus
   winnerId: string | null
+  /** Ippon / Waza-ari / victoire / absence / nul (combats par équipe). */
+  winMethod?: TeamWinMethod
+  /** Combat décisif après égalité victoires + points techniques. */
+  goldenScore?: boolean
   /** Combat suivant alimenté par le vainqueur. */
   feedsInto: { combatId: string; slot: 'top' | 'bottom' } | null
   /** Combat suivant alimenté par le perdant (repêchage / bronze). */
@@ -78,6 +111,8 @@ export interface TeamMatch {
   homeClub: string
   awayClub: string
   winnerTeamId: string | null
+  /** Victoires, points techniques ou golden score. */
+  decidedBy?: TeamMatchDecidedBy
   feedsInto: { teamMatchId: string; slot: 'home' | 'away' } | null
 }
 
@@ -474,13 +509,25 @@ export function assignManualOpponent(
 export function applyCombatWinner(
   session: CombatSession,
   combatId: string,
-  winnerId: string
+  winnerId: string,
+  winMethod?: TeamWinMethod
 ): CombatSession {
   const now = new Date().toISOString()
   const combats = session.combats.map((c) => ({ ...c }))
   const idx = combats.findIndex((c) => c.id === combatId)
   if (idx < 0) return session
   const combat = combats[idx]!
+  const method = isTeamWinMethod(winMethod) ? winMethod : undefined
+
+  if (method === 'draw') {
+    combat.status = 'completed'
+    combat.winnerId = null
+    combat.winMethod = 'draw'
+    combat.updatedAt = now
+    combats[idx] = combat
+    return { ...session, combats, updatedAt: now }
+  }
+
   const winner =
     combat.top?.id === winnerId ? combat.top : combat.bottom?.id === winnerId ? combat.bottom : null
   if (!winner) return session
@@ -488,6 +535,9 @@ export function applyCombatWinner(
   combat.status = 'completed'
   combat.winnerId = winnerId
   combat.updatedAt = now
+  if (combat.kind === 'team') {
+    combat.winMethod = method ?? 'hantei'
+  }
 
   placeFighterOnDest(combats, combat.feedsInto, winner, combat, now)
   const loser =

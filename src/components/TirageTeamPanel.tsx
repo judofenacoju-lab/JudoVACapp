@@ -7,7 +7,9 @@ import { normalizeTeams, teamDisplayName, type Team } from '@shared/types/teams'
 import type { Sex } from '@shared/types/judoka'
 import type { TeamWeightClassRange } from '@shared/types/settings'
 import {
+  formatTeamMatchScoreLine,
   generateTeamTirage,
+  judoVacancesWeightClasses,
   mergeTeamTirageIntoCombatSession,
   normalizeTeamWeightClasses,
   teamMatchScore,
@@ -100,6 +102,18 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
 
   function removeWeightClass(id: string): void {
     setWeightClasses((rows) => rows.filter((r) => r.id !== id))
+  }
+
+  async function applyJudoVacancesPreset(): Promise<void> {
+    if (
+      weightClasses.length > 0 &&
+      !window.confirm('Remplacer les catégories actuelles par -60, -66, -73, -81, -90, +90 kg ?')
+    ) {
+      return
+    }
+    const next = judoVacancesWeightClasses('M')
+    setWeightClasses(next)
+    await persistWeightClasses(next)
   }
 
   async function run(): Promise<void> {
@@ -241,16 +255,27 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
     <div className="space-y-6">
       <div className="rounded-xl border bg-white/75 p-5 space-y-4 max-w-3xl">
         <div className="space-y-3">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <Label>Catégories de poids (libellés)</Label>
-            <Button type="button" size="sm" variant="outline" disabled={loading} onClick={addWeightClass}>
-              <Plus className="h-4 w-4" />
-              Ajouter
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={loading}
+                onClick={() => void applyJudoVacancesPreset()}
+              >
+                Judo Vacances
+              </Button>
+              <Button type="button" size="sm" variant="outline" disabled={loading} onClick={addWeightClass}>
+                <Plus className="h-4 w-4" />
+                Ajouter
+              </Button>
+            </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            Précisez le sexe de chaque libellé. Pas de filtre d’âge : un combat par catégorie, le
-            judoka principal combat (remplaçant en cas de problème).
+            Équipe A (bleu) vs Équipe B (rouge), un combat par catégorie. Précisez le sexe de chaque
+            libellé. Le judoka principal combat (remplaçant en cas de problème).
           </p>
           <div className="space-y-2">
             {weightClasses.length === 0 && (
@@ -415,16 +440,19 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
         const bouts =
           result?.session.combats.filter((c) => c.teamMatchId === m.id && (c.top || c.bottom)) ??
           []
-        const score = result ? teamMatchScore(result.session, m.id) : { home: 0, away: 0 }
+        const score = result ? teamMatchScore(result.session, m.id) : null
+        const scoreLine = result && score ? formatTeamMatchScoreLine(score, m) : ''
         return (
           <section key={m.id} className="rounded-xl border bg-white/80 overflow-hidden max-w-3xl">
             <header className="border-b bg-judo-navy/95 px-4 py-3 text-white">
               <h3 className="font-display text-base font-semibold">
-                {m.label} · {m.homeClub} vs {m.awayClub}
+                {m.label} · {m.homeClub}{' '}
+                <span className="text-sky-300 font-normal text-sm">(A · Bleu)</span> vs {m.awayClub}{' '}
+                <span className="text-red-300 font-normal text-sm">(B · Rouge)</span>
               </h3>
               <p className="text-xs text-white/70">
                 Par équipe · {bouts.length} combat(s)
-                {score.home + score.away > 0 ? ` · score ${score.home}–${score.away}` : ''}
+                {scoreLine ? ` · ${scoreLine}` : ''}
               </p>
             </header>
             <ul className="divide-y">
@@ -432,7 +460,8 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
                 <li key={c.id} className="px-4 py-2.5 text-sm">
                   <p className="text-xs text-muted-foreground">{c.poolLabel}</p>
                   <p className="font-medium text-judo-navy">
-                    {c.top?.name ?? 'Bye'} vs {c.bottom?.name ?? 'Bye'}
+                    <span className="text-blue-700">A</span> {c.top?.name ?? 'Absence'} vs{' '}
+                    <span className="text-red-700">B</span> {c.bottom?.name ?? 'Absence'}
                   </p>
                   {(c.topSubstitute || c.bottomSubstitute) && (
                     <p className="text-xs text-muted-foreground">

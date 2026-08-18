@@ -1,6 +1,6 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
 import type { TeamTirageResult } from '@shared/utils/team-tirage'
-import { teamMatchScore } from '@shared/utils/team-tirage'
+import { teamMatchScore, formatTeamMatchScoreLine } from '@shared/utils/team-tirage'
 import { downloadBytes } from './download-blob'
 import { pdfSafeText } from './pdf-winansi-text'
 
@@ -104,12 +104,19 @@ export async function exportTeamTiragePdfBytes(result: TeamTirageResult): Promis
       height: headerH,
       color: NAVY
     })
-    drawText(`${match.label} · ${match.homeClub} vs ${match.awayClub}`, MARGIN + 8, y - 16, 11, true, WHITE)
-    const scoreLine =
-      score.home + score.away > 0
-        ? `${bouts.length} combat(s) · score ${score.home}-${score.away}`
-        : `${bouts.length} combat(s)`
-    drawText(scoreLine, MARGIN + 8, y - 30, 8, false, WHITE)
+    drawText(
+      `${match.label} · ${match.homeClub} (A bleu) vs ${match.awayClub} (B rouge)`,
+      MARGIN + 8,
+      y - 16,
+      11,
+      true,
+      WHITE
+    )
+    const scoreLine = formatTeamMatchScoreLine(score, match)
+    const headerSub = scoreLine
+      ? `${bouts.length} combat(s) · ${scoreLine}`
+      : `${bouts.length} combat(s)`
+    drawText(headerSub, MARGIN + 8, y - 30, 8, false, WHITE)
     y -= headerH
 
     if (bouts.length === 0) {
@@ -140,7 +147,7 @@ export async function exportTeamTiragePdfBytes(result: TeamTirageResult): Promis
       })
       const catW = 130
       drawText(c.poolLabel, MARGIN + 8, y - 14, 8, false, MUTED, catW - 10)
-      const vs = `${c.top?.name ?? 'Bye'} vs ${c.bottom?.name ?? 'Bye'}`
+      const vs = `${c.top?.name ?? 'Absence'} (A) vs ${c.bottom?.name ?? 'Absence'} (B)`
       drawText(vs, MARGIN + catW, y - 14, 9, true, NAVY, contentW - catW - 12)
       y -= rowH
     })
