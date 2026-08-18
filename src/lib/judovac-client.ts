@@ -41,6 +41,14 @@ export type IpcResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; code?: string; details?: unknown }
 
+export interface BackupProgress {
+  label: string
+  current: number
+  total: number
+}
+
+export type BackupProgressFn = (progress: BackupProgress) => void
+
 export interface PrinterInfoLite {
   name: string
   displayName: string
@@ -463,28 +471,56 @@ function dataUrlToBase64(dataUrl: string): string | null {
   return b64 || null
 }
 
-async function collectBackupPhotoFiles(judokas: Judoka[]): Promise<JvacFileEntry[]> {
+async function collectBackupPhotoFiles(
+  judokas: Judoka[],
+  onProgress?: BackupProgressFn
+): Promise<JvacFileEntry[]> {
+  const withPhoto = judokas.filter((j) => j.photoPath?.trim())
+  const total = Math.max(1, withPhoto.length)
   const files: JvacFileEntry[] = []
   const seen = new Set<string>()
-  for (const j of judokas) {
-    const path = j.photoPath?.trim()
-    if (!path) continue
-    let name = photoBasename(path)
-    let data: string | null = null
-    try {
-      if (path.startsWith('data:')) {
-        data = dataUrlToBase64(path)
-        name = name && name !== path ? name : `${j.id}.jpg`
-      } else {
-        const dataUrl = await readAnyStorageDataUrl(path)
-        data = dataUrlToBase64(dataUrl)
-      }
-    } catch {
-      continue
+  const concurrency = 6
+
+  for (let i = 0; i < withPhoto.length; i += concurrency) {
+    const chunk = withPhoto.slice(i, i + concurrency)
+    onProgress?.({
+      label: `Photos ${Math.min(i + chunk.length, withPhoto.length)} / ${withPhoto.length}`,
+      current: i,
+      total
+    })
+    const results = await Promise.all(
+      chunk.map(async (j) => {
+        const path = j.photoPath?.trim()
+        if (!path) return null
+        let name = photoBasename(path)
+        let data: string | null = null
+        try {
+          if (path.startsWith('data:')) {
+            data = dataUrlToBase64(path)
+            name = name && name !== path ? name : `${j.id}.jpg`
+          } else {
+            const dataUrl = await readAnyStorageDataUrl(path)
+            data = dataUrlToBase64(dataUrl)
+          }
+        } catch {
+          return null
+        }
+        if (!name || !data) return null
+        return { name, data }
+      })
+    )
+    for (const item of results) {
+      if (!item || seen.has(item.name)) continue
+      seen.add(item.name)
+      files.push({ relativePath: `photos/${item.name}`, encoding: 'base64', data: item.data })
     }
-    if (!name || !data || seen.has(name)) continue
-    seen.add(name)
-    files.push({ relativePath: `photos/${name}`, encoding: 'base64', data })
+  }
+  if (withPhoto.length) {
+    onProgress?.({
+      label: `Photos ${withPhoto.length} / ${withPhoto.length}`,
+      current: withPhoto.length,
+      total
+    })
   }
   return files
 }
@@ -587,10 +623,17 @@ function backupJudokaToRow(
   }
 }
 
-async function restoreBackupPhotos(bundle: JvacBundle): Promise<Map<string, string>> {
+async function restoreBackupPhotos(
+  bundle: JvacBundle,
+  onProgress?: BackupProgressFn
+): Promise<Map<string, string>> {
   const map = new Map<string, string>()
-  for (const file of bundle.files ?? []) {
-    if (!file.relativePath.startsWith('photos/') || !file.data) continue
+  const photos = (bundle.files ?? []).filter(
+    (file) => file.relativePath.startsWith('photos/') && file.data
+  )
+  const total = Math.max(1, photos.length)
+  let done = 0
+  for (const file of photos) {
     const name = file.relativePath.slice('photos/'.length)
     const lower = name.toLowerCase()
     const mime = lower.endsWith('.png')
@@ -598,6 +641,11 @@ async function restoreBackupPhotos(bundle: JvacBundle): Promise<Map<string, stri
       : lower.endsWith('.webp')
         ? 'image/webp'
         : 'image/jpeg'
+    onProgress?.({
+      label: `Photos ${done + 1} / ${photos.length}`,
+      current: done,
+      total
+    })
     try {
       const path = await uploadDataUrl(
         PHOTOS_BUCKET,
@@ -608,6 +656,10 @@ async function restoreBackupPhotos(bundle: JvacBundle): Promise<Map<string, stri
     } catch {
       /* photo optionnelle */
     }
+    done += 1
+  }
+  if (photos.length) {
+    onProgress?.({ label: `Photos ${photos.length} / ${photos.length}`, current: photos.length, total })
   }
   return map
 }
@@ -2045,13 +2097,17 @@ export const judovacClient = {
     }
   },
 
-  exportBackup: async (): Promise<
+  exportBackup: async (
+    onProgress?: BackupProgressFn
+  ): Promise<
     IpcResult<{ path: string; manifest: { counts: Record<string, number>; checksumSha256: string } }>
   > => {
     try {
+      onProgress?.({ label: 'Connexion…', current: 0, total: 6 })
       await ensureSupabaseSession()
       const profile = await requireProfile()
 
+      onProgress?.({ label: 'Lecture des judokas…', current: 1, total: 6 })
       const { count: exactCount, error: countError } = await (() => {
         let q = supabase.from('judokas').select('id', { count: 'exact', head: true })
         if (profile.role !== 'admin') q = q.eq('created_by', profile.username)
@@ -2086,18 +2142,32 @@ export const judovacClient = {
         }
         emptyRetries = 0
         judokaRows.push(...batch)
+        onProgress?.({
+          label: `Judokas ${judokaRows.length} / ${expected || judokaRows.length}`,
+          current: 1,
+          total: 6
+        })
         if (batch.length === 0) break
         offset += batch.length
       }
 
       const judokas = judokaRows.map((row) => rowToJudoka(row as JudokaRow))
+      onProgress?.({ label: 'Paramètres et journaux…', current: 2, total: 6 })
       const [settings, templates, users, logs] = await Promise.all([
         supabase.from('app_settings').select('*').eq('id', 'default').single(),
         supabase.from('badge_templates').select('*'),
         supabase.from('profiles').select('*'),
         supabase.from('system_logs').select('*').order('created_at', { ascending: false }).limit(500)
       ])
-      const files = await collectBackupPhotoFiles(judokas)
+      const files = await collectBackupPhotoFiles(judokas, (p) =>
+        onProgress?.({
+          label: p.label,
+          current: 3,
+          total: 6
+        })
+      )
+      onProgress?.({ label: 'Compression du fichier .jvac…', current: 4, total: 6 })
+      await new Promise((r) => window.setTimeout(r, 30))
       const draft = createJvacDraft({
         tables: {
           judokas,
@@ -2113,14 +2183,9 @@ export const judovacClient = {
       })
       const { bytes, bundle } = await encodeJvacBundle(draft)
       const filename = `judovac-${new Date().toISOString().slice(0, 10)}.jvac`
-      try {
-        await downloadJvacFile(bytes, filename)
-      } catch (e) {
-        if (e instanceof DOMException && e.name === 'AbortError') {
-          return fail('Export annulé')
-        }
-        throw e
-      }
+      onProgress?.({ label: 'Téléchargement…', current: 5, total: 6 })
+      await downloadJvacFile(bytes, filename)
+      onProgress?.({ label: 'Terminé', current: 6, total: 6 })
       return ok({
         path: filename,
         manifest: {
@@ -2133,18 +2198,28 @@ export const judovacClient = {
     }
   },
 
-  pickBackupFile: async (): Promise<
+  pickBackupFile: async (
+    onProgress?: BackupProgressFn
+  ): Promise<
     IpcResult<{ path: string; manifest: { counts: Record<string, number>; createdAt: string } }>
   > => {
     return new Promise((resolve) => {
+      let settled = false
+      const finish = (result: IpcResult<{ path: string; manifest: { counts: Record<string, number>; createdAt: string } }>) => {
+        if (settled) return
+        settled = true
+        resolve(result)
+      }
       const input = document.createElement('input')
       input.type = 'file'
       input.accept = '.jvac,application/octet-stream,.json,application/json'
       input.onchange = async () => {
         const file = input.files?.[0]
-        if (!file) return resolve(fail('Aucun fichier sélectionné'))
+        if (!file) return finish(fail('Sélection annulée'))
         try {
+          onProgress?.({ label: 'Lecture du fichier…', current: 0, total: 2 })
           const raw = new Uint8Array(await file.arrayBuffer())
+          onProgress?.({ label: 'Vérification de la sauvegarde…', current: 1, total: 2 })
           let bundle: JvacBundle
           if (isJvacBytes(raw)) {
             bundle = await decodeJvacBundle(raw)
@@ -2153,7 +2228,8 @@ export const judovacClient = {
             bundle = legacyJsonToBundle(JSON.parse(text) as Record<string, unknown>)
           }
           pendingBackup = { name: file.name, bundle }
-          resolve(
+          onProgress?.({ label: 'Fichier prêt', current: 2, total: 2 })
+          finish(
             ok({
               path: file.name,
               manifest: {
@@ -2164,19 +2240,28 @@ export const judovacClient = {
           )
         } catch (e) {
           pendingBackup = null
-          resolve(
-            fail(e instanceof Error ? e.message : 'Fichier .jvac invalide')
-          )
+          finish(fail(e instanceof Error ? e.message : 'Fichier .jvac invalide'))
         }
       }
+      window.setTimeout(() => {
+        const onFocus = () => {
+          window.setTimeout(() => {
+            if (!input.files?.length) finish(fail('Sélection annulée'))
+          }, 600)
+        }
+        window.addEventListener('focus', onFocus, { once: true })
+      }, 0)
       input.click()
     })
   },
 
-  importBackup: async (opts: {
-    path: string
-    mode: 'replace' | 'merge'
-  }): Promise<
+  importBackup: async (
+    opts: {
+      path: string
+      mode: 'replace' | 'merge'
+    },
+    onProgress?: BackupProgressFn
+  ): Promise<
     IpcResult<{
       path: string
       mode: 'replace' | 'merge'
@@ -2188,10 +2273,14 @@ export const judovacClient = {
     try {
       await requireProfile()
       const { bundle, name } = pendingBackup
-      const photoByName = await restoreBackupPhotos(bundle)
+      onProgress?.({ label: 'Import des photos…', current: 0, total: 3 })
+      const photoByName = await restoreBackupPhotos(bundle, (p) =>
+        onProgress?.({ label: p.label, current: 1, total: 3 })
+      )
       const judokas = extractJudokas(bundle.tables) as Record<string, unknown>[]
 
       if (opts.mode === 'replace') {
+        onProgress?.({ label: 'Remplacement des données…', current: 2, total: 3 })
         const { data: existing } = await supabase.from('judokas').select('id')
         const ids = (existing ?? []).map((r) => r.id as string)
         if (ids.length) await supabase.from('judokas').delete().in('id', ids)
@@ -2199,7 +2288,13 @@ export const judovacClient = {
 
       let added = 0
       let skipped = 0
-      for (const row of judokas) {
+      for (let i = 0; i < judokas.length; i++) {
+        const row = judokas[i]!
+        onProgress?.({
+          label: `Judokas ${i + 1} / ${judokas.length}`,
+          current: 2,
+          total: 3
+        })
         const mapped = backupJudokaToRow(row, photoByName)
         const id = String(mapped.id ?? '')
         if (opts.mode === 'merge' && id) {
@@ -2223,6 +2318,7 @@ export const judovacClient = {
       }
 
       pendingBackup = null
+      onProgress?.({ label: 'Terminé', current: 3, total: 3 })
       return ok({
         path: name || opts.path,
         mode: opts.mode,
@@ -2352,9 +2448,24 @@ export function installJudovacClient(): void {
   }
   window.judovac = {
     ...judovacClient,
-    exportBackup: electron.exportBackup,
-    pickBackupFile: electron.pickBackupFile,
-    importBackup: electron.importBackup,
+    exportBackup: async (onProgress) => {
+      onProgress?.({ label: 'Préparation de la sauvegarde…', current: 0, total: 1 })
+      const res = await electron.exportBackup()
+      if (res.ok) onProgress?.({ label: 'Terminé', current: 1, total: 1 })
+      return res
+    },
+    pickBackupFile: async (onProgress) => {
+      onProgress?.({ label: 'Sélection du fichier…', current: 0, total: 1 })
+      const res = await electron.pickBackupFile()
+      if (res.ok) onProgress?.({ label: 'Fichier prêt', current: 1, total: 1 })
+      return res
+    },
+    importBackup: async (opts, onProgress) => {
+      onProgress?.({ label: 'Restauration en cours…', current: 0, total: 1 })
+      const res = await electron.importBackup(opts)
+      if (res.ok) onProgress?.({ label: 'Terminé', current: 1, total: 1 })
+      return res
+    },
     getLocalNetworkInfo: async () => {
       const res = await electron.getLocalNetworkInfo()
       if (res.ok && (res.data.preferredAddress || res.data.addresses.length > 0)) {

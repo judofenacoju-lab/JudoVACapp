@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ArrowLeft, Download, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { AppShell } from '@/layouts/AppShell'
+import { BackupProgressModal, type BackupProgress } from '@/components/BackupProgressModal'
 
 interface Props {
   onBack: () => void
@@ -25,36 +26,49 @@ export function BackupPage({ onBack, embedded = false }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState<PendingRestore | null>(null)
   const [restoreMode, setRestoreMode] = useState<RestoreMode>('replace')
+  const [progress, setProgress] = useState<BackupProgress | null>(null)
+  const [progressTitle, setProgressTitle] = useState('Chargement')
 
   async function doExport(): Promise<void> {
     setBusy(true)
     setError(null)
     setMessage(null)
-    const res = await window.judovac.exportBackup()
-    setBusy(false)
-    if (!res.ok) {
-      setError(res.error)
-      return
+    setProgressTitle('Export de la sauvegarde')
+    setProgress({ label: 'Démarrage…', current: 0, total: 6 })
+    try {
+      const res = await window.judovac.exportBackup((p) => setProgress(p))
+      if (!res.ok) {
+        setError(res.error)
+        return
+      }
+      setMessage(
+        `Sauvegarde créée — ${res.data.manifest.counts.judokas} judokas (Serveur + tous les comptes clients). Les données enregistrées ne sont pas effacées. → ${res.data.path}`
+      )
+    } finally {
+      setProgress(null)
+      setBusy(false)
     }
-    setMessage(
-      `Sauvegarde créée — ${res.data.manifest.counts.judokas} judokas (Serveur + tous les comptes clients). Les données enregistrées ne sont pas effacées. → ${res.data.path}`
-    )
   }
 
   async function startRestore(): Promise<void> {
     setError(null)
     setMessage(null)
-    const pick = await window.judovac.pickBackupFile()
-    if (!pick.ok) {
-      if (pick.error !== 'Sélection annulée') setError(pick.error)
-      return
+    setProgressTitle('Lecture de la sauvegarde')
+    try {
+      const pick = await window.judovac.pickBackupFile((p) => setProgress(p))
+      if (!pick.ok) {
+        if (pick.error !== 'Sélection annulée') setError(pick.error)
+        return
+      }
+      setRestoreMode('replace')
+      setPending({
+        path: pick.data.path,
+        judokaCount: pick.data.manifest.counts.judokas,
+        createdAt: pick.data.manifest.createdAt
+      })
+    } finally {
+      setProgress(null)
     }
-    setRestoreMode('replace')
-    setPending({
-      path: pick.data.path,
-      judokaCount: pick.data.manifest.counts.judokas,
-      createdAt: pick.data.manifest.createdAt
-    })
   }
 
   async function confirmRestore(): Promise<void> {
@@ -62,22 +76,30 @@ export function BackupPage({ onBack, embedded = false }: Props) {
     setBusy(true)
     setError(null)
     setMessage(null)
-    const res = await window.judovac.importBackup({ path: pending.path, mode: restoreMode })
-    setBusy(false)
-    setPending(null)
-    if (!res.ok) {
-      setError(res.error)
-      return
-    }
-    if (res.data.mode === 'merge' && res.data.mergeStats) {
-      const { added, skipped } = res.data.mergeStats
-      setMessage(
-        `Mise à jour terminée — ${added} judoka(s) ajouté(s), ${skipped} déjà présent(s). Chaque enregistrement reste attribué à son propriétaire.`
+    setProgressTitle('Restauration de la sauvegarde')
+    setProgress({ label: 'Démarrage…', current: 0, total: 3 })
+    try {
+      const res = await window.judovac.importBackup({ path: pending.path, mode: restoreMode }, (p) =>
+        setProgress(p)
       )
-    } else {
-      setMessage(
-        `Restauration terminée — ${res.data.manifest.counts.judokas} judokas importés (données précédentes effacées).`
-      )
+      setPending(null)
+      if (!res.ok) {
+        setError(res.error)
+        return
+      }
+      if (res.data.mode === 'merge' && res.data.mergeStats) {
+        const { added, skipped } = res.data.mergeStats
+        setMessage(
+          `Mise à jour terminée — ${added} judoka(s) ajouté(s), ${skipped} déjà présent(s). Chaque enregistrement reste attribué à son propriétaire.`
+        )
+      } else {
+        setMessage(
+          `Restauration terminée — ${res.data.manifest.counts.judokas} judokas importés (données précédentes effacées).`
+        )
+      }
+    } finally {
+      setProgress(null)
+      setBusy(false)
     }
   }
 
@@ -191,6 +213,8 @@ export function BackupPage({ onBack, embedded = false }: Props) {
           </div>
         </div>
       )}
+
+      {progress ? <BackupProgressModal title={progressTitle} progress={progress} /> : null}
     </AppShell>
   )
 }

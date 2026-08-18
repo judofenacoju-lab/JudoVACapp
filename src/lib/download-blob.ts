@@ -27,45 +27,13 @@ export function downloadBytes(
   downloadBlob(new Blob([new Uint8Array(bytes)], { type: mime }), filename)
 }
 
-type SaveFilePickerWindow = Window & {
-  showSaveFilePicker?: (options: {
-    suggestedName: string
-    excludeAcceptAllOption?: boolean
-    types: Array<{ description: string; accept: Record<string, string[]> }>
-  }) => Promise<{
-    createWritable: () => Promise<{
-      write: (data: Blob) => Promise<void>
-      close: () => Promise<void>
-    }>
-  }>
-}
-
 /** Force un fichier .jvac (évite que Chrome/Safari le renomme en .json). */
 export async function downloadJvacFile(bytes: Uint8Array, filename: string): Promise<void> {
   const name = filename.toLowerCase().endsWith('.jvac')
     ? filename
     : `${filename.replace(/\.(json|txt|bin|gz|octet-stream)$/i, '')}.jvac`
+  // octet-stream : téléchargement immédiat, sans File System Access (souvent bloqué après un long async).
   const payload = new Uint8Array(bytes)
-  const blob = new Blob([payload], { type: 'application/x-jvac' })
-  const picker = (window as SaveFilePickerWindow).showSaveFilePicker
-
-  if (typeof picker === 'function') {
-    const handle = await picker({
-      suggestedName: name,
-      excludeAcceptAllOption: true,
-      types: [
-        {
-          description: 'Sauvegarde JudoVACapp (.jvac)',
-          accept: { 'application/x-jvac': ['.jvac'] }
-        }
-      ]
-    })
-    const writable = await handle.createWritable()
-    await writable.write(blob)
-    await writable.close()
-    return
-  }
-
-  const file = new File([payload], name, { type: 'application/x-jvac' })
-  downloadBlob(file, name)
+  const blob = new Blob([payload], { type: 'application/octet-stream' })
+  downloadBlob(blob, name)
 }
