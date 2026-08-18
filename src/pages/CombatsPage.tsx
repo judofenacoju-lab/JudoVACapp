@@ -144,6 +144,9 @@ function CombatRow({
             {topLabel} ·{' '}
           </span>
           {fighterLine(c, 'top')}
+          {isTeam && c.top && (
+            <span className="ml-1 text-[11px] text-blue-700/80">(principal)</span>
+          )}
           {c.winnerId && c.top?.id === c.winnerId && (
             <span className="ml-1 text-emerald-700 font-medium">✓</span>
           )}
@@ -158,6 +161,9 @@ function CombatRow({
             {bottomLabel} ·{' '}
           </span>
           {fighterLine(c, 'bottom')}
+          {isTeam && c.bottom && (
+            <span className="ml-1 text-[11px] text-red-700/80">(principal)</span>
+          )}
           {c.winnerId && c.bottom?.id === c.winnerId && (
             <span className="ml-1 text-emerald-700 font-medium">✓</span>
           )}

@@ -4,8 +4,6 @@ import type { TeamWeightClassRange } from '@shared/types/settings'
 import {
   teamTirageSnapshot,
   TEAM_TIRAGE_PDF_SUBJECT_PREFIX,
-  teamMatchScore,
-  formatTeamMatchScoreLine,
   type TeamTirageResult
 } from '@shared/utils/team-tirage'
 import { downloadBytes } from './download-blob'
@@ -58,7 +56,9 @@ export async function exportTeamTiragePdfBytes(
   const font = await pdf.embedFont(StandardFonts.Helvetica)
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold)
 
-  const matches = (result.session.teamMatches ?? []).filter((m) => m.round === 0)
+  const matches = [...(result.session.teamMatches ?? [])].sort(
+    (a, b) => a.round - b.round || a.matchIndex - b.matchIndex
+  )
   const contentW = PAGE_W - MARGIN * 2
 
   let page = pdf.addPage([PAGE_W, PAGE_H])
@@ -106,73 +106,29 @@ export async function exportTeamTiragePdfBytes(
     return pdf.save()
   }
 
-  for (const match of matches) {
-    const bouts =
-      result.session.combats.filter(
-        (c) => c.teamMatchId === match.id && (c.top || c.bottom)
-      ) ?? []
-    const score = teamMatchScore(result.session, match.id)
-    const headerH = 36
-    const rowH = 22
-    const blockH = headerH + Math.max(bouts.length, 1) * rowH + 12
-    ensureSpace(blockH)
-
+  const rowH = 26
+  matches.forEach((match, index) => {
+    ensureSpace(rowH + 4)
+    const bg = index % 2 === 0 ? ZEBRA : WHITE
     page.drawRectangle({
       x: MARGIN,
-      y: y - headerH,
+      y: y - rowH,
       width: contentW,
-      height: headerH,
-      color: NAVY
+      height: rowH,
+      color: bg,
+      borderColor: LINE,
+      borderWidth: 0.4
     })
     drawText(
       `${match.label} · ${match.homeClub} (A bleu) vs ${match.awayClub} (B rouge)`,
       MARGIN + 8,
-      y - 16,
-      11,
+      y - 17,
+      10,
       true,
-      WHITE
+      NAVY
     )
-    const scoreLine = formatTeamMatchScoreLine(score, match)
-    const headerSub = scoreLine
-      ? `${bouts.length} combat(s) · ${scoreLine}`
-      : `${bouts.length} combat(s)`
-    drawText(headerSub, MARGIN + 8, y - 30, 8, false, WHITE)
-    y -= headerH
-
-    if (bouts.length === 0) {
-      page.drawRectangle({
-        x: MARGIN,
-        y: y - rowH,
-        width: contentW,
-        height: rowH,
-        color: WHITE,
-        borderColor: LINE,
-        borderWidth: 0.5
-      })
-      drawText('Aucun combat dans cette rencontre.', MARGIN + 8, y - 15, 9, false, MUTED)
-      y -= rowH + 12
-      continue
-    }
-
-    bouts.forEach((c, index) => {
-      const bg = index % 2 === 0 ? ZEBRA : WHITE
-      page.drawRectangle({
-        x: MARGIN,
-        y: y - rowH,
-        width: contentW,
-        height: rowH,
-        color: bg,
-        borderColor: LINE,
-        borderWidth: 0.4
-      })
-      const catW = 130
-      drawText(c.poolLabel, MARGIN + 8, y - 14, 8, false, MUTED, catW - 10)
-      const vs = `${c.top?.name ?? 'Absence'} (A) vs ${c.bottom?.name ?? 'Absence'} (B)`
-      drawText(vs, MARGIN + catW, y - 14, 9, true, NAVY, contentW - catW - 12)
-      y -= rowH
-    })
-    y -= 12
-  }
+    y -= rowH
+  })
 
   return pdf.save()
 }

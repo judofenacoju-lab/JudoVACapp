@@ -8,14 +8,11 @@ import { normalizeTeams, teamDisplayName, type Team } from '@shared/types/teams'
 import type { Sex } from '@shared/types/judoka'
 import type { TeamWeightClassRange } from '@shared/types/settings'
 import {
-  formatTeamMatchScoreLine,
   generateTeamTirage,
   judoVacancesWeightClasses,
   mergeTeamTirageIntoCombatSession,
   normalizeTeamWeightClasses,
-  teamBoutsToBracket,
   teamMatchesToBracket,
-  teamMatchScore,
   type TeamTirageResult
 } from '@shared/utils/team-tirage'
 import { createWeightClassId, suggestWeightClassLabel } from '@shared/utils/tirage'
@@ -342,8 +339,8 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            Équipe A (bleu) vs Équipe B (rouge), un combat par catégorie. Précisez le sexe de chaque
-            libellé. Le judoka principal combat (remplaçant en cas de problème).
+            La grille n’affiche que les rencontres de clubs (A bleu vs B rouge). Les judokas
+            principaux par catégorie apparaissent dans Combats après l’envoi.
           </p>
           <div className="space-y-2">
             {weightClasses.length === 0 && (
@@ -536,8 +533,8 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
             <div>
               <h3 className="font-display text-base font-semibold">Tableau des équipes</h3>
               <p className="text-xs text-white/70">
-                {result.teamCount} équipe{result.teamCount > 1 ? 's' : ''} · tableau{' '}
-                {teamBracket.size}
+                {result.teamCount} équipe{result.teamCount > 1 ? 's' : ''} · {result.matchCount}{' '}
+                rencontre{result.matchCount > 1 ? 's' : ''} · tableau {teamBracket.size}
               </p>
             </div>
           </header>
@@ -546,39 +543,6 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
           </div>
         </section>
       )}
-
-      {matches.map((m) => {
-        const bouts =
-          result?.session.combats.filter((c) => c.teamMatchId === m.id && (c.top || c.bottom)) ??
-          []
-        const score = result ? teamMatchScore(result.session, m.id) : null
-        const scoreLine = result && score ? formatTeamMatchScoreLine(score, m) : ''
-        const boutBracket = teamBoutsToBracket(bouts)
-        return (
-          <section key={m.id} className="rounded-xl border bg-white/80 overflow-hidden">
-            <header className="flex flex-wrap items-center justify-between gap-2 border-b bg-judo-navy/95 px-4 py-3 text-white">
-              <div>
-                <h3 className="font-display text-base font-semibold">
-                  {m.label} · {m.homeClub} vs {m.awayClub}
-                </h3>
-                <p className="text-xs text-white/70">
-                  Par équipe · {bouts.length} combat(s)
-                  {scoreLine ? ` · ${scoreLine}` : ''}
-                </p>
-              </div>
-            </header>
-            <div className="bg-slate-50/50 p-2">
-              {bouts.length === 0 ? (
-                <p className="px-4 py-6 text-sm text-muted-foreground">
-                  Aucun combat dans ce groupe.
-                </p>
-              ) : (
-                <CombatBracket bracket={boutBracket} palette="team" variant="stack" />
-              )}
-            </div>
-          </section>
-        )
-      })}
 
       {result && result.matchCount > 0 && matches.length > 0 && (
         <div className="flex justify-center border-t pt-4 pb-2">

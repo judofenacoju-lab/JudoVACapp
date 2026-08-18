@@ -1,4 +1,9 @@
-import { PDFDocument } from 'pdf-lib'
+import {
+  PDFArray,
+  PDFDocument,
+  PDFRawStream,
+  decodePDFRawStream
+} from 'pdf-lib'
 import type { Judoka } from '@shared/types/judoka'
 import type { Team } from '@shared/types/teams'
 import type { TeamWeightClassRange } from '@shared/types/settings'
@@ -29,15 +34,76 @@ function unescapePdfLiteral(raw: string): string {
     .replace(/\\(\d{1,3})/g, (_, oct: string) => String.fromCharCode(parseInt(oct, 8)))
 }
 
-function extractPdfLiterals(bytes: Uint8Array): string[] {
-  const text = new TextDecoder('latin1').decode(bytes)
+function winAnsiFromHex(hex: string): string {
+  const clean = hex.replace(/\s+/g, '')
+  if (clean.length < 2) return ''
+  const padded = clean.length % 2 === 0 ? clean : `${clean}0`
+  const bytes = new Uint8Array(padded.length / 2)
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = Number.parseInt(padded.slice(i * 2, i * 2 + 2), 16)
+  }
+  return new TextDecoder('latin1').decode(bytes)
+}
+
+function decodeContentStream(stream: unknown): string {
+  if (!(stream instanceof PDFRawStream)) return ''
+  try {
+    const decoded = decodePDFRawStream(stream).decode()
+    return new TextDecoder('latin1').decode(decoded)
+  } catch {
+    try {
+      return new TextDecoder('latin1').decode(stream.getContents())
+    } catch {
+      return ''
+    }
+  }
+}
+
+function collectContentStreams(node: unknown): PDFRawStream[] {
+  if (node instanceof PDFRawStream) return [node]
+  if (node instanceof PDFArray) {
+    const out: PDFRawStream[] = []
+    for (let i = 0; i < node.size(); i++) {
+      out.push(...collectContentStreams(node.lookup(i)))
+    }
+    return out
+  }
+  return []
+}
+
+function stringsFromContent(content: string): string[] {
   const out: string[] = []
-  const re = /\((?:\\.|[^\\)])*\)/g
+  const tokenRe = /<([0-9A-Fa-f \r\n\t]+)>|\((?:\\.|[^\\)])*\)/g
   let m: RegExpExecArray | null
-  while ((m = re.exec(text))) {
-    const inner = m[0].slice(1, -1)
-    const value = unescapePdfLiteral(inner).trim()
+  while ((m = tokenRe.exec(content))) {
+    if (m[1] != null) {
+      const value = winAnsiFromHex(m[1]).trim()
+      if (value) out.push(value)
+      continue
+    }
+    const value = unescapePdfLiteral(m[0].slice(1, -1)).trim()
     if (value) out.push(value)
+  }
+  return out
+}
+
+function extractPdfStrings(pdf: PDFDocument): string[] {
+  const out: string[] = []
+  for (const page of pdf.getPages()) {
+    const streams = collectContentStreams(page.node.Contents())
+    for (const stream of streams) {
+      const content = decodeContentStream(stream)
+      if (!content) continue
+      out.push(...stringsFromContent(content))
+    }
+  }
+  if (out.length > 0) return out
+
+  for (const [, obj] of pdf.context.enumerateIndirectObjects()) {
+    if (!(obj instanceof PDFRawStream)) continue
+    const content = decodeContentStream(obj)
+    if (!/Tj|TJ/.test(content)) continue
+    out.push(...stringsFromContent(content))
   }
   return out
 }
@@ -48,9 +114,9 @@ function parseMatchesFromLiterals(literals: string[]): ImportedTeamMatchLine[] {
   let lastPool = ''
 
   const headerRe =
-    /^(.+?)\s*[·•]\s*(.+?)\s*\(A\s*bleu\)\s*vs\s*(.+?)\s*\(B\s*rouge\)\s*$/i
-  const boutRe = /^(.+?)\s*\(A\)\s*vs\s*(.+?)\s*\(B\)\s*$/i
-  const poolRe = /^(Garçons|Filles)\s*[·•]\s*.+$/i
+    /^(.+?)\s*[·•]\s*(.+?)\s*\(\s*A\s*bleu\s*\)\s*vs\s*(.+?)\s*\(\s*B\s*rouge\s*\)\s*$/i
+  const boutRe = /^(.+?)\s*\(\s*A\s*\)\s*vs\s*(.+?)\s*\(\s*B\s*\)\s*$/i
+  const poolRe = /^(Gar[cç]ons|Filles)\s*[·•]\s*.+$/i
 
   for (const line of literals) {
     const header = line.match(headerRe)
@@ -107,7 +173,7 @@ export async function importTeamTirageFromPdf(
     }
   }
 
-  const imported = parseMatchesFromLiterals(extractPdfLiterals(bytes))
+  const imported = parseMatchesFromLiterals(extractPdfStrings(pdf))
   if (imported.length === 0) {
     throw new Error(
       'Ce PDF n’est pas une grille de tirage par équipe JudoVACapp, ou les combats n’ont pas pu être lus.'

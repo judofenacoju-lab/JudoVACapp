@@ -1085,6 +1085,12 @@ export function generateTeamTirageFromImportedMatches(
     if (home && !away) first[i]!.winnerTeamId = home.id
     if (away && !home) first[i]!.winnerTeamId = away.id
     if (!line || (!home && !away)) continue
+    if (!line.bouts.length) {
+      if (home && away) {
+        combats.push(...buildTeamBouts(first[i]!, home, away, byId, classes, now))
+      }
+      continue
+    }
     const homeLabel = first[i]!.homeClub
     const awayLabel = first[i]!.awayClub
     const teamMatchLabel = `${homeLabel} vs ${awayLabel}`
