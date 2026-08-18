@@ -2,8 +2,6 @@ import type { Judoka, Sex } from '@shared/types/judoka'
 import type { TeamWeightClassRange } from '@shared/types/settings'
 import {
   teamDisplayName,
-  judokasOnTeam,
-  normalizeClubKey,
   type Team,
   type TeamCategoryLineup
 } from '@shared/types/teams'
@@ -116,24 +114,18 @@ function toFighter(j: Judoka, category: string): CombatFighterRef {
 function membersOf(team: Team, byId: Map<string, Judoka>): Judoka[] {
   const seen = new Set<string>()
   const out: Judoka[] = []
-  const add = (j: Judoka | undefined): void => {
-    if (!j || seen.has(j.id)) return
+  for (const id of team.judokaIds) {
+    const j = byId.get(id)
+    if (!j || seen.has(j.id)) continue
     seen.add(j.id)
     out.push(j)
   }
-  for (const id of team.judokaIds) add(byId.get(id))
-  for (const j of judokasOnTeam(team, [...byId.values()])) add(j)
   return out
 }
 
 function judokasIndexedForTeams(teams: Team[], judokas: Judoka[]): Map<string, Judoka> {
   const allowed = new Set(teams.flatMap((t) => t.judokaIds))
-  const clubKeys = new Set(teams.map((t) => normalizeClubKey(t.club)).filter(Boolean))
-  return new Map(
-    judokas
-      .filter((j) => allowed.has(j.id) || clubKeys.has(normalizeClubKey(j.club)))
-      .map((j) => [j.id, j])
-  )
+  return new Map(judokas.filter((j) => allowed.has(j.id)).map((j) => [j.id, j]))
 }
 
 function matchesWeightClass(j: Judoka, wc: TeamWeightClassRange): boolean {

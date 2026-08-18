@@ -54,13 +54,10 @@ export function PdfExportPage({ onBack, embedded = false }: Props) {
         setTeamCount(0)
         return
       }
-      const [settingsRes, listed] = await Promise.all([
-        window.judovac.getSettings(),
-        window.judovac.listJudokas({ limit: 1_000_000, offset: 0 })
-      ])
+      const settingsRes = await window.judovac.getSettings()
       if (cancelled || !settingsRes.ok) return
       const teams = normalizeTeams(settingsRes.data.teams)
-      setTeamIds(teamMemberIdSet(teams, listed.ok ? listed.data.items : []))
+      setTeamIds(teamMemberIdSet(teams))
       setTeamCount(teams.length)
     })()
     return () => {

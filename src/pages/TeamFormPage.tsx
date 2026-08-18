@@ -110,23 +110,7 @@ export function TeamFormPage({
       setActiveTeam(null)
       return
     }
-    const extraIds = judokasOnTeam(found, listedItems).map((j) => j.id)
-    const mergedIds = [...new Set([...found.judokaIds, ...extraIds])]
-    if (mergedIds.length === found.judokaIds.length) {
-      setActiveTeam(found)
-      return
-    }
-    const saved = await persistTeam(
-      {
-        ...found,
-        judokaIds: mergedIds,
-        updatedAt: new Date().toISOString()
-      },
-      [],
-      classes,
-      listedItems
-    )
-    setActiveTeam(saved ?? { ...found, judokaIds: mergedIds })
+    setActiveTeam(found)
   }
 
   useEffect(() => {
@@ -142,18 +126,16 @@ export function TeamFormPage({
     const registered = teams.length
     const rosterIds = new Set<string>()
     for (const t of teams) {
-      for (const j of judokasOnTeam(t, judokas)) rosterIds.add(j.id)
       for (const id of t.judokaIds) rosterIds.add(id)
     }
-    const withJudokas = teams.filter((t) => judokasOnTeam(t, judokas).length > 0 || t.judokaIds.length > 0).length
-    const withoutJudokas = registered - withJudokas
+    const withJudokas = teams.filter((t) => t.judokaIds.length > 0).length
     return {
       registered,
       withJudokas,
-      withoutJudokas,
+      withoutJudokas: registered - withJudokas,
       judokasOnTeams: rosterIds.size
     }
-  }, [teams, judokas])
+  }, [teams])
 
   const filteredTeams = useMemo(() => {
     const q = clubQuery.trim().toLowerCase()
@@ -619,7 +601,7 @@ export function TeamFormPage({
           <Label className="text-base">1. Club à inscrire comme équipe</Label>
           <p className="text-sm text-muted-foreground">
             Un club déjà présent en individuel peut être inscrit ici : ce n’est pas un doublon.
-            Les judokas de ce club apparaissent dans l’équipe.
+            Seuls les judokas enregistrés dans Par Équipe font partie de l’équipe.
           </p>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1">
