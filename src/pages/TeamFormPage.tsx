@@ -6,6 +6,7 @@ import {
   FolderOpen,
   Pencil,
   Plus,
+  Search,
   Trash2,
   UserCheck,
   UserPlus,
@@ -85,6 +86,9 @@ export function TeamFormPage({
   const [creating, setCreating] = useState(false)
   const [editingJudoka, setEditingJudoka] = useState<Judoka | null>(null)
   const [draftClass, setDraftClass] = useState<TeamWeightClassRange>(emptyDraftClass)
+  const [clubQuery, setClubQuery] = useState('')
+  const [editingTeamId, setEditingTeamId] = useState<string | null>(null)
+  const [editClubName, setEditClubName] = useState('')
 
   async function reload(teamId?: string): Promise<void> {
     const [settingsRes, listed] = await Promise.all([
@@ -125,6 +129,13 @@ export function TeamFormPage({
     }
   }, [teams])
 
+  const filteredTeams = useMemo(() => {
+    const q = clubQuery.trim().toLowerCase()
+    const list = [...teams].sort((a, b) => a.club.localeCompare(b.club, 'fr'))
+    if (!q) return list
+    return list.filter((t) => t.club.toLowerCase().includes(q))
+  }, [teams, clubQuery])
+
   const members = useMemo(() => {
     if (!activeTeam) return []
     const ids = new Set(activeTeam.judokaIds)
@@ -151,6 +162,8 @@ export function TeamFormPage({
     setModalOpen(false)
     setCreating(false)
     setEditingJudoka(null)
+    setEditingTeamId(null)
+    setEditClubName('')
   }
 
   function openTeam(team: Team): void {
@@ -390,6 +403,77 @@ export function TeamFormPage({
     }
   }
 
+  function startRename(team: Team): void {
+    setEditingTeamId(team.id)
+    setEditClubName(team.club)
+    setError(null)
+    setMessage(null)
+  }
+
+  function cancelRename(): void {
+    setEditingTeamId(null)
+    setEditClubName('')
+  }
+
+  async function renameTeamClub(team: Team): Promise<void> {
+    const club = editClubName.trim()
+    if (!club) {
+      setError('Saisissez le nom du club.')
+      return
+    }
+    const oldClub = team.club.trim()
+    if (club.toLowerCase() === oldClub.toLowerCase()) {
+      if (club === oldClub) {
+        cancelRename()
+        return
+      }
+    }
+    const duplicate = teams.some(
+      (t) => t.id !== team.id && t.club.trim().toLowerCase() === club.toLowerCase()
+    )
+    if (duplicate) {
+      setError(`Le club « ${club} » est déjà inscrit comme équipe.`)
+      return
+    }
+    setBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const nameWasClub =
+        !team.name.trim() || team.name.trim().toLowerCase() === oldClub.toLowerCase()
+      const saved = await persistTeam({
+        ...team,
+        club,
+        name: nameWasClub ? club : team.name,
+        updatedAt: new Date().toISOString()
+      })
+      if (!saved) return
+      const membersToRename = judokas.filter(
+        (j) =>
+          team.judokaIds.includes(j.id) && j.club.trim().toLowerCase() === oldClub.toLowerCase()
+      )
+      for (const j of membersToRename) {
+        const res = await window.judovac.updateJudoka(j.id, { club })
+        if (!res.ok) {
+          setError(res.error)
+          break
+        }
+      }
+      if (activeTeam?.id === saved.id) {
+        setActiveTeam(saved)
+        setClubName(saved.club)
+        setName(saved.name === saved.club ? '' : saved.name)
+      }
+      await reload(saved.id)
+      cancelRename()
+      setMessage(`Club renommé en « ${saved.club} ».`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Modification impossible')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   function memberRow(j: Judoka) {
     return (
       <li key={j.id} className="flex items-center justify-between gap-2 text-sm">
@@ -560,44 +644,110 @@ export function TeamFormPage({
               Aucune équipe. Inscrivez un club pour commencer.
             </p>
           ) : (
-            <ul className="space-y-2">
-              {teams.map((t) => (
-                <li
-                  key={t.id}
-                  className="flex items-center justify-between gap-2 rounded-lg border bg-slate-50/80 px-3 py-2"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-judo-navy">{teamDisplayName(t)}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {t.judokaIds.length} judoka(s)
-                      {t.createdBy ? ` · ${t.createdBy}` : ''}
-                    </p>
-                  </div>
-                  <div className="flex gap-1">
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      title="Ouvrir"
-                      disabled={busy}
-                      onClick={() => openTeam(t)}
+            <>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  className="pl-8"
+                  value={clubQuery}
+                  placeholder="Rechercher un club par nom…"
+                  onChange={(e) => setClubQuery(e.target.value)}
+                />
+              </div>
+              {filteredTeams.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Aucun club ne correspond à « {clubQuery.trim()} ».
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {filteredTeams.map((t) => (
+                    <li
+                      key={t.id}
+                      className="flex items-center justify-between gap-2 rounded-lg border bg-slate-50/80 px-3 py-2"
                     >
-                      <FolderOpen className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      title="Supprimer"
-                      disabled={busy}
-                      onClick={() => void remove(t)}
-                    >
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                      {editingTeamId === t.id ? (
+                        <form
+                          className="flex min-w-0 flex-1 items-center gap-2"
+                          onSubmit={(e) => {
+                            e.preventDefault()
+                            void renameTeamClub(t)
+                          }}
+                        >
+                          <Input
+                            autoFocus
+                            value={editClubName}
+                            disabled={busy}
+                            placeholder="Nom du club"
+                            onChange={(e) => setEditClubName(e.target.value)}
+                          />
+                          <Button
+                            type="submit"
+                            size="icon"
+                            variant="ghost"
+                            title="Enregistrer"
+                            disabled={busy || !editClubName.trim()}
+                          >
+                            <Check className="h-4 w-4 text-emerald-700" />
+                          </Button>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            title="Annuler"
+                            disabled={busy}
+                            onClick={cancelRename}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </form>
+                      ) : (
+                        <>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-judo-navy">{teamDisplayName(t)}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {t.judokaIds.length} judoka(s)
+                              {t.createdBy ? ` · ${t.createdBy}` : ''}
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 gap-1">
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              title="Ouvrir"
+                              disabled={busy}
+                              onClick={() => openTeam(t)}
+                            >
+                              <FolderOpen className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              title="Supprimer"
+                              disabled={busy}
+                              onClick={() => void remove(t)}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              title="Modifier"
+                              disabled={busy}
+                              onClick={() => startRename(t)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
           )}
         </div>
       </div>
