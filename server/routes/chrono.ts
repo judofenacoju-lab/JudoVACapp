@@ -49,7 +49,7 @@ function combatsForTatami(session: CombatSession, tatamiId: string) {
   return session.combats
     .filter((c) => c.tatamiId === tatamiId && hasAtLeastOneJudoka(c))
     .sort((a, b) => a.orderOnTatami - b.orderOnTatami || a.round - b.round || a.matchIndex - b.matchIndex)
-    .map(toChronoCombat)
+    .map((c) => toChronoCombat(c, session))
 }
 
 function payload(session: CombatSession, tatamiId: string, index: number): ChronoConnectResponse {

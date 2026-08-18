@@ -1,9 +1,11 @@
 import type {
   CombatFighterRef,
+  CombatSession,
   CombatSessionKind,
   CombatStatus,
   ManagedCombat
 } from '@shared/types/combats'
+import { resolveCombatPhase } from '@shared/types/combats'
 import type { CombatPhase } from '@shared/utils/combat-phase'
 
 /** Combat exposé à JVac-Chrono (sans cases vides). */
@@ -44,7 +46,7 @@ export interface ChronoErrorResponse {
   error: string
 }
 
-export function toChronoCombat(c: ManagedCombat): ChronoCombat {
+export function toChronoCombat(c: ManagedCombat, session?: CombatSession | null): ChronoCombat {
   return {
     id: c.id,
     label: c.label,
@@ -63,6 +65,6 @@ export function toChronoCombat(c: ManagedCombat): ChronoCombat {
     teamMatchLabel: c.teamMatchLabel,
     homeClub: c.homeClub,
     awayClub: c.awayClub,
-    phase: c.phase
+    phase: resolveCombatPhase(c, session)
   }
 }

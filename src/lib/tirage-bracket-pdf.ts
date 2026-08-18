@@ -544,11 +544,9 @@ function drawRepechageBronzePages(
   fontBold: PdfFont,
   pool: TiragePool
 ): void {
-  const groups: Array<{ title: string; matches: BracketMatch[] }> = [
-    { title: 'Repechage', matches: pool.bracket.repechage ?? [] },
-    { title: 'Finale de Bronze', matches: pool.bracket.bronze ?? [] }
-  ].filter((g) => g.matches.length > 0)
-  if (groups.length === 0) return
+  const repechage = pool.bracket.repechage ?? []
+  const bronze = pool.bracket.bronze ?? []
+  if (repechage.length === 0 && bronze.length === 0) return
 
   const page = doc.addPage([PAGE_W, PAGE_H])
   let y = PAGE_H - MARGIN
@@ -566,31 +564,48 @@ function drawRepechageBronzePages(
     }`
   )
   page.drawText(cat, { x: MARGIN, y: y - 8, size: 11, font: fontBold, color: NAVY })
-  y -= 28
+  y -= 22
+  page.drawText(
+    pdfSafeText('Perdants des quarts entre eux, puis gagnants contre les perdants de demi-finale.'),
+    { x: MARGIN, y: y - 8, size: 8, font, color: MUTED }
+  )
+  y -= 26
 
   const boxW = 190
   const boxH = 40
-  const gap = 10
-  for (const group of groups) {
-    page.drawText(pdfSafeText(group.title), {
-      x: MARGIN,
-      y: y - 8,
-      size: 10,
-      font: fontBold,
-      color: RED
-    })
-    y -= 18
-    let x = MARGIN
-    for (const match of group.matches) {
-      if (x + boxW > PAGE_W - MARGIN) {
-        x = MARGIN
-        y -= boxH + gap
-      }
-      if (y - boxH < MARGIN) break
-      drawMatchCard(page, font, fontBold, match, x, y - boxH / 2, boxW, boxH)
-      x += boxW + gap
+  const gapY = 16
+  const linkW = 28
+  const pairs = Math.max(repechage.length, bronze.length)
+  page.drawText(pdfSafeText('Repechage'), {
+    x: MARGIN,
+    y: y - 8,
+    size: 9,
+    font: fontBold,
+    color: RED
+  })
+  page.drawText(pdfSafeText('Finale de Bronze'), {
+    x: MARGIN + boxW + linkW,
+    y: y - 8,
+    size: 9,
+    font: fontBold,
+    color: RED
+  })
+  y -= 16
+  for (let i = 0; i < pairs; i++) {
+    const cy = y - boxH / 2
+    if (repechage[i]) {
+      drawMatchCard(page, font, fontBold, repechage[i]!, MARGIN, cy, boxW, boxH)
     }
-    y -= boxH + 20
+    if (bronze[i]) {
+      drawMatchCard(page, font, fontBold, bronze[i]!, MARGIN + boxW + linkW, cy, boxW, boxH)
+    }
+    page.drawLine({
+      start: { x: MARGIN + boxW, y: cy },
+      end: { x: MARGIN + boxW + linkW, y: cy },
+      thickness: 0.9,
+      color: LINE
+    })
+    y -= boxH + gapY
   }
 }
 

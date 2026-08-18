@@ -10,17 +10,21 @@ export type CombatPhase =
 
 /**
  * Nomme un tour du tableau principal selon le nombre de combats de ce tour.
- * Tour 1 = Préliminaires, sauf tableau de 4 combats (Demi-finale).
- * 16 = Huitième, 8 = Quart, 4 = Demi, 1 = Finale Or.
+ * Tour 1 = Préliminaires, sauf départ à 4 combats (Quart de finale).
+ * Ensuite : 8 = Huitième, 4 = Quart, 2 = Demi-finale, 1 = Finale Or.
  */
 export function mainRoundPhase(firstRoundMatchCount: number, roundIndex: number): CombatPhase {
   if (firstRoundMatchCount <= 0) return 'finale'
   const n = firstRoundMatchCount / 2 ** roundIndex
   if (!Number.isFinite(n) || n < 1) return 'finale'
-  if (n >= 32) return 'preliminaire'
-  if (n === 16) return 'huitieme'
-  if (n === 8) return 'quart'
-  if (n === 4) return 'demi'
+  if (roundIndex === 0) {
+    if (firstRoundMatchCount === 4) return 'quart'
+    if (firstRoundMatchCount === 2) return 'demi'
+    if (firstRoundMatchCount === 1) return 'finale'
+    return 'preliminaire'
+  }
+  if (n === 8) return 'huitieme'
+  if (n === 4) return 'quart'
   if (n === 2) return 'demi'
   return 'finale'
 }

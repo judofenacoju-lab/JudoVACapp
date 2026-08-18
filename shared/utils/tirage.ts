@@ -454,19 +454,19 @@ function attachRepechageAndBronze(
   prefix: string,
   fightNumber: number
 ): { repechage: BracketMatch[]; bronze: BracketMatch[]; nextFightNumber: number } {
-  const quartIdx = rounds.findIndex((r) => r.length === 8)
+  const quartIdx = rounds.findIndex((r) => r.length === 4)
   if (quartIdx < 0) {
     return { repechage: [], bronze: [], nextFightNumber: fightNumber }
   }
   const quart = rounds[quartIdx]!
   const demi = rounds[quartIdx + 1]
-  if (!demi || demi.length !== 4) {
+  if (!demi || demi.length !== 2) {
     return { repechage: [], bronze: [], nextFightNumber: fightNumber }
   }
 
   const repechage: BracketMatch[] = []
   const bronze: BracketMatch[] = []
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 2; i++) {
     const qA = quart[i * 2]!
     const qB = quart[i * 2 + 1]!
     const sf = demi[i]!

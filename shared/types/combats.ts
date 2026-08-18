@@ -148,7 +148,7 @@ export function resolveCombatPhase(
   c: ManagedCombat,
   session?: CombatSession | null
 ): CombatPhase {
-  if (c.phase) return c.phase
+  if (c.phase === 'repechage' || c.phase === 'bronze') return c.phase
   if (!session || c.kind === 'team') return mainRoundPhase(0, c.round)
   const firstRoundCount = session.combats.filter(
     (x) => x.poolKey === c.poolKey && x.round === 0 && x.kind !== 'team'
