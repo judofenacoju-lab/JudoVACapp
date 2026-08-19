@@ -13,7 +13,7 @@ export type CombatSessionKind = 'individual' | 'team'
 export type TeamWinMethod = 'ippon' | 'waza_ari' | 'hantei' | 'fusen' | 'draw'
 
 /** Critère qui a départagé la rencontre. */
-export type TeamMatchDecidedBy = 'wins' | 'tech' | 'golden_score' | 'bye'
+export type TeamMatchDecidedBy = 'wins' | 'tech' | 'golden_score' | 'replay' | 'bye'
 
 const TEAM_WIN_METHODS: TeamWinMethod[] = ['ippon', 'waza_ari', 'hantei', 'fusen', 'draw']
 
@@ -128,6 +128,8 @@ export interface CombatSession {
   /** Défaut : individuel si absent (anciennes sessions). */
   kind?: CombatSessionKind
   teamMatches?: TeamMatch[]
+  /** Catégories du tirage par équipe : toutes, garçons ou filles. */
+  teamSexFilter?: 'all' | 'M' | 'F'
 }
 
 export function combatSessionKind(session: CombatSession | null | undefined): CombatSessionKind {

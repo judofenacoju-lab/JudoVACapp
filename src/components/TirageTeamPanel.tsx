@@ -8,15 +8,24 @@ import { normalizeTeams, teamDisplayName, type Team } from '@shared/types/teams'
 import type { Sex } from '@shared/types/judoka'
 import type { TeamWeightClassRange } from '@shared/types/settings'
 import {
+  applyTeamTieBreakReplay,
+  filterTeamWeightClasses,
   generateTeamTirage,
   judoVacancesWeightClasses,
+  listTiedTeamMatches,
   mergeTeamTirageIntoCombatSession,
   normalizeTeamWeightClasses,
   teamMatchesToBracket,
+  type TeamSexFilter,
   type TeamTirageResult
 } from '@shared/utils/team-tirage'
 import { createWeightClassId, suggestWeightClassLabel } from '@shared/utils/tirage'
-import { listTatamisWithoutCombats, isCombatSchedulableOnTatami } from '@shared/types/combats'
+import {
+  combatSessionKind,
+  listTatamisWithoutCombats,
+  isCombatSchedulableOnTatami,
+  type CombatSession
+} from '@shared/types/combats'
 
 interface Props {
   tatamiCount: number
@@ -51,6 +60,9 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
   const [exportBusy, setExportBusy] = useState(false)
   const [exportMessage, setExportMessage] = useState<string | null>(null)
   const [importBusy, setImportBusy] = useState(false)
+  const [sexFilter, setSexFilter] = useState<TeamSexFilter>('all')
+  const [combatSession, setCombatSession] = useState<CombatSession | null>(null)
+  const [tieBreakBusy, setTieBreakBusy] = useState(false)
   const importInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -61,6 +73,7 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
       setTeams(normalizeTeams(res.data.teams))
       const saved = normalizeTeamWeightClasses(res.data.teamWeightClasses ?? [])
       if (saved.length > 0) setWeightClasses(saved)
+      setCombatSession(res.data.combatSession ?? null)
     })()
     return () => {
       cancelled = true
@@ -96,7 +109,7 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
           minKg: prevMax,
           maxKg: nextMax,
           label: suggestWeightClassLabel(nextMax),
-          sex: last?.sex ?? 'M'
+          sex: last?.sex ?? (sexFilter === 'F' ? 'F' : 'M')
         })
       ]
     })
@@ -113,7 +126,15 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
     ) {
       return
     }
-    const next = judoVacancesWeightClasses('M')
+    const sex = sexFilter === 'F' ? 'F' : 'M'
+    const preset = judoVacancesWeightClasses(sex)
+    const next =
+      sexFilter === 'all'
+        ? preset
+        : normalizeTeamWeightClasses([
+            ...weightClasses.filter((c) => c.sex !== sex),
+            ...preset
+          ])
     setWeightClasses(next)
     await persistWeightClasses(next)
   }
@@ -131,13 +152,17 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
       }
       const registered = normalizeTeams(settingsRes.data.teams)
       setTeams(registered)
+      setCombatSession(settingsRes.data.combatSession ?? null)
       const normalized = normalizeTeamWeightClasses(weightClasses)
       setWeightClasses(normalized)
       await persistWeightClasses(normalized)
-      if (normalized.length === 0) {
+      const classesForDraw = filterTeamWeightClasses(normalized, sexFilter)
+      if (classesForDraw.length === 0) {
         setResult(null)
         setError(
-          'Ajoutez au moins une catégorie de poids (libellé + sexe) avant de lancer le tirage par équipe.'
+          sexFilter === 'all'
+            ? 'Ajoutez au moins une catégorie de poids (libellé + sexe) avant de lancer le tirage par équipe.'
+            : `Aucune catégorie ${sexFilter === 'F' ? 'Filles' : 'Garçons'} : ajoutez-en une ou choisissez « Toutes ».`
         )
         return
       }
@@ -153,7 +178,7 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
         setError(listed.error)
         return
       }
-      const generated = generateTeamTirage(registered, listed.data.items, normalized)
+      const generated = generateTeamTirage(registered, listed.data.items, classesForDraw)
       if (generated.teamCount < 2) {
         setResult(generated)
         setError(
@@ -224,6 +249,7 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
         return
       }
       onTatamiCount(saved.data.combatSession?.tatamis?.length ?? n)
+      setCombatSession(saved.data.combatSession ?? next)
       setMessage(
         `${result.boutCount} combat(s) par équipe envoyés sur ${n} tatami(s). Confirmez sur Combats.`
       )
@@ -231,6 +257,70 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
       setError(e instanceof Error ? e.message : 'Envoi vers Combats impossible')
     } finally {
       setSendBusy(false)
+    }
+  }
+
+  async function runTieBreak(): Promise<void> {
+    setTieBreakBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const settingsRes = await window.judovac.getSettings()
+      if (!settingsRes.ok) {
+        setError(settingsRes.error)
+        return
+      }
+      const existing = settingsRes.data.combatSession ?? null
+      if (!existing || combatSessionKind(existing) !== 'team') {
+        setError('Aucune session Combats par équipe. Envoyez d’abord le tirage vers Combats.')
+        return
+      }
+      const tied = listTiedTeamMatches(existing, { preliminariesOnly: true })
+      if (tied.length === 0) {
+        setError('Aucune rencontre préliminaire à égalité à départager.')
+        return
+      }
+      const listed = await window.judovac.listJudokas({ limit: 5000, offset: 0 })
+      if (!listed.ok) {
+        setError(listed.error)
+        return
+      }
+      const classes = normalizeTeamWeightClasses(weightClasses)
+      const classesForDraw = filterTeamWeightClasses(classes, sexFilter)
+      if (classesForDraw.length === 0) {
+        setError(
+          `Aucune catégorie ${sexFilter === 'F' ? 'Filles' : sexFilter === 'M' ? 'Garçons' : ''} à reprendre. Choisissez un autre sexe ou ajoutez des catégories.`
+        )
+        return
+      }
+      const { session: next, replayed } = applyTeamTieBreakReplay(
+        existing,
+        {
+          teams: normalizeTeams(settingsRes.data.teams),
+          judokas: listed.data.items,
+          weightClasses: classes
+        },
+        sexFilter
+      )
+      if (replayed === 0) {
+        setError('Impossible de créer la reprise : pas de judoka dans les catégories choisies.')
+        return
+      }
+      const saved = await window.judovac.setSettings({ combatSession: next })
+      if (!saved.ok) {
+        setError(saved.error)
+        return
+      }
+      setCombatSession(saved.data.combatSession ?? next)
+      const sexLabel =
+        sexFilter === 'F' ? 'Filles' : sexFilter === 'M' ? 'Garçons' : 'toutes les catégories'
+      setMessage(
+        `Départage lancé pour ${replayed} rencontre(s) à égalité (${sexLabel}). Les clubs reprendront leurs préliminaires dans Combats.`
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Départage impossible')
+    } finally {
+      setTieBreakBusy(false)
     }
   }
 
@@ -311,6 +401,17 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
 
   const matches = result?.session.teamMatches?.filter((m) => m.round === 0) ?? []
   const validated = teams.filter((t) => t.club.trim())
+  const visibleWeightClasses = useMemo(
+    () => filterTeamWeightClasses(weightClasses, sexFilter),
+    [weightClasses, sexFilter]
+  )
+  const tiedPrelims = useMemo(
+    () =>
+      combatSession && combatSessionKind(combatSession) === 'team'
+        ? listTiedTeamMatches(combatSession, { preliminariesOnly: true })
+        : [],
+    [combatSession]
+  )
   const teamBracket = useMemo(
     () => teamMatchesToBracket(result?.session.teamMatches ?? []),
     [result]
@@ -320,6 +421,23 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
     <div className="space-y-6">
       <div className="rounded-xl border bg-white/75 p-5 space-y-4 max-w-3xl">
         <div className="space-y-3">
+          <div className="space-y-1">
+            <Label htmlFor="team-tirage-sex">Sexe du tirage</Label>
+            <select
+              id="team-tirage-sex"
+              className="flex h-10 w-full max-w-xs rounded-md border border-input bg-background px-3 py-2 text-sm"
+              value={sexFilter}
+              disabled={loading || tieBreakBusy}
+              onChange={(e) => setSexFilter(e.target.value as TeamSexFilter)}
+            >
+              <option value="all">Toutes</option>
+              <option value="M">Garçons</option>
+              <option value="F">Filles</option>
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Le tirage et le départage n’utilisent que les catégories de ce sexe.
+            </p>
+          </div>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <Label>Catégories de poids (libellés)</Label>
             <div className="flex flex-wrap gap-2">
@@ -343,12 +461,14 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
             principaux par catégorie apparaissent dans Combats après l’envoi.
           </p>
           <div className="space-y-2">
-            {weightClasses.length === 0 && (
+            {visibleWeightClasses.length === 0 && (
               <p className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
-                Aucune catégorie de poids : ajoutez-en au moins une (libellé, sexe, min/max kg).
+                {weightClasses.length === 0
+                  ? 'Aucune catégorie de poids : ajoutez-en au moins une (libellé, sexe, min/max kg).'
+                  : `Aucune catégorie ${sexFilter === 'F' ? 'Filles' : 'Garçons'} pour ce filtre.`}
               </p>
             )}
-            {weightClasses.map((row, index) => (
+            {visibleWeightClasses.map((row, index) => (
               <div
                 key={row.id}
                 className="grid gap-2 rounded-lg border bg-slate-50/80 p-3 sm:grid-cols-[minmax(0,1.1fr)_minmax(0,0.7fr)_minmax(0,0.7fr)_minmax(0,0.7fr)_auto]"
@@ -475,6 +595,20 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
                 ? 'Relancer le tirage'
                 : 'Lancer le tirage par équipe'}
           </Button>
+          {tiedPrelims.length > 0 && (
+            <Button
+              variant="accent"
+              size="lg"
+              disabled={loading || tieBreakBusy || sendBusy}
+              title="Reprendre les préliminaires à égalité avec les catégories du sexe choisi"
+              onClick={() => void runTieBreak()}
+            >
+              <Dices className="h-4 w-4" />
+              {tieBreakBusy
+                ? 'Départage…'
+                : `Départage égalités (${tiedPrelims.length})`}
+            </Button>
+          )}
           {result && result.boutCount > 0 && (
             <Button
               variant="accent"
@@ -511,13 +645,28 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
           Import : PDF de grille par équipe (Exporter Grille). Les combats du fichier s’affichent
           comme un nouveau tirage.
         </p>
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {tiedPrelims.length > 0 && (
+          <p className="text-sm text-amber-800">
+            {tiedPrelims.length} rencontre(s) préliminaire(s) à égalité
+            {tiedPrelims
+              .slice(0, 4)
+              .map((m) => ` ${m.homeClub} / ${m.awayClub}`)
+              .join(' ·')}
+            {tiedPrelims.length > 4 ? '…' : ''}. Le départage reprend ces duels avec les
+            catégories {sexFilter === 'F' ? 'Filles' : sexFilter === 'M' ? 'Garçons' : 'choisies'}.
+          </p>
+        )}
         {message && <p className="text-sm text-emerald-700">{message}</p>}
         {exportMessage && <p className="text-sm text-emerald-700 break-all">{exportMessage}</p>}
         {result && result.matchCount > 0 && (
           <p className="text-sm text-emerald-700">
             {result.teamCount} équipes · {result.matchCount} rencontre(s) · {result.boutCount}{' '}
             combat(s)
+            {sexFilter === 'F'
+              ? ' · Filles'
+              : sexFilter === 'M'
+                ? ' · Garçons'
+                : ''}
           </p>
         )}
         {tatamiCount === 0 && result && result.boutCount > 0 && (

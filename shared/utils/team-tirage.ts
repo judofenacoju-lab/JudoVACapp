@@ -66,6 +66,31 @@ export function normalizeTeamWeightClasses(
     )
 }
 
+/** Filtre de sexe du tirage par équipe. */
+export type TeamSexFilter = 'all' | 'M' | 'F'
+
+export function isTeamSexFilter(value: unknown): value is TeamSexFilter {
+  return value === 'all' || value === 'M' || value === 'F'
+}
+
+export function filterTeamWeightClasses(
+  classes: TeamWeightClassRange[],
+  sex: TeamSexFilter | undefined
+): TeamWeightClassRange[] {
+  const all = normalizeTeamWeightClasses(classes)
+  if (sex === 'M' || sex === 'F') return all.filter((c) => c.sex === sex)
+  return all
+}
+
+export function inferTeamSexFilter(classes: TeamWeightClassRange[]): TeamSexFilter {
+  const sexes = new Set(normalizeTeamWeightClasses(classes).map((c) => c.sex))
+  if (sexes.size === 1) {
+    const only = [...sexes][0]
+    if (only === 'M' || only === 'F') return only
+  }
+  return 'all'
+}
+
 export function matchTeamWeightClass(
   j: Judoka,
   classes: TeamWeightClassRange[]
@@ -293,6 +318,29 @@ export function buildTeamBouts(
   return combats.map((c, i) => ({ ...c, label: `Combat ${i + 1}`, matchIndex: i }))
 }
 
+function buildPlayoffBouts(
+  match: TeamMatch,
+  home: Team,
+  away: Team,
+  byId: Map<string, Judoka>,
+  weightClasses: TeamWeightClassRange[],
+  now: string
+): ManagedCombat[] {
+  return buildTeamBouts(match, home, away, byId, weightClasses, now).map((c, i) => {
+    const sexLabel = c.sex === 'F' ? 'Filles' : 'Garçons'
+    return {
+      ...c,
+      id: `${match.id}::playoff-${c.sex}-${c.matchId}`,
+      matchId: `playoff-${c.matchId}`,
+      label: `Départage ${i + 1}`,
+      poolKey: `${c.poolKey}|playoff`,
+      poolLabel: `Départage · ${sexLabel} · ${c.weightLabel}`,
+      goldenScore: true,
+      updatedAt: now
+    }
+  })
+}
+
 function weightClassForCombat(
   combat: ManagedCombat,
   classes: TeamWeightClassRange[]
@@ -378,6 +426,7 @@ export function generateTeamTirage(
   session.kind = 'team'
   session.sourceTirageAt = now
   session.updatedAt = now
+  session.teamSexFilter = inferTeamSexFilter(classes)
 
   if (eligible.length < 2 || classes.length === 0) {
     session.teamMatches = []
@@ -493,64 +542,77 @@ export interface TeamMatchScoreBreakdown {
   awayTech: number
   regularComplete: boolean
   goldenScore: ManagedCombat | null
+  playoff: ManagedCombat[]
+  playoffComplete: boolean
   decidedBy: TeamMatchDecidedBy | null
   winnerSlot: 'home' | 'away' | null
 }
 
+function addBoutToTotals(
+  c: ManagedCombat,
+  acc: { homeWins: number; awayWins: number; homeTech: number; awayTech: number }
+): void {
+  if (c.status !== 'completed' || c.winMethod === 'draw' || !c.winnerId) return
+  const tech = technicalPointsFor(c.winMethod)
+  if (c.top?.id === c.winnerId) {
+    acc.homeWins += 1
+    acc.homeTech += tech
+  } else if (c.bottom?.id === c.winnerId) {
+    acc.awayWins += 1
+    acc.awayTech += tech
+  }
+}
+
 export function teamMatchScore(session: CombatSession, teamMatchId: string): TeamMatchScoreBreakdown {
-  let homeWins = 0
-  let awayWins = 0
-  let homeTech = 0
-  let awayTech = 0
+  const totals = { homeWins: 0, awayWins: 0, homeTech: 0, awayTech: 0 }
   const bouts = session.combats.filter((c) => c.teamMatchId === teamMatchId)
   const regular = bouts.filter((c) => !c.goldenScore)
-  const goldenScore = bouts.find((c) => c.goldenScore) ?? null
+  const playoff = bouts.filter((c) => c.goldenScore)
+  const goldenScore = playoff[0] ?? null
   const regularComplete = regular.length > 0 && regular.every((c) => c.status === 'completed')
+  const playoffComplete = playoff.length > 0 && playoff.every((c) => c.status === 'completed')
 
-  for (const c of regular) {
-    if (c.status !== 'completed' || c.winMethod === 'draw') continue
-    if (!c.winnerId) continue
-    const tech = technicalPointsFor(c.winMethod)
-    if (c.top?.id === c.winnerId) {
-      homeWins += 1
-      homeTech += tech
-    } else if (c.bottom?.id === c.winnerId) {
-      awayWins += 1
-      awayTech += tech
-    }
-  }
+  for (const c of regular) addBoutToTotals(c, totals)
 
   let decidedBy: TeamMatchDecidedBy | null = null
   let winnerSlot: 'home' | 'away' | null = null
   if (regularComplete) {
-    if (homeWins > awayWins) {
+    if (totals.homeWins > totals.awayWins) {
       winnerSlot = 'home'
       decidedBy = 'wins'
-    } else if (awayWins > homeWins) {
+    } else if (totals.awayWins > totals.homeWins) {
       winnerSlot = 'away'
       decidedBy = 'wins'
-    } else if (homeTech > awayTech) {
+    } else if (totals.homeTech > totals.awayTech) {
       winnerSlot = 'home'
       decidedBy = 'tech'
-    } else if (awayTech > homeTech) {
+    } else if (totals.awayTech > totals.homeTech) {
       winnerSlot = 'away'
       decidedBy = 'tech'
-    } else if (goldenScore?.status === 'completed' && goldenScore.winnerId) {
-      decidedBy = 'golden_score'
-      if (goldenScore.top?.id === goldenScore.winnerId) winnerSlot = 'home'
-      else if (goldenScore.bottom?.id === goldenScore.winnerId) winnerSlot = 'away'
+    } else if (playoffComplete) {
+      const po = { homeWins: 0, awayWins: 0, homeTech: 0, awayTech: 0 }
+      for (const c of playoff) addBoutToTotals(c, po)
+      if (po.homeWins > po.awayWins || (po.homeWins === po.awayWins && po.homeTech > po.awayTech)) {
+        winnerSlot = 'home'
+        decidedBy = playoff.length > 1 ? 'replay' : 'golden_score'
+      } else if (po.awayWins > po.homeWins || (po.awayWins === po.homeWins && po.awayTech > po.homeTech)) {
+        winnerSlot = 'away'
+        decidedBy = playoff.length > 1 ? 'replay' : 'golden_score'
+      }
     }
   }
 
   return {
-    home: homeWins,
-    away: awayWins,
-    homeWins,
-    awayWins,
-    homeTech,
-    awayTech,
+    home: totals.homeWins,
+    away: totals.awayWins,
+    homeWins: totals.homeWins,
+    awayWins: totals.awayWins,
+    homeTech: totals.homeTech,
+    awayTech: totals.awayTech,
     regularComplete,
     goldenScore,
+    playoff,
+    playoffComplete,
     decidedBy,
     winnerSlot
   }
@@ -571,16 +633,18 @@ export function formatTeamMatchScoreLine(score: TeamMatchScoreBreakdown, match: 
     const how =
       match.decidedBy === 'tech'
         ? 'aux points techniques'
-        : match.decidedBy === 'golden_score'
-          ? 'au golden score'
-          : 'aux victoires'
+        : match.decidedBy === 'replay'
+          ? 'à la reprise'
+          : match.decidedBy === 'golden_score'
+            ? 'au golden score'
+            : 'aux victoires'
     return `${base}${tech} · vainqueur ${name} (${how})`
   }
   if (score.regularComplete && !score.winnerSlot) {
-    const cat = score.goldenScore?.weightLabel
-    return cat
-      ? `${base}${tech} · égalité — golden score ${cat}`
-      : `${base}${tech} · égalité — golden score`
+    if (score.playoff.length > 0 && !score.playoffComplete) {
+      return `${base}${tech} · égalité — reprise préliminaire (${score.playoff.length} combat(s))`
+    }
+    return `${base}${tech} · égalité — reprise des préliminaires`
   }
   if (score.homeWins + score.awayWins === 0 && score.homeTech + score.awayTech === 0) {
     return ''
@@ -748,7 +812,10 @@ export function resolveTeamMatches(
   let combats = session.combats.map((c) => ({ ...c }))
   const teamById = new Map((ctx?.teams ?? []).map((t) => [t.id, t]))
   const byId = judokasIndexedForTeams(ctx?.teams ?? [], ctx?.judokas ?? [])
-  const weightClasses = normalizeTeamWeightClasses(ctx?.weightClasses ?? [])
+  const weightClasses = filterTeamWeightClasses(
+    ctx?.weightClasses ?? [],
+    session.teamSexFilter
+  )
 
   let changed = true
   while (changed) {
@@ -799,6 +866,27 @@ export function resolveTeamMatches(
       }
 
       if (!bouts.some((c) => c.goldenScore)) {
+        const home = match.homeTeamId ? teamById.get(match.homeTeamId) : undefined
+        const away = match.awayTeamId ? teamById.get(match.awayTeamId) : undefined
+        const replay =
+          home && away && weightClasses.length > 0
+            ? buildPlayoffBouts(match, home, away, byId, weightClasses, now)
+            : []
+        if (replay.length > 0) {
+          combats = [...combats, ...replay]
+          changed = true
+        } else {
+          const created = createGoldenScoreBout(match, regular, now)
+          if (created) {
+            combats = [...combats, created]
+            changed = true
+          }
+        }
+      } else if (
+        score.playoffComplete &&
+        !score.winnerSlot &&
+        !bouts.some((c) => c.id.endsWith('::golden-score'))
+      ) {
         const created = createGoldenScoreBout(match, regular, now)
         if (created) {
           combats = [...combats, created]
@@ -838,6 +926,62 @@ export function resolveTeamMatches(
   const anyAssigned = next.combats.some((c) => c.tatamiId)
   if (!anyAssigned) return distributeCombatsAcrossTatamis(next)
   return assignUnassignedCombatsToTatamis(next)
+}
+
+export function listTiedTeamMatches(
+  session: CombatSession,
+  opts?: { preliminariesOnly?: boolean }
+): TeamMatch[] {
+  return (session.teamMatches ?? []).filter((m) => {
+    if (opts?.preliminariesOnly && m.round !== 0) return false
+    if (m.winnerTeamId || !m.homeTeamId || !m.awayTeamId) return false
+    const score = teamMatchScore(session, m.id)
+    return score.regularComplete && !score.winnerSlot
+  })
+}
+
+/** Reprend les préliminaires à égalité avec uniquement les catégories du sexe choisi. */
+export function applyTeamTieBreakReplay(
+  session: CombatSession,
+  ctx: TeamResolveCtx,
+  sexFilter: TeamSexFilter
+): { session: CombatSession; replayed: number } {
+  if (session.kind !== 'team') return { session, replayed: 0 }
+  const now = new Date().toISOString()
+  const classes = filterTeamWeightClasses(ctx.weightClasses, sexFilter)
+  const teamById = new Map(ctx.teams.map((t) => [t.id, t]))
+  const byId = judokasIndexedForTeams(ctx.teams, ctx.judokas)
+  const tied = listTiedTeamMatches(session, { preliminariesOnly: true })
+  let combats = session.combats.map((c) => ({ ...c }))
+  let replayed = 0
+
+  for (const match of tied) {
+    const home = match.homeTeamId ? teamById.get(match.homeTeamId) : undefined
+    const away = match.awayTeamId ? teamById.get(match.awayTeamId) : undefined
+    if (!home || !away) continue
+    const hasCompletedPlayoff = combats.some(
+      (c) => c.teamMatchId === match.id && c.goldenScore && c.status === 'completed'
+    )
+    if (hasCompletedPlayoff) continue
+    combats = combats.filter(
+      (c) => !(c.teamMatchId === match.id && c.goldenScore && c.status !== 'completed')
+    )
+    const created = buildPlayoffBouts(match, home, away, byId, classes, now)
+    if (created.length === 0) continue
+    combats = [...combats, ...created]
+    replayed += 1
+  }
+
+  const next = resolveTeamMatches(
+    {
+      ...session,
+      teamSexFilter: sexFilter,
+      combats,
+      updatedAt: now
+    },
+    ctx
+  )
+  return { session: next, replayed }
 }
 
 export const TEAM_TIRAGE_PDF_KIND = 'judovac-team-tirage'
@@ -1075,6 +1219,7 @@ export function generateTeamTirageFromImportedMatches(
   session.kind = 'team'
   session.sourceTirageAt = now
   session.updatedAt = now
+  session.teamSexFilter = inferTeamSexFilter(classes)
 
   const pairings = imported.filter((m) => m.homeClub.trim() && m.awayClub.trim())
   if (pairings.length === 0) {
@@ -1269,6 +1414,7 @@ export function teamTirageResultFromSnapshot(
   session.kind = 'team'
   session.sourceTirageAt = snapshot.generatedAt || now
   session.updatedAt = now
+  session.teamSexFilter = inferTeamSexFilter(snapshot.weightClasses ?? [])
   session.teamMatches = matches
   session.combats = combats
   return {
