@@ -26,6 +26,11 @@ import {
   isCombatSchedulableOnTatami,
   type CombatSession
 } from '@shared/types/combats'
+import {
+  TirageCeremonyModal,
+  namesFromTeamTirage,
+  pairsFromTeamTirage
+} from '@/components/TirageCeremonyModal'
 
 interface Props {
   tatamiCount: number
@@ -64,6 +69,12 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
   const [combatSession, setCombatSession] = useState<CombatSession | null>(null)
   const [tieBreakBusy, setTieBreakBusy] = useState(false)
   const importInputRef = useRef<HTMLInputElement>(null)
+  const [ceremony, setCeremony] = useState<{
+    names: string[]
+    pairs: ReturnType<typeof pairsFromTeamTirage>
+    pending: TeamTirageResult
+    pendingMessage: string | null
+  } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -191,12 +202,15 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
         setError('Aucune rencontre générée. Vérifiez les équipes validées.')
         return
       }
-      setResult(generated)
-      if (generated.boutCount === 0) {
-        setMessage(
-          'Tirage effectué. Les combats contre un club sans judoka sont programmés : confirmez la victoire manuellement (absence).'
-        )
-      }
+      setCeremony({
+        names: namesFromTeamTirage(generated),
+        pairs: pairsFromTeamTirage(generated),
+        pending: generated,
+        pendingMessage:
+          generated.boutCount === 0
+            ? 'Tirage effectué. Les combats contre un club sans judoka sont programmés : confirmez la victoire manuellement (absence).'
+            : null
+      })
       onTatamiCount(settingsRes.data.combatSession?.tatamis?.length ?? 0)
     } catch (e) {
       setResult(null)
@@ -581,15 +595,20 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
           <Button
             variant="outline"
             size="lg"
-            disabled={loading || importBusy}
+            disabled={loading || importBusy || ceremony !== null}
             onClick={() => importInputRef.current?.click()}
           >
             <FileUp className="h-4 w-4" />
             {importBusy ? 'Import…' : 'Import'}
           </Button>
-          <Button variant="accent" size="lg" disabled={loading} onClick={() => void run()}>
+          <Button
+            variant="accent"
+            size="lg"
+            disabled={loading || ceremony !== null}
+            onClick={() => void run()}
+          >
             {result ? <RefreshCw className="h-4 w-4" /> : <Dices className="h-4 w-4" />}
-            {loading && !importBusy
+            {(loading && !importBusy) || ceremony
               ? 'Tirage…'
               : result
                 ? 'Relancer le tirage'
@@ -599,7 +618,7 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
             <Button
               variant="accent"
               size="lg"
-              disabled={loading || tieBreakBusy || sendBusy}
+              disabled={loading || tieBreakBusy || sendBusy || ceremony !== null}
               title="Reprendre les préliminaires à égalité avec les catégories du sexe choisi"
               onClick={() => void runTieBreak()}
             >
@@ -613,7 +632,7 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
             <Button
               variant="accent"
               size="lg"
-              disabled={loading || sendBusy || tatamiCount === 0}
+              disabled={loading || sendBusy || tatamiCount === 0 || ceremony !== null}
               title={
                 tatamiCount === 0
                   ? 'Créez d’abord des tatamis dans le menu Combats'
@@ -629,7 +648,7 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
             <Button
               variant="outline"
               size="lg"
-              disabled={loading || exportBusy || sendBusy}
+              disabled={loading || exportBusy || sendBusy || ceremony !== null}
               onClick={() => {
                 setResult(null)
                 setError(null)
@@ -705,6 +724,19 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
             {exportBusy ? 'Export…' : 'Exporter Grille'}
           </Button>
         </div>
+      )}
+      {ceremony && (
+        <TirageCeremonyModal
+          open
+          kind="team"
+          names={ceremony.names}
+          pairs={ceremony.pairs}
+          onFinished={() => {
+            setResult(ceremony.pending)
+            if (ceremony.pendingMessage) setMessage(ceremony.pendingMessage)
+            setCeremony(null)
+          }}
+        />
       )}
     </div>
   )

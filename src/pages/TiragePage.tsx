@@ -18,6 +18,11 @@ import {
 import { mergeTirageIntoCombatSession, listTatamisWithoutCombats, isCombatSchedulableOnTatami } from '@shared/types/combats'
 import { getActiveCategoryNames } from '@shared/utils/judoka'
 import { TirageTeamPanel } from '@/components/TirageTeamPanel'
+import {
+  TirageCeremonyModal,
+  namesFromIndividualTirage,
+  pairsFromIndividualTirage
+} from '@/components/TirageCeremonyModal'
 
 interface Props {
   onBack: () => void
@@ -55,6 +60,11 @@ export function TiragePage({ onBack, embedded = false }: Props) {
   /** Tatamis déjà créés sur la page Combats (requis pour activer l’envoi). */
   const [tatamiCount, setTatamiCount] = useState(0)
   const [mode, setMode] = useState<'individual' | 'team'>('individual')
+  const [ceremony, setCeremony] = useState<{
+    names: string[]
+    pairs: ReturnType<typeof pairsFromIndividualTirage>
+    pending: TirageResult
+  } | null>(null)
 
   async function refreshTatamiCount(): Promise<number> {
     const settingsRes = await window.judovac.getSettings()
@@ -176,7 +186,11 @@ export function TiragePage({ onBack, embedded = false }: Props) {
         return
       }
 
-      setResult(generated)
+      setCeremony({
+        names: namesFromIndividualTirage(generated),
+        pairs: pairsFromIndividualTirage(generated),
+        pending: generated
+      })
       await refreshTatamiCount()
     } catch (e) {
       setResult(null)
@@ -441,17 +455,21 @@ export function TiragePage({ onBack, embedded = false }: Props) {
             <Button
               variant="accent"
               size="lg"
-              disabled={loading}
+              disabled={loading || ceremony !== null}
               onClick={() => void runTirage()}
             >
               {result ? <RefreshCw className="h-4 w-4" /> : <Dices className="h-4 w-4" />}
-              {loading ? 'Tirage…' : result ? 'Relancer le tirage' : 'Lancer le tirage'}
+              {loading || ceremony
+                ? 'Tirage…'
+                : result
+                  ? 'Relancer le tirage'
+                  : 'Lancer le tirage'}
             </Button>
             {result && result.matchedCount > 0 && (
               <Button
                 variant="accent"
                 size="lg"
-                disabled={loading || sendBusy || tatamiCount === 0}
+                disabled={loading || sendBusy || tatamiCount === 0 || ceremony !== null}
                 title={
                   tatamiCount === 0
                     ? 'Créez d’abord des tatamis dans le menu Combats'
@@ -467,7 +485,7 @@ export function TiragePage({ onBack, embedded = false }: Props) {
               <Button
                 variant="outline"
                 size="lg"
-                disabled={loading || exportBusy || sendBusy}
+                disabled={loading || exportBusy || sendBusy || ceremony !== null}
                 onClick={() => {
                   setResult(null)
                   setError(null)
@@ -550,6 +568,18 @@ export function TiragePage({ onBack, embedded = false }: Props) {
         </>
         )}
       </div>
+      {ceremony && (
+        <TirageCeremonyModal
+          open
+          kind="individual"
+          names={ceremony.names}
+          pairs={ceremony.pairs}
+          onFinished={() => {
+            setResult(ceremony.pending)
+            setCeremony(null)
+          }}
+        />
+      )}
     </AppShell>
   )
 }
