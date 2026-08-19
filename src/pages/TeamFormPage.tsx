@@ -4,6 +4,7 @@ import {
   ArrowRightLeft,
   Building2,
   Check,
+  FileDown,
   FolderOpen,
   Pencil,
   Plus,
@@ -36,6 +37,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { AppShell } from '@/layouts/AppShell'
 import { JudokaFormPage } from '@/pages/JudokaFormPage'
+import { groupTeamRosterByClubAndCategory } from '@/lib/team-judokas-pdf'
 
 interface Props {
   createdBy: string
@@ -104,6 +106,8 @@ export function TeamFormPage({
   const [clubQuery, setClubQuery] = useState('')
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null)
   const [editClubName, setEditClubName] = useState('')
+  const [rosterListOpen, setRosterListOpen] = useState(false)
+  const [rosterExportBusy, setRosterExportBusy] = useState(false)
 
   async function reload(teamId?: string): Promise<void> {
     const [settingsRes, listed] = await Promise.all([
@@ -182,6 +186,17 @@ export function TeamFormPage({
     const uncategorized = members.filter((j) => !used.has(j.id))
     return { blocks, uncategorized }
   }, [members, weightClasses])
+
+  const visibleClassBlocks = useMemo(() => {
+    if (members.length === 0) return classified.blocks
+    const sexes = new Set(members.map((j) => j.sex))
+    return classified.blocks.filter(({ wc }) => sexes.has(wc.sex))
+  }, [classified.blocks, members])
+
+  const rosterGroups = useMemo(
+    () => groupTeamRosterByClubAndCategory(teams, judokas, weightClasses),
+    [teams, judokas, weightClasses]
+  )
 
   function resetClubForm(): void {
     setClubName('')
@@ -554,6 +569,27 @@ export function TeamFormPage({
     }
   }
 
+  async function exportRosterPdf(): Promise<void> {
+    if (teamStats.judokasOnTeams === 0) return
+    setRosterExportBusy(true)
+    setError(null)
+    try {
+      const { exportAndDownloadTeamJudokasPdf } = await import('@/lib/team-judokas-pdf')
+      const out = await exportAndDownloadTeamJudokasPdf({
+        teams,
+        judokas,
+        weightClasses
+      })
+      setMessage(
+        `Liste exportée (${out.judokaCount} judoka(s), ${out.clubCount} club(s)) → ${out.filename}`
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Export PDF impossible')
+    } finally {
+      setRosterExportBusy(false)
+    }
+  }
+
   function memberRow(j: Judoka) {
     return (
       <li key={j.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
@@ -687,6 +723,8 @@ export function TeamFormPage({
               label="Judokas par équipe"
               value={String(teamStats.judokasOnTeams)}
               hint="Judokas inscrits dans une équipe"
+              onValueClick={() => setRosterListOpen(true)}
+              valueTitle="Voir la liste des judokas par équipe"
             />
           </div>
         </div>
@@ -1003,7 +1041,7 @@ export function TeamFormPage({
                   <p className="text-xs text-muted-foreground">
                     {members.length} judoka(s) dans l’équipe
                   </p>
-                  {classified.blocks.map(({ wc, items }) => {
+                  {visibleClassBlocks.map(({ wc, items }) => {
                     const lineup = (activeTeam.lineups ?? []).find(
                       (l) =>
                         l.sex === wc.sex &&
@@ -1144,6 +1182,102 @@ export function TeamFormPage({
                       </ul>
                     </div>
                   )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {rosterListOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/45"
+            aria-label="Fermer"
+            onClick={() => setRosterListOpen(false)}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="team-roster-title"
+            className="relative z-10 flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border bg-white shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
+              <div className="min-w-0 flex-1">
+                <h2
+                  id="team-roster-title"
+                  className="font-display text-lg font-semibold text-judo-navy"
+                >
+                  Judokas par équipe
+                </h2>
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  {teamStats.judokasOnTeams} judoka(s) · {rosterGroups.length} club(s)
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={rosterExportBusy || teamStats.judokasOnTeams === 0}
+                  className="bg-emerald-600 text-white hover:bg-emerald-700 hover:text-white"
+                  onClick={() => void exportRosterPdf()}
+                >
+                  <FileDown className="h-4 w-4" />
+                  {rosterExportBusy ? 'Export…' : 'Exporter liste'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setRosterListOpen(false)}
+                  aria-label="Fermer"
+                >
+                  <X className="h-5 w-5" />
+                </Button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto px-3 py-3">
+              {rosterGroups.length === 0 ? (
+                <p className="px-2 text-sm text-muted-foreground">
+                  Aucun judoka inscrit dans une équipe.
+                </p>
+              ) : (
+                <div className="space-y-4">
+                  {rosterGroups.map((group) => (
+                    <div key={`${group.club}-${group.teamName}`}>
+                      <p className="rounded-md bg-judo-red px-3 py-1.5 text-sm font-semibold text-white">
+                        {group.teamName} ({group.items.length})
+                      </p>
+                      <div className="mt-2 space-y-2">
+                        {group.categories.map((cat) => (
+                          <div key={`${group.club}-${cat.label}`}>
+                            <p className="px-1 text-xs font-medium text-judo-navy">{cat.label}</p>
+                            <ul className="mt-1 space-y-1">
+                              {cat.items.map((j) => (
+                                <li
+                                  key={j.id}
+                                  className="rounded-lg border bg-white px-3 py-2 text-sm"
+                                >
+                                  <p className="font-medium text-judo-navy">
+                                    {formatJudokaFullName(j)}
+                                  </p>
+                                  <p className="mt-0.5 text-xs text-muted-foreground">
+                                    {[
+                                      j.displayId,
+                                      j.sex === 'F' ? 'F' : 'M',
+                                      j.weightKg != null ? `${j.weightKg} kg` : null
+                                    ]
+                                      .filter(Boolean)
+                                      .join(' · ')}
+                                  </p>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
