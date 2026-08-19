@@ -293,6 +293,76 @@ export function buildTeamBouts(
   return combats.map((c, i) => ({ ...c, label: `Combat ${i + 1}`, matchIndex: i }))
 }
 
+function weightClassForCombat(
+  combat: ManagedCombat,
+  classes: TeamWeightClassRange[]
+): TeamWeightClassRange | undefined {
+  const parsed = parsePoolLabel(combat.poolLabel || '')
+  const sex = combat.sex || parsed.sex
+  const label = (combat.weightLabel || combat.category || parsed.weightLabel).trim().toLowerCase()
+  return classes.find((wc) => wc.sex === sex && wc.label.trim().toLowerCase() === label)
+}
+
+function otherFighterForClub(
+  combat: ManagedCombat,
+  slot: 'top' | 'bottom',
+  teams: Team[],
+  byId: Map<string, Judoka>,
+  wc: TeamWeightClassRange | undefined
+): CombatFighterRef | null {
+  const current = slot === 'top' ? combat.top : combat.bottom
+  const club = (slot === 'top' ? combat.homeClub : combat.awayClub) || current?.club || ''
+  const team = findTeamByClub(teams, club)
+  if (!team || !current) return null
+  if (wc) {
+    const pick = pickPrincipalAndSub(team, wc, byId)
+    const other = [pick.principal, pick.substitute].find((j) => j && j.id !== current.id) ?? null
+    if (other) return toFighter(other, wc.label || combat.category)
+  }
+  const label = (combat.weightLabel || combat.category).trim().toLowerCase()
+  const lineup = (team.lineups ?? []).find(
+    (l) => l.sex === combat.sex && l.weightLabel.trim().toLowerCase() === label
+  )
+  const otherId =
+    current.id === lineup?.principalId
+      ? lineup?.substituteId
+      : current.id === lineup?.substituteId
+        ? lineup?.principalId
+        : lineup?.substituteId && lineup.substituteId !== current.id
+          ? lineup.substituteId
+          : lineup?.principalId
+  if (!otherId || otherId === current.id) return null
+  const j = byId.get(otherId)
+  return j ? toFighter(j, combat.category) : null
+}
+
+/** Complète les remplaçants manquants (line-up du club × catégorie) pour permettre la permutation. */
+export function attachTeamCombatSubstitutes(
+  session: CombatSession,
+  teams: Team[],
+  judokas: Judoka[],
+  weightClasses: TeamWeightClassRange[]
+): CombatSession {
+  if (session.kind !== 'team') return session
+  const classes = normalizeTeamWeightClasses(weightClasses)
+  const byId = judokasIndexedForTeams(teams, judokas)
+  let changed = false
+  const combats = session.combats.map((c) => {
+    const wc = weightClassForCombat(c, classes)
+    const topSubstitute = c.topSubstitute ?? otherFighterForClub(c, 'top', teams, byId, wc)
+    const bottomSubstitute = c.bottomSubstitute ?? otherFighterForClub(c, 'bottom', teams, byId, wc)
+    if (
+      (topSubstitute?.id ?? null) === (c.topSubstitute?.id ?? null) &&
+      (bottomSubstitute?.id ?? null) === (c.bottomSubstitute?.id ?? null)
+    ) {
+      return c
+    }
+    changed = true
+    return { ...c, topSubstitute, bottomSubstitute }
+  })
+  return changed ? { ...session, combats } : session
+}
+
 export function generateTeamTirage(
   teams: Team[],
   judokas: Judoka[],

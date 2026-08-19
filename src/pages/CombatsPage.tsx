@@ -29,6 +29,7 @@ import {
   isCombatSchedulableOnTatami,
   isMissingOpponent,
   listTatamisWithoutCombats,
+  type CombatFighterRef,
   type CombatSession,
   type CombatStatus,
   type ManagedCombat,
@@ -37,13 +38,16 @@ import {
   teamWinMethodLabel
 } from '@shared/types/combats'
 import {
+  attachTeamCombatSubstitutes,
   computeTeamStandings,
   formatTeamMatchScoreLine,
   normalizeTeamWeightClasses,
   resolveTeamMatches,
   teamMatchScore
 } from '@shared/utils/team-tirage'
-import { normalizeTeams } from '@shared/types/teams'
+import { normalizeTeams, type Team } from '@shared/types/teams'
+import type { Judoka } from '@shared/types/judoka'
+import type { TeamWeightClassRange } from '@shared/types/settings'
 import { TatamiAccessModals } from '@/components/TatamiAccessModals'
 
 interface Props {
@@ -86,6 +90,68 @@ function fighterLine(c: ManagedCombat, side: 'top' | 'bottom'): string {
   if (!f) return 'À déterminer'
   const meta = [f.club, f.age > 0 ? `${f.age} ans` : null].filter(Boolean).join(' · ')
   return meta ? `${f.name} (${meta})` : f.name
+}
+
+function TeamClubSlot({
+  sideLabel,
+  clubName,
+  fighter,
+  substitute,
+  tone,
+  canSwap,
+  busy,
+  winner,
+  onPermute
+}: {
+  sideLabel: string
+  clubName?: string
+  fighter: CombatFighterRef | null
+  substitute: CombatFighterRef | null
+  tone: 'white' | 'blue'
+  canSwap: boolean
+  busy: boolean
+  winner: boolean
+  onPermute: () => void
+}) {
+  const canPermute = canSwap && Boolean(fighter && substitute)
+  return (
+    <div
+      className={`space-y-1.5 rounded-md border px-2.5 py-2 ${
+        tone === 'blue' ? 'border-blue-200 bg-blue-50/70' : 'border-judo-navy/20 bg-white'
+      }`}
+    >
+      <p className={`text-xs font-semibold ${tone === 'blue' ? 'text-blue-700' : 'text-judo-navy'}`}>
+        {sideLabel}
+        {clubName ? ` · ${clubName}` : ''}
+      </p>
+      <p className="text-sm font-medium">
+        {fighter ? fighter.name : 'À déterminer'}
+        {fighter ? (
+          <span className={`ml-1 text-[11px] font-normal ${tone === 'blue' ? 'text-blue-700/80' : 'text-judo-navy/70'}`}>
+            (principal)
+          </span>
+        ) : null}
+        {winner ? <span className="ml-1 font-medium text-emerald-700">✓</span> : null}
+      </p>
+      {substitute ? (
+        <p className="text-xs text-muted-foreground">Remplaçant : {substitute.name}</p>
+      ) : fighter ? (
+        <p className="text-xs text-muted-foreground">Aucun remplaçant dans cette catégorie</p>
+      ) : null}
+      {canPermute ? (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          title={`Permuter ${fighter?.name} et ${substitute?.name}`}
+          onClick={onPermute}
+        >
+          <Replace className="h-3.5 w-3.5" />
+          Permuter principal ↔ remplaçant
+        </Button>
+      ) : null}
+    </div>
+  )
 }
 
 function CombatRow({
@@ -141,64 +207,81 @@ function CombatRow({
         </span>
       </div>
       <div className="grid gap-2 text-sm sm:grid-cols-2">
-        <div className="space-y-1">
-          <p>
-            <span className={isTeam ? 'font-medium text-judo-navy' : 'text-muted-foreground'}>
-              {topLabel} ·{' '}
-            </span>
-            {fighterLine(c, 'top')}
-            {isTeam && c.top && (
-              <span className="ml-1 text-[11px] text-judo-navy/70">(principal)</span>
-            )}
-            {c.winnerId && c.top?.id === c.winnerId && (
-              <span className="ml-1 text-emerald-700 font-medium">✓</span>
-            )}
-          </p>
-          {c.topSubstitute && (
-            <p className="text-xs text-muted-foreground">Remplaçant : {c.topSubstitute.name}</p>
-          )}
-          {canSwap && c.topSubstitute && (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              title={`Mettre ${c.topSubstitute.name} en principal pour JVac-Chrono`}
-              onClick={() => applySubstitute(c.id, 'top')}
-            >
-              <Replace className="h-3.5 w-3.5" />
-              Mettre {c.topSubstitute.name} en principal
-            </Button>
-          )}
-        </div>
-        <div className="space-y-1">
-          <p>
-            <span className={isTeam ? 'font-medium text-blue-700' : 'text-muted-foreground'}>
-              {bottomLabel} ·{' '}
-            </span>
-            {fighterLine(c, 'bottom')}
-            {isTeam && c.bottom && (
-              <span className="ml-1 text-[11px] text-blue-700/80">(principal)</span>
-            )}
-            {c.winnerId && c.bottom?.id === c.winnerId && (
-              <span className="ml-1 text-emerald-700 font-medium">✓</span>
-            )}
-          </p>
-          {c.bottomSubstitute && (
-            <p className="text-xs text-muted-foreground">Remplaçant : {c.bottomSubstitute.name}</p>
-          )}
-          {canSwap && c.bottomSubstitute && (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              title={`Mettre ${c.bottomSubstitute.name} en principal pour JVac-Chrono`}
-              onClick={() => applySubstitute(c.id, 'bottom')}
-            >
-              <Replace className="h-3.5 w-3.5" />
-              Mettre {c.bottomSubstitute.name} en principal
-            </Button>
-          )}
-        </div>
+        {isTeam ? (
+          <>
+            <TeamClubSlot
+              sideLabel="Équipe A · Blanc"
+              clubName={c.homeClub || c.top?.club}
+              fighter={c.top}
+              substitute={c.topSubstitute ?? null}
+              tone="white"
+              canSwap={canSwap}
+              busy={busy}
+              winner={Boolean(c.winnerId && c.top?.id === c.winnerId)}
+              onPermute={() => applySubstitute(c.id, 'top')}
+            />
+            <TeamClubSlot
+              sideLabel="Équipe B · Bleu"
+              clubName={c.awayClub || c.bottom?.club}
+              fighter={c.bottom}
+              substitute={c.bottomSubstitute ?? null}
+              tone="blue"
+              canSwap={canSwap}
+              busy={busy}
+              winner={Boolean(c.winnerId && c.bottom?.id === c.winnerId)}
+              onPermute={() => applySubstitute(c.id, 'bottom')}
+            />
+          </>
+        ) : (
+          <>
+            <div className="space-y-1">
+              <p>
+                <span className="text-muted-foreground">{topLabel} · </span>
+                {fighterLine(c, 'top')}
+                {c.winnerId && c.top?.id === c.winnerId && (
+                  <span className="ml-1 font-medium text-emerald-700">✓</span>
+                )}
+              </p>
+              {c.topSubstitute && (
+                <p className="text-xs text-muted-foreground">Remplaçant : {c.topSubstitute.name}</p>
+              )}
+              {canSwap && c.topSubstitute && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => applySubstitute(c.id, 'top')}
+                >
+                  <Replace className="h-3.5 w-3.5" />
+                  Permuter avec {c.topSubstitute.name}
+                </Button>
+              )}
+            </div>
+            <div className="space-y-1">
+              <p>
+                <span className="text-muted-foreground">{bottomLabel} · </span>
+                {fighterLine(c, 'bottom')}
+                {c.winnerId && c.bottom?.id === c.winnerId && (
+                  <span className="ml-1 font-medium text-emerald-700">✓</span>
+                )}
+              </p>
+              {c.bottomSubstitute && (
+                <p className="text-xs text-muted-foreground">Remplaçant : {c.bottomSubstitute.name}</p>
+              )}
+              {canSwap && c.bottomSubstitute && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => applySubstitute(c.id, 'bottom')}
+                >
+                  <Replace className="h-3.5 w-3.5" />
+                  Permuter avec {c.bottomSubstitute.name}
+                </Button>
+              )}
+            </div>
+          </>
+        )}
       </div>
       {canAddManual && (
         <form
@@ -381,6 +464,9 @@ function TeamBoutResultButtons({
  */
 export function CombatsPage({ onBack, embedded = false }: Props) {
   const [session, setSession] = useState<CombatSession | null>(null)
+  const [teams, setTeams] = useState<Team[]>([])
+  const [judokas, setJudokas] = useState<Judoka[]>([])
+  const [weightClasses, setWeightClasses] = useState<TeamWeightClassRange[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -399,6 +485,10 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
         setSession(null)
         return
       }
+      const listed = await window.judovac.listJudokas({ limit: 5000, offset: 0 })
+      setTeams(normalizeTeams(res.data.teams))
+      setWeightClasses(normalizeTeamWeightClasses(res.data.teamWeightClasses ?? []))
+      setJudokas(listed.ok ? listed.data.items : [])
       setSession(res.data.combatSession ?? null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Chargement impossible')
@@ -433,7 +523,12 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
     }
   }
 
-  const confirmed = Boolean(session?.confirmedAt)
+  const viewSession = useMemo(() => {
+    if (!session || combatSessionKind(session) !== 'team') return session
+    return attachTeamCombatSubstitutes(session, teams, judokas, weightClasses)
+  }, [session, teams, judokas, weightClasses])
+
+  const confirmed = Boolean(viewSession?.confirmedAt)
   const stats = useMemo(() => {
     if (!session) return { total: 0, ready: 0, done: 0, unassigned: 0 }
     const visible = session.combats.filter(hasAtLeastOneJudoka)
@@ -447,8 +542,8 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
   }, [session])
 
   const visibleCombats = useMemo(() => {
-    if (!session) return []
-    let list = session.combats.filter(hasAtLeastOneJudoka)
+    if (!viewSession) return []
+    let list = viewSession.combats.filter(hasAtLeastOneJudoka)
     if (selectedTatamiId === 'unassigned') {
       list = list.filter((c) => !c.tatamiId)
     } else if (selectedTatamiId !== 'all') {
@@ -461,7 +556,7 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
         a.round - b.round ||
         a.matchIndex - b.matchIndex
     )
-  }, [session, selectedTatamiId])
+  }, [viewSession, selectedTatamiId])
 
   const teamStandings = useMemo(
     () => (session && combatSessionKind(session) === 'team' ? computeTeamStandings(session) : []),
@@ -622,20 +717,24 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
     const combat = session.combats.find((c) => c.id === combatId)
     const isTeam = combat?.kind === 'team' || combatSessionKind(session) === 'team'
     if (!isTeam && !session.confirmedAt) return
+    const base = isTeam
+      ? attachTeamCombatSubstitutes(session, teams, judokas, weightClasses)
+      : session
     void persist(
-      applyCombatSubstitute(session, combatId, slot),
-      'Principal mis à jour — JVac-Chrono prendra ce judoka en charge.'
+      applyCombatSubstitute(base, combatId, slot),
+      'Principal et remplaçant permutés — JVac-Chrono prendra le nouveau principal en charge.'
     )
   }
 
   function applyMatchSubstitutes(teamMatchId: string, slot: 'top' | 'bottom'): void {
     if (!session) return
-    const { session: next, swapped } = applyTeamMatchSubstitutes(session, teamMatchId, slot)
+    const base = attachTeamCombatSubstitutes(session, teams, judokas, weightClasses)
+    const { session: next, swapped } = applyTeamMatchSubstitutes(base, teamMatchId, slot)
     if (swapped === 0) return
     const side = slot === 'top' ? 'blanc' : 'bleu'
     void persist(
       next,
-      `Remplaçant ${side} mis en principal sur ${swapped} catégorie(s) — JVac-Chrono prendra ces judokas en charge.`
+      `Principal et remplaçant permutés (${side}) sur ${swapped} catégorie(s).`
     )
   }
 
@@ -651,7 +750,7 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
       title="Combats"
       subtitle={
         combatSessionKind(session) === 'team'
-          ? 'Combats par équipe : choisissez le judoka principal (ou le remplaçant) par catégorie. JVac-Chrono reprend le principal automatiquement.'
+          ? 'Combats par équipe : permutez principal et remplaçant pour chaque club et chaque catégorie.'
           : 'Tatamis, confirmation des grilles Tirage et suivi d’évolution des combats.'
       }
       actions={
@@ -939,8 +1038,8 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
                   <Label className="text-base">Liste des combats</Label>
                   {combatSessionKind(session) === 'team' && (
                     <p className="text-xs text-muted-foreground">
-                      Par équipe : mettez le remplaçant en principal avant que JVac-Chrono
-                      prenne le combat — par catégorie, ou pour toute la rencontre.
+                      Par équipe : sur chaque club, permutez le principal et le remplaçant pour
+                      la catégorie du combat. JVac-Chrono reprend le nouveau principal.
                     </p>
                   )}
                 </div>
@@ -1008,7 +1107,7 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
                                     onClick={() => applyMatchSubstitutes(m.id, 'top')}
                                   >
                                     <Replace className="h-3.5 w-3.5" />
-                                    Remplaçant blanc · toutes catégories
+                                    Permuter blanc · toutes catégories
                                   </Button>
                                 )}
                                 {canSwapBottom && (
@@ -1020,7 +1119,7 @@ export function CombatsPage({ onBack, embedded = false }: Props) {
                                     onClick={() => applyMatchSubstitutes(m.id, 'bottom')}
                                   >
                                     <Replace className="h-3.5 w-3.5" />
-                                    Remplaçant bleu · toutes catégories
+                                    Permuter bleu · toutes catégories
                                   </Button>
                                 )}
                               </div>
