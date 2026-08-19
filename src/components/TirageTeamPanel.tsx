@@ -5,10 +5,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { CombatBracket } from '@/components/CombatBracket'
 import { normalizeTeams, teamDisplayName, type Team } from '@shared/types/teams'
-import type { Sex } from '@shared/types/judoka'
+import type { Judoka, Sex } from '@shared/types/judoka'
 import type { TeamWeightClassRange } from '@shared/types/settings'
 import {
   applyTeamTieBreakReplay,
+  filterTeamsForTeamTirage,
   filterTeamWeightClasses,
   generateTeamTirage,
   judoVacancesWeightClasses,
@@ -54,6 +55,7 @@ function emptyTeamWeightClass(partial?: Partial<TeamWeightClassRange>): TeamWeig
  */
 export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
   const [teams, setTeams] = useState<Team[]>([])
+  const [judokas, setJudokas] = useState<Judoka[]>([])
   const [weightClasses, setWeightClasses] = useState<TeamWeightClassRange[]>([
     emptyTeamWeightClass({ minKg: 18, maxKg: 20, label: '-20 kg', sex: 'M' })
   ])
@@ -79,8 +81,13 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const res = await window.judovac.getSettings()
-      if (cancelled || !res.ok) return
+      const [res, listed] = await Promise.all([
+        window.judovac.getSettings(),
+        window.judovac.listJudokas({ limit: 5000, offset: 0 })
+      ])
+      if (cancelled) return
+      if (listed.ok) setJudokas(listed.data.items)
+      if (!res.ok) return
       setTeams(normalizeTeams(res.data.teams))
       const saved = normalizeTeamWeightClasses(res.data.teamWeightClasses ?? [])
       if (saved.length > 0) setWeightClasses(saved)
@@ -177,26 +184,28 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
         )
         return
       }
-      if (registered.length < 2) {
-        setResult(null)
-        setError(
-          'Validez au moins deux équipes (menu Par Équipe → Équipes validées) avant le tirage.'
-        )
-        return
-      }
       const listed = await window.judovac.listJudokas({ limit: 5000, offset: 0 })
       if (!listed.ok) {
         setError(listed.error)
         return
       }
-      const generated = generateTeamTirage(registered, listed.data.items, classesForDraw)
-      if (generated.teamCount < 2) {
-        setResult(generated)
+      setJudokas(listed.data.items)
+      const eligible = filterTeamsForTeamTirage(registered, listed.data.items, sexFilter)
+      if (eligible.length < 2) {
+        setResult(null)
         setError(
-          'Validez au moins deux équipes (menu Par Équipe → Équipes validées) avant le tirage.'
+          sexFilter === 'F' || sexFilter === 'M'
+            ? `Moins de deux clubs ${sexFilter === 'F' ? 'filles' : 'garçons'} : inscrivez au moins deux clubs avec des judokas de ce sexe (menu Par Équipe).`
+            : 'Validez au moins deux équipes (menu Par Équipe → Équipes validées) avant le tirage.'
         )
         return
       }
+      const generated = generateTeamTirage(
+        registered,
+        listed.data.items,
+        classesForDraw,
+        sexFilter
+      )
       if (generated.matchCount === 0) {
         setResult(generated)
         setError('Aucune rencontre générée. Vérifiez les équipes validées.')
@@ -415,6 +424,12 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
 
   const matches = result?.session.teamMatches?.filter((m) => m.round === 0) ?? []
   const validated = teams.filter((t) => t.club.trim())
+  const eligibleTeams = useMemo(
+    () => filterTeamsForTeamTirage(teams, judokas, sexFilter),
+    [teams, judokas, sexFilter]
+  )
+  const sexLabel =
+    sexFilter === 'F' ? 'filles' : sexFilter === 'M' ? 'garçons' : null
   const visibleWeightClasses = useMemo(
     () => filterTeamWeightClasses(weightClasses, sexFilter),
     [weightClasses, sexFilter]
@@ -449,7 +464,8 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
               <option value="F">Filles</option>
             </select>
             <p className="text-xs text-muted-foreground">
-              Le tirage et le départage n’utilisent que les catégories de ce sexe.
+              Une fois un sexe choisi, seules ses catégories et les clubs inscrits pour ce sexe
+              (effectif ou composition) participent au tirage.
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -567,13 +583,13 @@ export function TirageTeamPanel({ tatamiCount, onTatamiCount }: Props) {
         </div>
 
         <p className="text-sm text-muted-foreground border-t pt-4">
-          {validated.length} équipe(s) validée(s). Toutes participent au tirage, y compris les clubs
-          sans judoka. Face à un club avec judokas, le combat est programmé : la victoire par
-          absence se confirme manuellement.
+          {sexLabel
+            ? `${eligibleTeams.length} club(s) ${sexLabel} sur ${validated.length} équipe(s) validée(s). Le tirage n’inclut que les clubs inscrits pour ce sexe.`
+            : `${validated.length} équipe(s) validée(s). Toutes participent au tirage, y compris les clubs sans judoka. Face à un club avec judokas, le combat est programmé : la victoire par absence se confirme manuellement.`}
         </p>
-        {teams.length > 0 && (
+        {eligibleTeams.length > 0 && (
           <ul className="flex flex-wrap gap-2">
-            {teams.map((t) => (
+            {eligibleTeams.map((t) => (
               <li
                 key={t.id}
                 className="rounded-full border bg-slate-50 px-3 py-1 text-xs text-judo-navy"

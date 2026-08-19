@@ -91,6 +91,32 @@ export function inferTeamSexFilter(classes: TeamWeightClassRange[]): TeamSexFilt
   return 'all'
 }
 
+/** Club inscrit pour un sexe : judoka de ce sexe dans l’effectif, ou composition (titulaire / remplaçant). */
+export function teamAttachedToSex(
+  team: Team,
+  judokasById: Map<string, Pick<Judoka, 'sex'>>,
+  sex: 'M' | 'F'
+): boolean {
+  for (const id of team.judokaIds) {
+    if (judokasById.get(id)?.sex === sex) return true
+  }
+  return (team.lineups ?? []).some(
+    (l) => l.sex === sex && Boolean(l.principalId || l.substituteId)
+  )
+}
+
+/** Clubs qui participent au tirage : tous si « Toutes », sinon seulement ceux du sexe choisi. */
+export function filterTeamsForTeamTirage(
+  teams: Team[],
+  judokas: Array<Pick<Judoka, 'id' | 'sex'>>,
+  sex: TeamSexFilter | undefined
+): Team[] {
+  const registered = teams.filter((t) => t.club.trim())
+  if (sex !== 'M' && sex !== 'F') return registered
+  const byId = new Map(judokas.map((j) => [j.id, j]))
+  return registered.filter((t) => teamAttachedToSex(t, byId, sex))
+}
+
 export function matchTeamWeightClass(
   j: Judoka,
   classes: TeamWeightClassRange[]
@@ -414,19 +440,21 @@ export function attachTeamCombatSubstitutes(
 export function generateTeamTirage(
   teams: Team[],
   judokas: Judoka[],
-  weightClasses: TeamWeightClassRange[]
+  weightClasses: TeamWeightClassRange[],
+  sexFilter?: TeamSexFilter
 ): TeamTirageResult {
   const now = new Date().toISOString()
   const classes = normalizeTeamWeightClasses(weightClasses)
   const registered = teams.filter((t) => t.club.trim())
-  const byId = judokasIndexedForTeams(registered, judokas)
-  const eligible = registered
+  const eligible = filterTeamsForTeamTirage(registered, judokas, sexFilter)
+  const byId = judokasIndexedForTeams(eligible, judokas)
 
   const session = createEmptyCombatSession()
   session.kind = 'team'
   session.sourceTirageAt = now
   session.updatedAt = now
-  session.teamSexFilter = inferTeamSexFilter(classes)
+  session.teamSexFilter =
+    sexFilter === 'M' || sexFilter === 'F' ? sexFilter : inferTeamSexFilter(classes)
 
   if (eligible.length < 2 || classes.length === 0) {
     session.teamMatches = []
