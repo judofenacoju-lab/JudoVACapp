@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { ArrowLeft, BarChart3, Copy, Check, Eye, FileDown, ListChecks, RefreshCw, Save, Trash2, Plus, Eraser, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { ArrowLeft, BarChart3, Copy, Check, Eye, FileDown, ImagePlus, ListChecks, RefreshCw, Save, Trash2, Plus, Eraser, X } from 'lucide-react'
 import type { AppSettings, CategoryAgeRange } from '@shared/types/settings'
 import { createDefaultCategoryAgeRanges } from '@shared/types/settings'
 import type { Judoka } from '@shared/types/judoka'
@@ -10,6 +10,7 @@ import {
   resolveJudokaCategory
 } from '@shared/utils/judoka'
 import { mergeRegisteredClubNames, setActiveRegisteredClubs } from '@shared/utils/clubs'
+import { withBrand, setActiveBrand } from '@shared/utils/branding'
 import type { SystemLogEntry } from '@shared/types/dashboard'
 import type { CreatedUserAccount, UserAccount } from '@shared/types/user-account'
 import { Button } from '@/components/ui/button'
@@ -148,6 +149,9 @@ export function AdminPage({ onBack, embedded = false }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const [confirmClearClubs, setConfirmClearClubs] = useState(false)
+  const [confirmDeleteUsers, setConfirmDeleteUsers] = useState(false)
+  const [deleteUsersBusy, setDeleteUsersBusy] = useState(false)
+  const logoInputRef = useRef<HTMLInputElement>(null)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -241,7 +245,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
       const { downloadPdfBytes, exportJudokaListPdfBytes } = await import('@/lib/judoka-list-pdf')
       const bytes = await exportJudokaListPdfBytes({
         judokas: clubMembers,
-        title: `Club — ${clubMembersClub} — JudoVACapp`,
+        title: withBrand(`Club — ${clubMembersClub} — JudoVACapp`),
         filterSummary: `Club « ${clubMembersClub} »`,
         mode: 'registered'
       })
@@ -520,8 +524,8 @@ export function AdminPage({ onBack, embedded = false }: Props) {
         judokas: items,
         title:
           mode === 'weighed'
-            ? `Catégorie — ${categoryViewName} (pesés) — JudoVACapp`
-            : `Catégorie — ${categoryViewName} (enregistrés) — JudoVACapp`,
+            ? withBrand(`Catégorie — ${categoryViewName} (pesés) — JudoVACapp`)
+            : withBrand(`Catégorie — ${categoryViewName} (enregistrés) — JudoVACapp`),
         filterSummary:
           mode === 'weighed'
             ? `Catégorie « ${categoryViewName} » · judokas pesés uniquement`
@@ -585,6 +589,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
       return
     }
     setSettings(res.data)
+    setActiveBrand(res.data.event.name, res.data.event.logoDataUrl)
     setMessage('Paramètres enregistrés.')
     void refreshClubCounts()
     void refreshCategoryCounts()
@@ -726,6 +731,57 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     await loadUsers()
   }
 
+  async function confirmDeleteAllUsers(): Promise<void> {
+    const targets = users.filter((u) => !isProtectedAdmin(u))
+    if (targets.length === 0) {
+      setConfirmDeleteUsers(false)
+      setMessage('Aucun compte utilisateur à supprimer (le compte Serveur est conservé).')
+      return
+    }
+    setDeleteUsersBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      let deleted = 0
+      for (const user of targets) {
+        const res = await window.judovac.deleteUser(user.username)
+        if (!res.ok) {
+          setError(res.error)
+          await loadUsers()
+          return
+        }
+        deleted += 1
+      }
+      setConfirmDeleteUsers(false)
+      setMessage(
+        deleted === 1
+          ? '1 compte utilisateur a été supprimé. Le compte Serveur (Admin) est conservé.'
+          : `${deleted} comptes utilisateurs ont été supprimés. Le compte Serveur (Admin) est conservé.`
+      )
+      await loadUsers()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Suppression des utilisateurs impossible')
+    } finally {
+      setDeleteUsersBusy(false)
+    }
+  }
+
+  async function loadEventLogo(file: File | undefined): Promise<void> {
+    if (!settings || !file) return
+    setBusy(true)
+    setError(null)
+    try {
+      const logoDataUrl = await readLogoDataUrl(file)
+      setSettings({ ...settings, event: { ...settings.event, logoDataUrl } })
+      setMessage('Logo chargé. Cliquez sur Enregistrer pour l’appliquer à tous les comptes.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Chargement du logo impossible')
+    } finally {
+      setBusy(false)
+      if (logoInputRef.current) logoInputRef.current.value = ''
+    }
+  }
+
   async function clearLogs(): Promise<void> {
     if (!window.confirm('Effacer tout l’historique du journal ?')) return
     setBusy(true)
@@ -805,11 +861,16 @@ export function AdminPage({ onBack, embedded = false }: Props) {
           <section className="grid gap-4 rounded-xl border bg-white/75 p-5 sm:grid-cols-2">
             <Field label="Nom de l'événement">
               <Input
+                placeholder="JudoVACapp"
                 value={settings.event.name}
                 onChange={(e) =>
                   setSettings({ ...settings, event: { ...settings.event, name: e.target.value } })
                 }
               />
+              <p className="text-xs text-muted-foreground">
+                Une fois enregistré, ce nom remplace « JudoVACapp » dans les menus et les documents.
+                Laissez vide pour conserver JudoVACapp.
+              </p>
             </Field>
             <Field label="Type">
               <select
@@ -877,6 +938,54 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                 }
               />
             </Field>
+            <div className="sm:col-span-2 space-y-2">
+              <Label>Logo de l’activité</Label>
+              <input
+                ref={logoInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                onChange={(e) => void loadEventLogo(e.target.files?.[0])}
+              />
+              <div className="flex flex-wrap items-center gap-3">
+                <img
+                  src={settings.event.logoDataUrl?.trim() || undefined}
+                  alt=""
+                  className={`h-14 w-14 rounded-full object-cover ring-2 ring-judo-navy/20 ${
+                    settings.event.logoDataUrl?.trim() ? '' : 'hidden'
+                  }`}
+                />
+                {!settings.event.logoDataUrl?.trim() && (
+                  <span className="text-sm text-muted-foreground">
+                    Aucun logo chargé — le logo JudoVAC reste affiché dans les menus.
+                  </span>
+                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => logoInputRef.current?.click()}
+                >
+                  <ImagePlus className="h-4 w-4" />
+                  Charger logo
+                </Button>
+                {settings.event.logoDataUrl?.trim() ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() =>
+                      setSettings({
+                        ...settings,
+                        event: { ...settings.event, logoDataUrl: null }
+                      })
+                    }
+                  >
+                    Retirer
+                  </Button>
+                ) : null}
+              </div>
+            </div>
           </section>
         )}
 
@@ -917,7 +1026,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                 />
               </Field>
             </div>
-            <div>
+            <div className="flex flex-wrap items-center gap-3">
               <Button
                 type="button"
                 variant="accent"
@@ -926,6 +1035,19 @@ export function AdminPage({ onBack, embedded = false }: Props) {
               >
                 <Plus className="h-4 w-4" />
                 {busy ? 'Création…' : 'Créer le compte'}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy || deleteUsersBusy || users.every((u) => isProtectedAdmin(u))}
+                onClick={() => {
+                  setError(null)
+                  setMessage(null)
+                  setConfirmDeleteUsers(true)
+                }}
+              >
+                <Trash2 className="h-4 w-4" />
+                Supprimer
               </Button>
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
@@ -1533,6 +1655,43 @@ export function AdminPage({ onBack, embedded = false }: Props) {
         {message && <p className="text-sm text-emerald-700">{message}</p>}
       </div>
 
+      {confirmDeleteUsers && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-users-title"
+            className="w-full max-w-md rounded-xl border bg-white p-6 shadow-xl"
+          >
+            <h3 id="delete-users-title" className="text-lg font-semibold text-judo-navy">
+              Supprimer les utilisateurs
+            </h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Tous les comptes utilisateurs seront supprimés, sauf le compte Serveur (Admin).
+              Cette action est irréversible.
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={deleteUsersBusy}
+                onClick={() => setConfirmDeleteUsers(false)}
+              >
+                Annuler
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={deleteUsersBusy}
+                onClick={() => void confirmDeleteAllUsers()}
+              >
+                {deleteUsersBusy ? 'Suppression…' : 'Supprimer'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {confirmClearClubs && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
           <div
@@ -2099,4 +2258,33 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       {children}
     </div>
   )
+}
+
+function readLogoDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      const max = 256
+      const scale = Math.min(1, max / Math.max(img.width, img.height))
+      const w = Math.max(1, Math.round(img.width * scale))
+      const h = Math.max(1, Math.round(img.height * scale))
+      const canvas = document.createElement('canvas')
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        reject(new Error('Canvas indisponible'))
+        return
+      }
+      ctx.drawImage(img, 0, 0, w, h)
+      resolve(canvas.toDataURL('image/png'))
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error('Image illisible'))
+    }
+    img.src = url
+  })
 }

@@ -51,6 +51,8 @@ export interface AppSettings {
     startDate: string
     endDate: string
     organizer: string
+    /** Logo d’activité (data URL). Vide = logo JudoVAC par défaut. */
+    logoDataUrl?: string | null
   }
   print: {
     defaultPrinter: string
@@ -86,12 +88,13 @@ export interface AppSettings {
 export function createDefaultSettings(): AppSettings {
   return {
     event: {
-      name: 'Événement judo',
+      name: '',
       type: 'competition',
       location: '',
       startDate: new Date().toISOString().slice(0, 10),
       endDate: new Date().toISOString().slice(0, 10),
-      organizer: ''
+      organizer: '',
+      logoDataUrl: null
     },
     print: {
       defaultPrinter: '',

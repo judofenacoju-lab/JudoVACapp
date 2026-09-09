@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   Archive,
   Dices,
@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import brandLogo from '@/assets/brand-logo.png'
+import { useBrand } from '@/lib/brand-context'
 
 export type ServerNavId =
   | 'home'
@@ -88,21 +88,8 @@ export function WorkspaceLayout({
   children
 }: Props) {
   const items = role === 'server' ? SERVER_NAV : CLIENT_NAV
-  const [eventName, setEventName] = useState<string | null>(null)
+  const { name: brandName, logoSrc } = useBrand()
   const [navOpen, setNavOpen] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      const res = await window.judovac.getSettings()
-      if (!cancelled && res.ok && res.data.event.name) {
-        setEventName(res.data.event.name)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [])
 
   function navigate(id: string): void {
     onNavigate(id)
@@ -121,12 +108,12 @@ export function WorkspaceLayout({
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-3">
             <img
-              src={brandLogo}
-              alt="JudoVACapp"
+              src={logoSrc}
+              alt={brandName}
               className="h-11 w-11 shrink-0 rounded-full object-cover shadow-md ring-2 ring-white/25"
             />
             <div className="min-w-0">
-              <p className="font-display text-lg font-semibold tracking-tight">JudoVACapp</p>
+              <p className="font-display text-lg font-semibold tracking-tight">{brandName}</p>
               <p className="mt-0.5 text-xs uppercase tracking-wider text-judo-gold">
                 {role === 'server' ? 'Mode Serveur' : 'Mode Client'}
               </p>
@@ -141,11 +128,6 @@ export function WorkspaceLayout({
             <X className="h-5 w-5" />
           </button>
         </div>
-        {eventName && (
-          <p className="mt-3 line-clamp-2 text-xs text-white/60" title={eventName}>
-            {eventName}
-          </p>
-        )}
       </div>
 
       <nav className="flex-1 space-y-0.5 overflow-auto p-2">

@@ -9,6 +9,7 @@ import type { Judoka } from '@shared/types/judoka'
 import { formatBadgeCategory, formatBadgeJudokaName } from '@shared/utils/judoka'
 import { pdfSafeText } from '@shared/utils/pdf-winansi-text'
 import brandLogoUrl from '@/assets/brand-logo.png'
+import { getActiveBrandLogo, getActiveBrandName, withBrand } from '@shared/utils/branding'
 
 const DESIGN_SCALE = 2.5
 
@@ -259,8 +260,8 @@ export async function exportBadgesPdfBytes(options: BrowserPdfExportOptions): Pr
   }
 
   const pdf = await PDFDocument.create()
-  pdf.setTitle('JudoVACapp — Badges')
-  pdf.setAuthor('JudoVACapp')
+  pdf.setTitle(withBrand('JudoVACapp — Badges'))
+  pdf.setAuthor(getActiveBrandName())
   const font = await pdf.embedFont(StandardFonts.Helvetica)
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold)
 
@@ -275,7 +276,7 @@ export async function exportBadgesPdfBytes(options: BrowserPdfExportOptions): Pr
     template.logoPath,
     readDataUrl,
     logoSide,
-    brandLogoUrl
+    getActiveBrandLogo() || brandLogoUrl
   )
 
   let bgImg: PDFImage | null = null

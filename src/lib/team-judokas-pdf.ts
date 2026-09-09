@@ -6,6 +6,7 @@ import { formatJudokaFullName } from '@shared/utils/judoka'
 import { normalizeTeamWeightClasses } from '@shared/utils/team-tirage'
 import { downloadPdfBytes } from '@/lib/judoka-list-pdf'
 import { pdfSafeText } from '@/lib/pdf-winansi-text'
+import { getActiveBrandName, withBrand } from '@shared/utils/branding'
 
 const MARGIN = 36
 const ROW_H = 16
@@ -132,11 +133,11 @@ export async function exportTeamJudokasPdfBytes(options: {
     options.weightClasses
   )
   const total = groups.reduce((n, g) => n + g.items.length, 0)
-  const title = 'Liste des judokas par equipe - JudoVACapp'
+  const title = withBrand('Liste des judokas par equipe - JudoVACapp')
 
   const pdf = await PDFDocument.create()
   pdf.setTitle(title)
-  pdf.setAuthor('JudoVACapp')
+  pdf.setAuthor(getActiveBrandName())
   const font = await pdf.embedFont(StandardFonts.Helvetica)
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold)
 

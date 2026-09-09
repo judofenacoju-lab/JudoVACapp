@@ -7,6 +7,7 @@ import {
 } from '@shared/utils/judoka'
 import { downloadPdfBytes } from '@/lib/judoka-list-pdf'
 import { pdfSafeText } from '@/lib/pdf-winansi-text'
+import { getActiveBrandName, withBrand } from '@shared/utils/branding'
 
 const MARGIN = 36
 const ROW_H = 16
@@ -142,10 +143,10 @@ export function buildTriageByClub(judokas: Judoka[]): {
  */
 export async function exportWeighedTriagePdfBytes(judokas: Judoka[]): Promise<Uint8Array> {
   const { clubs, weighedCount } = buildTriageByClub(judokas)
-  const title = pdfSafeText('Triage des judokas pesés - JudoVACapp')
+  const title = pdfSafeText(withBrand('Triage des judokas pesés - JudoVACapp'))
   const pdf = await PDFDocument.create()
   pdf.setTitle(title)
-  pdf.setAuthor('JudoVACapp')
+  pdf.setAuthor(getActiveBrandName())
   const font = await pdf.embedFont(StandardFonts.Helvetica)
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold)
 

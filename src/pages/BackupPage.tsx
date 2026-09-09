@@ -116,7 +116,7 @@ export function BackupPage({ onBack, embedded = false }: Props) {
       }
       setConfirmReset(false)
       setMessage(
-        `Réinitialisation terminée — ${reset.data.deleted} judoka(s) supprimé(s) (individuel et par équipe). Les clubs de Configuration sont conservés.`
+        `Réinitialisation terminée — ${reset.data.deleted} judoka(s) et tous les clubs (individuel et par équipe) ont été supprimés.`
       )
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Réinitialisation impossible')
@@ -139,24 +139,25 @@ export function BackupPage({ onBack, embedded = false }: Props) {
         ) : undefined
       }
     >
-      <div className="mx-auto max-w-lg space-y-4 animate-fade-in rounded-xl border bg-white/75 p-6">
+      <div className="mx-auto max-w-3xl space-y-4 animate-fade-in rounded-xl border bg-white/75 p-6">
         <p className="text-sm text-muted-foreground">
           Réservé au mode Serveur. L’export produit un fichier `.jvac` (judokas, photos,
           paramètres) utilisable aussi bien en version Online qu’Offline, sans effacer les
           données existantes.
         </p>
-        <div className="flex flex-wrap gap-3">
-          <Button variant="accent" size="lg" disabled={busy} onClick={() => void doExport()}>
+        <div className="flex flex-nowrap items-center gap-3 overflow-x-auto">
+          <Button variant="accent" size="lg" className="shrink-0" disabled={busy} onClick={() => void doExport()}>
             <Download className="h-4 w-4" />
             Exporter
           </Button>
-          <Button variant="outline" size="lg" disabled={busy} onClick={() => void startRestore()}>
+          <Button variant="outline" size="lg" className="shrink-0" disabled={busy} onClick={() => void startRestore()}>
             <Upload className="h-4 w-4" />
             Restaurer
           </Button>
           <Button
             variant="outline"
             size="lg"
+            className="shrink-0"
             disabled={busy}
             onClick={() => {
               setError(null)
@@ -181,14 +182,15 @@ export function BackupPage({ onBack, embedded = false }: Props) {
             className="w-full max-w-md rounded-xl border bg-white p-6 shadow-xl"
           >
             <h3 id="reset-judokas-title" className="text-lg font-semibold text-judo-navy">
-              Réinitialiser les judokas
+              Réinitialiser les données
             </h3>
             <p className="mt-2 text-sm text-muted-foreground">
-              Tous les noms et données des judokas seront supprimés (enregistrement individuel et
-              compositions par équipe). Cette action est irréversible.
+              Tous les noms et données des judokas seront supprimés (individuel et par équipe),
+              ainsi que tous les clubs enregistrés. Cette action est irréversible.
             </p>
             <p className="mt-2 text-sm text-muted-foreground">
-              Les clubs de Configuration, les utilisateurs et les autres paramètres sont conservés.
+              Les utilisateurs, le nom de l’événement, le logo et les autres paramètres sont
+              conservés.
             </p>
             <div className="mt-6 flex justify-end gap-2">
               <Button

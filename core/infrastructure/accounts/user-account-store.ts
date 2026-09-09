@@ -54,6 +54,7 @@ export class UserAccountStore {
 
   deleteByUsername(username: string): boolean {
     const key = username.trim().toLowerCase()
+    if (key === 'serveur' || key === 'admin') return false
     const before = this.items.length
     this.items = this.items.filter((u) => u.username.toLowerCase() !== key)
     if (this.items.length === before) return false

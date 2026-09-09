@@ -10,6 +10,7 @@ import {
 import { combatPhaseLabel } from '@shared/utils/combat-phase'
 import { downloadBytes } from './download-blob'
 import { pdfSafeText } from './pdf-winansi-text'
+import { getActiveBrandName, withBrand } from '@shared/utils/branding'
 
 /** A4 paysage. */
 const PAGE_W = 841.89
@@ -427,7 +428,7 @@ function drawHeaderAndGetGridTop(
   let y = PAGE_H - MARGIN
 
   if (showDocTitle) {
-    page.drawText(pdfSafeText('JudoVACapp - Grille de combats'), {
+    page.drawText(pdfSafeText(withBrand('JudoVACapp - Grille de combats')), {
       x: MARGIN,
       y: y - 12,
       size: 14,
@@ -576,7 +577,7 @@ function drawRepechageBronzePages(
 
   const page = doc.addPage([PAGE_W, PAGE_H])
   let y = PAGE_H - MARGIN
-  page.drawText(pdfSafeText('JudoVACapp - Repechage / Bronze'), {
+  page.drawText(pdfSafeText(withBrand('JudoVACapp - Repechage / Bronze')), {
     x: MARGIN,
     y: y - 12,
     size: 14,

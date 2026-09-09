@@ -1,6 +1,7 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import type { Judoka } from '@shared/types/judoka'
 import { downloadPdfBytes } from '@/lib/judoka-list-pdf'
+import { getActiveBrandName, withBrand } from '@shared/utils/branding'
 
 export interface ClubStatsRow {
   name: string
@@ -53,10 +54,10 @@ export interface ClubsListPdfOptions {
  * PDF : clubs enregistrés avec effectifs total, garçons et filles.
  */
 export async function exportClubsListPdfBytes(options: ClubsListPdfOptions): Promise<Uint8Array> {
-  const { rows, filterSummary, title = 'Clubs enregistrés — JudoVACapp' } = options
+  const { rows, filterSummary, title = withBrand('Clubs enregistrés — JudoVACapp') } = options
   const pdf = await PDFDocument.create()
   pdf.setTitle(title)
-  pdf.setAuthor('JudoVACapp')
+  pdf.setAuthor(getActiveBrandName())
   const font = await pdf.embedFont(StandardFonts.Helvetica)
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold)
 
@@ -239,8 +240,8 @@ export async function exportAndDownloadClubsListPdf(
   const rows = buildClubStats(judokas)
   const title =
     mode === 'weighed'
-      ? 'Clubs — judokas pesés — JudoVACapp'
-      : 'Clubs enregistrés — JudoVACapp'
+      ? withBrand('Clubs — judokas pesés — JudoVACapp')
+      : withBrand('Clubs enregistrés — JudoVACapp')
   const bytes = await exportClubsListPdfBytes({ rows, filterSummary, title })
   const filename =
     mode === 'weighed'

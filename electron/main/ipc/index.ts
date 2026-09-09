@@ -498,16 +498,10 @@ export function registerIpcHandlers(ctx: IpcContext): void {
           try {
             const { SettingsStore } = await import('@core/infrastructure/settings/settings-store')
             const store = new SettingsStore()
-            const current = await store.get()
-            const now = new Date().toISOString()
             await store.set({
               combatSession: null,
-              teams: (current.teams ?? []).map((t) => ({
-                ...t,
-                judokaIds: [],
-                lineups: [],
-                updatedAt: now
-              }))
+              teams: [],
+              clubs: []
             })
           } catch {
             /* paramètres optionnels */
@@ -611,8 +605,12 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       if (!mode || mode.mode !== 'server') {
         return { ok: false as const, error: 'Réservé au mode Serveur' }
       }
+      const name = String(username ?? '').trim()
+      if (name.toLowerCase() === 'serveur' || name.toLowerCase() === 'admin') {
+        return { ok: false as const, error: 'Le compte Serveur / administrateur ne peut pas être supprimé' }
+      }
       const { getContainer } = await import('@server/container')
-      const ok = getContainer().userAccounts.deleteByUsername(String(username ?? ''))
+      const ok = getContainer().userAccounts.deleteByUsername(name)
       if (!ok) return { ok: false as const, error: 'Compte introuvable' }
       await getContainer().logger.log(
         'info',

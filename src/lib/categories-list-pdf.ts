@@ -4,6 +4,7 @@ import type { CategoryAgeRange } from '@shared/types/settings'
 import { resolveJudokaCategory } from '@shared/utils/judoka'
 import { downloadPdfBytes } from '@/lib/judoka-list-pdf'
 import { pdfSafeText } from '@/lib/pdf-winansi-text'
+import { getActiveBrandName, withBrand } from '@shared/utils/branding'
 
 export interface CategoryStatsRow {
   name: string
@@ -90,10 +91,10 @@ export interface CategoriesListPdfOptions {
 export async function exportCategoriesListPdfBytes(
   options: CategoriesListPdfOptions
 ): Promise<Uint8Array> {
-  const { rows, filterSummary, title = 'Judokas par catégorie — JudoVACapp' } = options
+  const { rows, filterSummary, title = withBrand('Judokas par catégorie — JudoVACapp') } = options
   const pdf = await PDFDocument.create()
   pdf.setTitle(title)
-  pdf.setAuthor('JudoVACapp')
+  pdf.setAuthor(getActiveBrandName())
   const font = await pdf.embedFont(StandardFonts.Helvetica)
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold)
 
@@ -279,8 +280,8 @@ export async function exportAndDownloadCategoriesListPdf(
   const rows = buildCategoryStats(judokas, configuredCategories)
   const title =
     mode === 'weighed'
-      ? 'Catégories — judokas pesés — JudoVACapp'
-      : 'Catégories enregistrées — JudoVACapp'
+      ? withBrand('Catégories — judokas pesés — JudoVACapp')
+      : withBrand('Catégories enregistrées — JudoVACapp')
   const bytes = await exportCategoriesListPdfBytes({ rows, filterSummary, title })
   const filename =
     mode === 'weighed'

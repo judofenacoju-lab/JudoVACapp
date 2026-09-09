@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { TirageResult } from '@shared/utils/tirage'
 import type { TeamTirageResult } from '@shared/utils/team-tirage'
+import { getActiveBrandName } from '@shared/utils/branding'
 
 export interface CeremonyPair {
   white: string
@@ -186,7 +187,7 @@ export function TirageCeremonyModal({
         <div className="flex items-center gap-4">
           <div className="text-right">
             <p className="text-xs font-semibold uppercase tracking-widest text-judo-navy/60">
-              JudoVACapp
+              {getActiveBrandName()}
             </p>
             <p className="text-sm font-bold uppercase text-judo-navy">
               {kind === 'team' ? 'Par équipe' : 'Individuel'}

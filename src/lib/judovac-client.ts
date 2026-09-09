@@ -10,6 +10,7 @@ import { createDefaultBadgeTemplate } from '@shared/types/badge'
 import { createDefaultSettings } from '@shared/types/settings'
 import { computeAge, hasRecordedWeight, isSameJudokaIdentity, resolveJudokaCategory, setActiveCategoryAgeRanges } from '@shared/utils/judoka'
 import { setActiveRegisteredClubs } from '@shared/utils/clubs'
+import { setActiveBrand } from '@shared/utils/branding'
 import { formatCreatorLabel, matchesCreatorLabel, resolveCreatedByStorageValue } from '@shared/utils/creator'
 import { judokaFormSchema } from '@shared/validation/judoka'
 import { createId } from './create-id'
@@ -1599,19 +1600,11 @@ export const judovacClient = {
       const { data } = await supabase.from('judokas').select('id')
       const ids = (data ?? []).map((r) => r.id as string)
       if (ids.length) await supabase.from('judokas').delete().in('id', ids)
-      const current = await judovacClient.getSettings()
-      if (current.ok) {
-        const now = new Date().toISOString()
-        await judovacClient.setSettings({
-          teams: (current.data.teams ?? []).map((t) => ({
-            ...t,
-            judokaIds: [],
-            lineups: [],
-            updatedAt: now
-          })),
-          combatSession: null
-        })
-      }
+      await judovacClient.setSettings({
+        teams: [],
+        clubs: [],
+        combatSession: null
+      })
       await logSystem(
         'warn',
         'judoka.reset',
@@ -2365,6 +2358,7 @@ export const judovacClient = {
       const settings = mergeSettings((data?.settings ?? null) as Partial<AppSettings> | null)
       setActiveCategoryAgeRanges(settings.categories)
       setActiveRegisteredClubs(settings.clubs)
+      setActiveBrand(settings.event.name, settings.event.logoDataUrl)
       return ok(settings)
     } catch (e) {
       return fail(e instanceof Error ? e.message : 'Paramètres indisponibles')
@@ -2398,6 +2392,7 @@ export const judovacClient = {
     if (error) return fail(error.message)
     setActiveCategoryAgeRanges(merged.categories)
     setActiveRegisteredClubs(merged.clubs)
+    setActiveBrand(merged.event.name, merged.event.logoDataUrl)
     return ok(merged)
   },
 

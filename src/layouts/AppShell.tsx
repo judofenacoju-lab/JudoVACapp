@@ -1,4 +1,4 @@
-import brandLogo from '@/assets/brand-logo.png'
+import { useBrand } from '@/lib/brand-context'
 
 interface Props {
   title: string
@@ -10,6 +10,7 @@ interface Props {
 }
 
 export function AppShell({ title, subtitle, actions, children, embedded = false }: Props) {
+  const { name: brandName, logoSrc } = useBrand()
   if (embedded) {
     return (
       <div className="animate-fade-in">
@@ -30,12 +31,12 @@ export function AppShell({ title, subtitle, actions, children, embedded = false 
       <header className="flex items-start justify-between gap-4 border-b border-white/40 bg-judo-navy/95 px-6 py-4 text-white shadow-md">
         <div className="flex items-start gap-3">
           <img
-            src={brandLogo}
+            src={logoSrc}
             alt=""
             className="mt-0.5 h-10 w-10 shrink-0 rounded-full object-cover ring-2 ring-white/20"
           />
           <div>
-            <p className="text-xs font-medium uppercase tracking-[0.2em] text-judo-gold">JudoVACapp</p>
+            <p className="text-xs font-medium uppercase tracking-[0.2em] text-judo-gold">{brandName}</p>
             <h1 className="mt-1 font-display text-xl font-semibold md:text-2xl">{title}</h1>
             {subtitle && <p className="mt-1 text-sm text-white/65">{subtitle}</p>}
           </div>

@@ -3,6 +3,7 @@ import type { Judoka } from '@shared/types/judoka'
 import { formatJudokaFullName } from '@shared/utils/judoka'
 import { downloadBytes } from './download-blob'
 import { pdfSafeText } from './pdf-winansi-text'
+import { getActiveBrandName, withBrand } from '@shared/utils/branding'
 
 const MARGIN = 36
 const ROW_H = 16
@@ -85,14 +86,14 @@ export async function exportJudokaListPdfBytes(options: JudokaListPdfOptions): P
   const mode = options.mode ?? 'registered'
   const defaultTitle =
     mode === 'weighed'
-      ? 'Liste des judokas pesés (par club) - JudoVACapp'
-      : 'Liste des judokas enregistrés (par club) - JudoVACapp'
+      ? withBrand('Liste des judokas pesés (par club) - JudoVACapp')
+      : withBrand('Liste des judokas enregistrés (par club) - JudoVACapp')
   const { judokas, filterSummary, title = defaultTitle } = options
   const groups = groupJudokasByClub(judokas)
 
   const pdf = await PDFDocument.create()
   pdf.setTitle(title)
-  pdf.setAuthor('JudoVACapp')
+  pdf.setAuthor(getActiveBrandName())
   const font = await pdf.embedFont(StandardFonts.Helvetica)
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold)
 

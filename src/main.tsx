@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import { installRandomUuidPolyfill } from '@/lib/create-id'
 import { installJudovacClient } from '@/lib/judovac-client'
 import { AuthProvider } from '@/lib/auth-context'
+import { BrandProvider } from '@/lib/brand-context'
 import App from './App'
 import './index.css'
 
@@ -83,7 +84,9 @@ try {
     <RootErrorBoundary>
       <BrowserRouter>
         <AuthProvider>
-          <App />
+          <BrandProvider>
+            <App />
+          </BrandProvider>
         </AuthProvider>
       </BrowserRouter>
     </RootErrorBoundary>

@@ -1,6 +1,7 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import type { Judoka } from '@shared/types/judoka'
 import { formatCreatorLabel } from '@shared/utils/creator'
+import { getActiveBrandName, withBrand } from '@shared/utils/branding'
 import { downloadPdfBytes } from '@/lib/judoka-list-pdf'
 
 export interface UserClubsFiche {
@@ -64,10 +65,10 @@ export async function exportUserClubsPdfBytes(
   fiches: UserClubsFiche[],
   options?: { filterSummary?: string }
 ): Promise<Uint8Array> {
-  const title = 'Fiche Utilisateurs — JudoVACapp'
+  const title = withBrand('Fiche Utilisateurs — JudoVACapp')
   const pdf = await PDFDocument.create()
   pdf.setTitle(title)
-  pdf.setAuthor('JudoVACapp')
+  pdf.setAuthor(getActiveBrandName())
   const font = await pdf.embedFont(StandardFonts.Helvetica)
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold)
 

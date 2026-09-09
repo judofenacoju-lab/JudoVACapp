@@ -9,6 +9,7 @@ import {
 } from '@shared/utils/team-tirage'
 import { downloadBytes } from './download-blob'
 import { appendBracketTreePages } from './tirage-bracket-pdf'
+import { getActiveBrandName, withBrand } from '@shared/utils/branding'
 
 function utf8ToBase64(value: string): string {
   const bytes = new TextEncoder().encode(value)
@@ -26,8 +27,8 @@ export async function exportTeamTiragePdfBytes(
 ): Promise<Uint8Array> {
   const snapshot = teamTirageSnapshot(result, extras.teams ?? [], extras.weightClasses ?? [])
   const pdf = await PDFDocument.create()
-  pdf.setTitle('Grille des combats par équipe — JudoVACapp')
-  pdf.setAuthor('JudoVACapp')
+  pdf.setTitle(withBrand('Grille des combats par équipe — JudoVACapp'))
+  pdf.setAuthor(getActiveBrandName())
   pdf.setKeywords(['judovac-team-tirage'])
   pdf.setSubject(`${TEAM_TIRAGE_PDF_SUBJECT_PREFIX}${utf8ToBase64(JSON.stringify(snapshot))}`)
   const font = await pdf.embedFont(StandardFonts.Helvetica)
@@ -35,7 +36,7 @@ export async function exportTeamTiragePdfBytes(
 
   const bracket = teamMatchesToBracket(result.session.teamMatches ?? [])
   appendBracketTreePages(pdf, font, fontBold, {
-    title: 'JudoVACapp - Grille par équipe',
+    title: withBrand('JudoVACapp - Grille par équipe'),
     heading: 'Tableau des équipes',
     meta: `${result.teamCount} équipe(s) · ${result.matchCount} rencontre(s) · tableau ${bracket.size}`,
     bracket,
