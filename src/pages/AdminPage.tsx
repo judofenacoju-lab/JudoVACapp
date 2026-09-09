@@ -147,6 +147,7 @@ export function AdminPage({ onBack, embedded = false }: Props) {
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
+  const [confirmClearClubs, setConfirmClearClubs] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -261,25 +262,28 @@ export function AdminPage({ onBack, embedded = false }: Props) {
     }
   }
 
-  /** Reprend tous les clubs des fiches judokas comme clubs Serveur (persistés). */
-  async function syncSystemClubsIntoSettings(current: AppSettings): Promise<AppSettings> {
-    const res = await window.judovac.listJudokaClubNames()
-    if (!res.ok) return current
-    const before = mergeRegisteredClubNames(current.clubs)
-    const merged = mergeRegisteredClubNames(current.clubs, res.data.items)
-    const map: Record<string, number> = {}
-    for (const row of res.data.stats ?? []) {
-      map[row.name.trim().toLowerCase()] = row.count
+  async function clearAllClubs(): Promise<void> {
+    if (!settings) return
+    setBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const res = await window.judovac.setSettings({ clubs: [] })
+      if (!res.ok) {
+        setError(res.error)
+        return
+      }
+      setActiveRegisteredClubs([])
+      setSettings({ ...res.data, clubs: [] })
+      setNewClubName('')
+      setConfirmClearClubs(false)
+      setMessage('Tous les clubs de Configuration ont été effacés. Les judokas enregistrés sont conservés.')
+      void refreshClubCounts()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Effacement des clubs impossible')
+    } finally {
+      setBusy(false)
     }
-    setClubCounts(map)
-    if (merged.join('\0') === before.join('\0')) return current
-    const saved = await window.judovac.setSettings({ ...current, clubs: merged })
-    if (saved.ok) {
-      setActiveRegisteredClubs(saved.data.clubs)
-      return saved.data
-    }
-    setActiveRegisteredClubs(merged)
-    return { ...current, clubs: merged }
   }
 
   async function loadNetwork(): Promise<void> {
@@ -305,8 +309,9 @@ export function AdminPage({ onBack, embedded = false }: Props) {
         window.judovac.listUsers()
       ])
       if (s.ok) {
-        const withClubs = await syncSystemClubsIntoSettings(s.data)
-        setSettings(withClubs)
+        setActiveRegisteredClubs(s.data.clubs)
+        setSettings(s.data)
+        void refreshClubCounts()
       } else {
         setError(s.error)
       }
@@ -317,19 +322,8 @@ export function AdminPage({ onBack, embedded = false }: Props) {
   }, [])
 
   useEffect(() => {
-    if (tab !== 'clubs' || !settings) return
-    let cancelled = false
-    void (async () => {
-      const next = await syncSystemClubsIntoSettings(settings)
-      if (!cancelled) {
-        setSettings(next)
-        await refreshClubCounts()
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-    // Re-sync à chaque ouverture de l’onglet pour intégrer les nouveaux clubs des fiches
+    if (tab !== 'clubs') return
+    void refreshClubCounts()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- volontairement lié à l’onglet
   }, [tab])
 
@@ -998,10 +992,31 @@ export function AdminPage({ onBack, embedded = false }: Props) {
 
         {tab === 'clubs' && (
           <section className="space-y-4 rounded-xl border bg-white/75 p-5">
-            <ul className="space-y-2">
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="min-w-[12rem] flex-1 space-y-2">
+                <Label htmlFor="new-club">Nouveau club</Label>
+                <Input
+                  id="new-club"
+                  placeholder="Ex. Judo Club Kinshasa"
+                  value={newClubName}
+                  onChange={(e) => setNewClubName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      addClubRow()
+                    }
+                  }}
+                />
+              </div>
+              <Button type="button" variant="outline" onClick={() => addClubRow()} disabled={busy}>
+                <Plus className="h-4 w-4" />
+                Ajouter
+              </Button>
+            </div>
+            <ul className="space-y-2 border-t border-border/60 pt-4">
               {(settings.clubs ?? []).length === 0 && (
                 <li className="text-sm text-muted-foreground">
-                  Aucun club pour l’instant. Ajoutez-en un ci-dessous.
+                  Aucun club pour l’instant. Ajoutez-en un ci-dessus.
                 </li>
               )}
               {(settings.clubs ?? []).map((name, index) => {
@@ -1046,27 +1061,6 @@ export function AdminPage({ onBack, embedded = false }: Props) {
                 )
               })}
             </ul>
-            <div className="flex flex-wrap items-end gap-2 border-t border-border/60 pt-4">
-              <div className="min-w-[12rem] flex-1 space-y-2">
-                <Label htmlFor="new-club">Nouveau club</Label>
-                <Input
-                  id="new-club"
-                  placeholder="Ex. Judo Club Kinshasa"
-                  value={newClubName}
-                  onChange={(e) => setNewClubName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      addClubRow()
-                    }
-                  }}
-                />
-              </div>
-              <Button type="button" variant="outline" onClick={() => addClubRow()} disabled={busy}>
-                <Plus className="h-4 w-4" />
-                Ajouter
-              </Button>
-            </div>
           </section>
         )}
 
@@ -1504,6 +1498,22 @@ export function AdminPage({ onBack, embedded = false }: Props) {
               <Save className="h-4 w-4" />
               {busy ? 'Enregistrement…' : 'Enregistrer'}
             </Button>
+            {tab === 'clubs' && (
+              <Button
+                type="button"
+                variant="outline"
+                size="lg"
+                disabled={busy || (settings.clubs ?? []).length === 0}
+                onClick={() => {
+                  setError(null)
+                  setMessage(null)
+                  setConfirmClearClubs(true)
+                }}
+              >
+                <Eraser className="h-4 w-4" />
+                Effacer
+              </Button>
+            )}
             {tab === 'categories' && (
               <Button
                 type="button"
@@ -1522,6 +1532,43 @@ export function AdminPage({ onBack, embedded = false }: Props) {
         {error && <p className="text-sm text-destructive">{error}</p>}
         {message && <p className="text-sm text-emerald-700">{message}</p>}
       </div>
+
+      {confirmClearClubs && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="clear-clubs-title"
+            className="w-full max-w-md rounded-xl border bg-white p-6 shadow-xl"
+          >
+            <h3 id="clear-clubs-title" className="text-lg font-semibold text-judo-navy">
+              Effacer les clubs
+            </h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Tous les clubs enregistrés dans Configuration seront retirés de la liste. Les noms et
+              données des judokas restent inchangés.
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy}
+                onClick={() => setConfirmClearClubs(false)}
+              >
+                Annuler
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={busy}
+                onClick={() => void clearAllClubs()}
+              >
+                {busy ? 'Effacement…' : 'Effacer les clubs'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {createdCredentials && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">

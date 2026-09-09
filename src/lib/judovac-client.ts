@@ -1594,11 +1594,30 @@ export const judovacClient = {
     scope: 'all' | 'server' | 'client'
     username?: string
   }): Promise<IpcResult<{ deleted: number; scope: string }>> => {
-    await requireProfile()
+    const profile = await requireProfile()
     if (opts.scope === 'all') {
       const { data } = await supabase.from('judokas').select('id')
       const ids = (data ?? []).map((r) => r.id as string)
       if (ids.length) await supabase.from('judokas').delete().in('id', ids)
+      const current = await judovacClient.getSettings()
+      if (current.ok) {
+        const now = new Date().toISOString()
+        await judovacClient.setSettings({
+          teams: (current.data.teams ?? []).map((t) => ({
+            ...t,
+            judokaIds: [],
+            lineups: [],
+            updatedAt: now
+          })),
+          combatSession: null
+        })
+      }
+      await logSystem(
+        'warn',
+        'judoka.reset',
+        `Réinitialisation totale — ${ids.length} judoka(s) effacé(s)`,
+        profile.username
+      )
       return ok({ deleted: ids.length, scope: opts.scope })
     }
     const label = opts.scope === 'server' ? 'Serveur' : formatCreatorLabel(opts.username ?? '')
@@ -1607,6 +1626,12 @@ export const judovacClient = {
     if (toDelete.length) {
       await supabase.from('judokas').delete().in('id', toDelete.map((r) => r.id as string))
     }
+    await logSystem(
+      'warn',
+      'judoka.reset',
+      `Réinitialisation ${opts.scope} — ${toDelete.length} judoka(s) effacé(s)`,
+      profile.username
+    )
     return ok({ deleted: toDelete.length, scope: opts.scope })
   },
 

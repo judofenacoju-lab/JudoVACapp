@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowLeft, Download, Upload } from 'lucide-react'
+import { ArrowLeft, Download, RotateCcw, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { AppShell } from '@/layouts/AppShell'
 import { BackupProgressModal, type BackupProgress } from '@/components/BackupProgressModal'
@@ -25,6 +25,7 @@ export function BackupPage({ onBack, embedded = false }: Props) {
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState<PendingRestore | null>(null)
+  const [confirmReset, setConfirmReset] = useState(false)
   const [restoreMode, setRestoreMode] = useState<RestoreMode>('replace')
   const [progress, setProgress] = useState<BackupProgress | null>(null)
   const [progressTitle, setProgressTitle] = useState('Chargement')
@@ -103,6 +104,27 @@ export function BackupPage({ onBack, embedded = false }: Props) {
     }
   }
 
+  async function confirmResetJudokas(): Promise<void> {
+    setBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const reset = await window.judovac.resetJudokas({ scope: 'all' })
+      if (!reset.ok) {
+        setError(reset.error)
+        return
+      }
+      setConfirmReset(false)
+      setMessage(
+        `Réinitialisation terminée — ${reset.data.deleted} judoka(s) supprimé(s) (individuel et par équipe). Les clubs de Configuration sont conservés.`
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Réinitialisation impossible')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <AppShell
       embedded={embedded}
@@ -132,10 +154,63 @@ export function BackupPage({ onBack, embedded = false }: Props) {
             <Upload className="h-4 w-4" />
             Restaurer
           </Button>
+          <Button
+            variant="outline"
+            size="lg"
+            disabled={busy}
+            onClick={() => {
+              setError(null)
+              setMessage(null)
+              setConfirmReset(true)
+            }}
+          >
+            <RotateCcw className="h-4 w-4" />
+            Réinitialiser
+          </Button>
         </div>
         {error && <p className="text-sm text-destructive">{error}</p>}
         {message && <p className="text-sm text-emerald-700 break-all">{message}</p>}
       </div>
+
+      {confirmReset && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reset-judokas-title"
+            className="w-full max-w-md rounded-xl border bg-white p-6 shadow-xl"
+          >
+            <h3 id="reset-judokas-title" className="text-lg font-semibold text-judo-navy">
+              Réinitialiser les judokas
+            </h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Tous les noms et données des judokas seront supprimés (enregistrement individuel et
+              compositions par équipe). Cette action est irréversible.
+            </p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Les clubs de Configuration, les utilisateurs et les autres paramètres sont conservés.
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy}
+                onClick={() => setConfirmReset(false)}
+              >
+                Annuler
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={busy}
+                onClick={() => void confirmResetJudokas()}
+              >
+                {busy ? 'Réinitialisation…' : 'Réinitialiser'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {pending && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">

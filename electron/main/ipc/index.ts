@@ -495,6 +495,23 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
         if (scope === 'all') {
           deleted = c.jsonRepo.resetAll()
+          try {
+            const { SettingsStore } = await import('@core/infrastructure/settings/settings-store')
+            const store = new SettingsStore()
+            const current = await store.get()
+            const now = new Date().toISOString()
+            await store.set({
+              combatSession: null,
+              teams: (current.teams ?? []).map((t) => ({
+                ...t,
+                judokaIds: [],
+                lineups: [],
+                updatedAt: now
+              }))
+            })
+          } catch {
+            /* paramètres optionnels */
+          }
           await c.logger.log('warn', 'judoka.reset', `Réinitialisation totale — ${deleted} judoka(s) effacé(s)`, {
             actor: 'serveur'
           })
